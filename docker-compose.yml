@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gangnam-real-estate-postgres
+    environment:
+      POSTGRES_DB: home_search
+      POSTGRES_USER: home_search
+      POSTGRES_PASSWORD: home_search
+      TZ: Asia/Seoul
+    ports:
+      - "55432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+      - ./db/import:/import:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U home_search -d home_search"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  postgres-data:
