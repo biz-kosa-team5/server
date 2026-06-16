@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import math
-import sqlite3
-from collections import defaultdict
 from typing import Any
 
-from .database import get_connection
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
+
+from .models import Complex, Region, Trade
 
 DEFAULT_BOUNDS = {
   "swLat": 37.40,
@@ -19,77 +20,58 @@ def health() -> dict[str, str]:
   return {"status": "ok"}
 
 
-def region_markers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def region_markers(session: Session, payload: dict[str, Any]) -> list[dict[str, Any]]:
   bounds = bounds_from_payload(payload)
-  rows = get_connection().execute(
-    """
-    SELECT id, name, center_lat, center_lng, unit_cnt_sum
-    FROM regions
-    WHERE center_lat BETWEEN ? AND ?
-      AND center_lng BETWEEN ? AND ?
-    ORDER BY name
-    """,
-    (bounds["swLat"], bounds["neLat"], bounds["swLng"], bounds["neLng"]),
-  ).fetchall()
+  rows = session.scalars(
+    select(Region)
+    .where(Region.center_lat.between(bounds["swLat"], bounds["neLat"]))
+    .where(Region.center_lng.between(bounds["swLng"], bounds["neLng"]))
+    .order_by(Region.name)
+  ).all()
   return [
     {
-      "id": row["id"],
-      "name": row["name"],
-      "lat": row["center_lat"],
-      "lng": row["center_lng"],
-      "unitCntSum": row["unit_cnt_sum"],
+      "id": row.id,
+      "name": row.name,
+      "lat": row.center_lat,
+      "lng": row.center_lng,
+      "unitCntSum": row.unit_cnt_sum,
     }
     for row in rows
   ]
 
 
-def complex_markers(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def complex_markers(session: Session, payload: dict[str, Any]) -> list[dict[str, Any]]:
   bounds = bounds_from_payload(payload)
-  rows = get_connection().execute(
-    """
-    SELECT c.*, latest.deal_amount AS latest_deal_amount, latest.deal_date AS latest_deal_date
-    FROM complexes c
-    LEFT JOIN trades latest ON latest.id = (
-      SELECT t.id
-      FROM trades t
-      WHERE t.complex_id = c.id
-      ORDER BY t.deal_date DESC, t.id DESC
-      LIMIT 1
-    )
-    WHERE c.latitude IS NOT NULL
-      AND c.longitude IS NOT NULL
-      AND c.latitude BETWEEN ? AND ?
-      AND c.longitude BETWEEN ? AND ?
-    ORDER BY c.name
-    """,
-    (bounds["swLat"], bounds["neLat"], bounds["swLng"], bounds["neLng"]),
-  ).fetchall()
-
+  rows = session.scalars(
+    select(Complex)
+    .where(Complex.latitude.is_not(None))
+    .where(Complex.longitude.is_not(None))
+    .where(Complex.latitude.between(bounds["swLat"], bounds["neLat"]))
+    .where(Complex.longitude.between(bounds["swLng"], bounds["neLng"]))
+    .order_by(Complex.name)
+  ).all()
   return [
     marker
     for row in rows
-    if (marker := complex_marker(row, payload)) is not None
+    if (marker := complex_marker(session, row, payload)) is not None
   ]
 
 
-def search_complexes(query: str, limit: int = 20) -> list[dict[str, Any]]:
-  pattern = f"%{query.strip()}%"
-  if pattern == "%%":
+def search_complexes(session: Session, query: str, limit: int = 20) -> list[dict[str, Any]]:
+  trimmed = query.strip()
+  if not trimmed:
     return []
-  rows = get_connection().execute(
-    """
-    SELECT *
-    FROM complexes
-    WHERE name LIKE ? OR trade_name LIKE ? OR address LIKE ?
-    ORDER BY name
-    LIMIT ?
-    """,
-    (pattern, pattern, pattern, limit),
-  ).fetchall()
+  pattern = f"%{trimmed}%"
+  rows = session.scalars(
+    select(Complex)
+    .where(or_(Complex.name.like(pattern), Complex.trade_name.like(pattern), Complex.address.like(pattern)))
+    .order_by(Complex.name)
+    .limit(limit)
+  ).all()
   return [complex_search_result(row) for row in rows]
 
 
-def search_suggestions(query: str) -> list[dict[str, Any]]:
+def search_suggestions(session: Session, query: str) -> list[dict[str, Any]]:
   return [
     {
       "complexId": item["complexId"],
@@ -97,112 +79,96 @@ def search_suggestions(query: str) -> list[dict[str, Any]]:
       "parcelId": item["parcelId"],
       "address": item["address"],
     }
-    for item in search_complexes(query, limit=10)
+    for item in search_complexes(session, query, limit=10)
   ]
 
 
-def root_regions() -> list[dict[str, Any]]:
-  rows = get_connection().execute(
-    "SELECT id, name FROM regions WHERE parent_id IS NULL ORDER BY name"
-  ).fetchall()
-  return [{"id": row["id"], "name": row["name"]} for row in rows]
+def root_regions(session: Session) -> list[dict[str, Any]]:
+  rows = session.scalars(
+    select(Region).where(Region.parent_id.is_(None)).order_by(Region.name)
+  ).all()
+  return [{"id": row.id, "name": row.name} for row in rows]
 
 
-def region_detail(region_id: int) -> dict[str, Any] | None:
-  row = get_connection().execute(
-    "SELECT * FROM regions WHERE id = ?",
-    (region_id,),
-  ).fetchone()
+def region_detail(session: Session, region_id: int) -> dict[str, Any] | None:
+  row = session.get(Region, region_id)
   if row is None:
     return None
 
-  children = get_connection().execute(
-    "SELECT id, name FROM regions WHERE parent_id = ? ORDER BY name",
-    (region_id,),
-  ).fetchall()
+  children = session.scalars(
+    select(Region).where(Region.parent_id == region_id).order_by(Region.name)
+  ).all()
   return {
-    "id": row["id"],
-    "name": row["name"],
-    "latitude": row["center_lat"],
-    "longitude": row["center_lng"],
-    "children": [{"id": child["id"], "name": child["name"]} for child in children],
+    "id": row.id,
+    "name": row.name,
+    "latitude": row.center_lat,
+    "longitude": row.center_lng,
+    "children": [{"id": child.id, "name": child.name} for child in children],
   }
 
 
-def region_complexes(region_id: int, limit: int, offset: int) -> list[dict[str, Any]]:
-  rows = get_connection().execute(
-    """
-    SELECT *
-    FROM complexes
-    WHERE region_id = ?
-    ORDER BY name
-    LIMIT ? OFFSET ?
-    """,
-    (region_id, clamp(limit, 1, 100), max(offset, 0)),
-  ).fetchall()
+def region_complexes(session: Session, region_id: int, limit: int, offset: int) -> list[dict[str, Any]]:
+  rows = session.scalars(
+    select(Complex)
+    .where(Complex.region_id == region_id)
+    .order_by(Complex.name)
+    .limit(clamp(limit, 1, 100))
+    .offset(max(offset, 0))
+  ).all()
   return [complex_summary(row) for row in rows]
 
 
-def detail_by_parcel(parcel_id: int, complex_id: int | None = None) -> dict[str, Any] | None:
-  if complex_id is None:
-    row = get_connection().execute(
-      "SELECT * FROM complexes WHERE parcel_id = ? ORDER BY id LIMIT 1",
-      (parcel_id,),
-    ).fetchone()
-  else:
-    row = get_connection().execute(
-      "SELECT * FROM complexes WHERE parcel_id = ? AND id = ?",
-      (parcel_id, complex_id),
-    ).fetchone()
+def detail_by_parcel(
+  session: Session,
+  parcel_id: int,
+  complex_id: int | None = None,
+) -> dict[str, Any] | None:
+  statement = select(Complex).where(Complex.parcel_id == parcel_id).order_by(Complex.id).limit(1)
+  if complex_id is not None:
+    statement = select(Complex).where(Complex.parcel_id == parcel_id, Complex.id == complex_id)
+  row = session.scalar(statement)
   return None if row is None else complex_detail(row)
 
 
-def detail_by_complex(complex_id: int) -> dict[str, Any] | None:
-  row = get_connection().execute(
-    "SELECT * FROM complexes WHERE id = ?",
-    (complex_id,),
-  ).fetchone()
+def detail_by_complex(session: Session, complex_id: int) -> dict[str, Any] | None:
+  row = session.get(Complex, complex_id)
   return None if row is None else complex_detail(row)
 
 
-def parcel_complexes(parcel_id: int) -> list[dict[str, Any]]:
-  rows = get_connection().execute(
-    "SELECT * FROM complexes WHERE parcel_id = ? ORDER BY name",
-    (parcel_id,),
-  ).fetchall()
+def parcel_complexes(session: Session, parcel_id: int) -> list[dict[str, Any]]:
+  rows = session.scalars(
+    select(Complex).where(Complex.parcel_id == parcel_id).order_by(Complex.name)
+  ).all()
   return [complex_summary(row) for row in rows]
 
 
 def trades_by_parcel(
+  session: Session,
   parcel_id: int,
   complex_id: int | None,
   page: int,
   size: int,
 ) -> dict[str, Any]:
-  complex_rows = complexes_for_parcel(parcel_id, complex_id)
-  return trades_page(parcel_id, complex_id, [row["id"] for row in complex_rows], page, size)
+  complex_ids = complexes_for_parcel(session, parcel_id, complex_id)
+  return trades_page(session, parcel_id, complex_id, complex_ids, page, size)
 
 
-def trades_by_complex(complex_id: int, page: int, size: int) -> dict[str, Any] | None:
-  row = get_connection().execute(
-    "SELECT parcel_id FROM complexes WHERE id = ?",
-    (complex_id,),
-  ).fetchone()
-  if row is None:
+def trades_by_complex(session: Session, complex_id: int, page: int, size: int) -> dict[str, Any] | None:
+  complex_row = session.get(Complex, complex_id)
+  if complex_row is None:
     return None
-  return trades_page(row["parcel_id"], complex_id, [complex_id], page, size)
+  return trades_page(session, complex_row.parcel_id, complex_id, [complex_id], page, size)
 
 
-def trend_by_parcel(parcel_id: int, complex_id: int | None) -> list[dict[str, Any]]:
-  complex_rows = complexes_for_parcel(parcel_id, complex_id)
-  return trend_for_complex_ids([row["id"] for row in complex_rows])
+def trend_by_parcel(session: Session, parcel_id: int, complex_id: int | None) -> list[dict[str, Any]]:
+  complex_ids = complexes_for_parcel(session, parcel_id, complex_id)
+  return trend_for_complex_ids(session, complex_ids)
 
 
-def trend_by_complex(complex_id: int) -> list[dict[str, Any]] | None:
-  row = get_connection().execute("SELECT id FROM complexes WHERE id = ?", (complex_id,)).fetchone()
-  if row is None:
+def trend_by_complex(session: Session, complex_id: int) -> list[dict[str, Any]] | None:
+  if session.get(Complex, complex_id) is None:
     return None
-  return trend_for_complex_ids([complex_id])
+  return trend_for_complex_ids(session, [complex_id])
 
 
 def bounds_from_payload(payload: dict[str, Any]) -> dict[str, float]:
@@ -213,111 +179,103 @@ def bounds_from_payload(payload: dict[str, Any]) -> dict[str, float]:
   }
 
 
-def complex_marker(row: sqlite3.Row, filters: dict[str, Any]) -> dict[str, Any] | None:
-  latest_trade = latest_trade_for_complex(row["id"])
+def complex_marker(session: Session, row: Complex, filters: dict[str, Any]) -> dict[str, Any] | None:
+  latest_trade = latest_trade_for_complex(session, row.id)
   if not matches_filters(row, latest_trade, filters):
     return None
   return {
-    "parcelId": row["parcel_id"],
-    "complexId": row["id"],
-    "name": row["name"],
-    "lat": row["latitude"],
-    "lng": row["longitude"],
-    "latestDealAmount": None if latest_trade is None else latest_trade["deal_amount"],
-    "unitCntSum": row["unit_cnt"],
+    "parcelId": row.parcel_id,
+    "complexId": row.id,
+    "name": row.name,
+    "lat": row.latitude,
+    "lng": row.longitude,
+    "latestDealAmount": None if latest_trade is None else latest_trade.deal_amount,
+    "unitCntSum": row.unit_cnt,
   }
 
 
-def matches_filters(row: sqlite3.Row, latest_trade: sqlite3.Row | None, filters: dict[str, Any]) -> bool:
-  if not number_between(row["unit_cnt"], filters.get("unitMin"), filters.get("unitMax")):
+def matches_filters(row: Complex, latest_trade: Trade | None, filters: dict[str, Any]) -> bool:
+  if not number_between(row.unit_cnt, filters.get("unitMin"), filters.get("unitMax")):
     return False
 
-  age = age_from_use_date(row["use_date"])
+  age = age_from_use_date(row.use_date)
   if age is not None and not number_between(age, filters.get("ageMin"), filters.get("ageMax")):
     return False
 
   if latest_trade is None:
     return filters.get("priceEokMin") in (None, "") and filters.get("priceEokMax") in (None, "")
 
-  price_eok = latest_trade["deal_amount"] / 10000
-  area_pyeong = latest_trade["excl_area"] / 3.3058
+  price_eok = latest_trade.deal_amount / 10000
+  area_pyeong = latest_trade.excl_area / 3.3058
   return (
     number_between(price_eok, filters.get("priceEokMin"), filters.get("priceEokMax"))
     and number_between(area_pyeong, filters.get("pyeongMin"), filters.get("pyeongMax"))
   )
 
 
-def latest_trade_for_complex(complex_id: int) -> sqlite3.Row | None:
-  return get_connection().execute(
-    """
-    SELECT *
-    FROM trades
-    WHERE complex_id = ?
-    ORDER BY deal_date DESC, id DESC
-    LIMIT 1
-    """,
-    (complex_id,),
-  ).fetchone()
+def latest_trade_for_complex(session: Session, complex_id: int) -> Trade | None:
+  return session.scalar(
+    select(Trade)
+    .where(Trade.complex_id == complex_id)
+    .order_by(Trade.deal_date.desc(), Trade.id.desc())
+    .limit(1)
+  )
 
 
-def complex_search_result(row: sqlite3.Row) -> dict[str, Any]:
+def complex_search_result(row: Complex) -> dict[str, Any]:
   return {
-    "complexId": row["id"],
-    "complexName": row["name"],
-    "parcelId": row["parcel_id"],
-    "latitude": row["latitude"],
-    "longitude": row["longitude"],
-    "address": row["address"],
+    "complexId": row.id,
+    "complexName": row.name,
+    "parcelId": row.parcel_id,
+    "latitude": row.latitude,
+    "longitude": row.longitude,
+    "address": row.address,
   }
 
 
-def complex_summary(row: sqlite3.Row) -> dict[str, Any]:
+def complex_summary(row: Complex) -> dict[str, Any]:
   return {
-    "complexId": row["id"],
-    "complexName": row["name"],
-    "parcelId": row["parcel_id"],
-    "latitude": row["latitude"],
-    "longitude": row["longitude"],
-    "address": row["address"],
-    "dongCnt": row["dong_cnt"],
-    "unitCnt": row["unit_cnt"],
-    "useDate": row["use_date"],
+    "complexId": row.id,
+    "complexName": row.name,
+    "parcelId": row.parcel_id,
+    "latitude": row.latitude,
+    "longitude": row.longitude,
+    "address": row.address,
+    "dongCnt": row.dong_cnt,
+    "unitCnt": row.unit_cnt,
+    "useDate": row.use_date,
   }
 
 
-def complex_detail(row: sqlite3.Row) -> dict[str, Any]:
+def complex_detail(row: Complex) -> dict[str, Any]:
   return {
-    "parcelId": row["parcel_id"],
-    "complexId": row["id"],
-    "latitude": row["latitude"],
-    "longitude": row["longitude"],
-    "address": row["address"],
-    "tradeName": row["trade_name"],
-    "name": row["name"],
-    "dongCnt": row["dong_cnt"],
-    "unitCnt": row["unit_cnt"],
+    "parcelId": row.parcel_id,
+    "complexId": row.id,
+    "latitude": row.latitude,
+    "longitude": row.longitude,
+    "address": row.address,
+    "tradeName": row.trade_name,
+    "name": row.name,
+    "dongCnt": row.dong_cnt,
+    "unitCnt": row.unit_cnt,
     "platArea": None,
     "archArea": None,
     "totArea": None,
     "bcRat": None,
     "vlRat": None,
-    "useDate": row["use_date"],
+    "useDate": row.use_date,
   }
 
 
-def complexes_for_parcel(parcel_id: int, complex_id: int | None) -> list[sqlite3.Row]:
-  if complex_id is None:
-    return get_connection().execute(
-      "SELECT id FROM complexes WHERE parcel_id = ?",
-      (parcel_id,),
-    ).fetchall()
-  return get_connection().execute(
-    "SELECT id FROM complexes WHERE parcel_id = ? AND id = ?",
-    (parcel_id, complex_id),
-  ).fetchall()
+def complexes_for_parcel(session: Session, parcel_id: int, complex_id: int | None) -> list[int]:
+  statement = select(Complex.id).where(Complex.parcel_id == parcel_id)
+  if complex_id is not None:
+    statement = statement.where(Complex.id == complex_id)
+  return list(session.scalars(statement).all())
 
 
 def trades_page(
+  session: Session,
   parcel_id: int,
   complex_id: int | None,
   complex_ids: list[int],
@@ -337,21 +295,16 @@ def trades_page(
       "totalPages": 0,
     }
 
-  placeholders = ",".join("?" for _ in complex_ids)
-  total = get_connection().execute(
-    f"SELECT COUNT(*) AS total FROM trades WHERE complex_id IN ({placeholders})",
-    complex_ids,
-  ).fetchone()["total"]
-  rows = get_connection().execute(
-    f"""
-    SELECT *
-    FROM trades
-    WHERE complex_id IN ({placeholders})
-    ORDER BY deal_date DESC, id DESC
-    LIMIT ? OFFSET ?
-    """,
-    [*complex_ids, size, page * size],
-  ).fetchall()
+  total = session.scalar(
+    select(func.count()).select_from(Trade).where(Trade.complex_id.in_(complex_ids))
+  ) or 0
+  rows = session.scalars(
+    select(Trade)
+    .where(Trade.complex_id.in_(complex_ids))
+    .order_by(Trade.deal_date.desc(), Trade.id.desc())
+    .limit(size)
+    .offset(page * size)
+  ).all()
   return {
     "parcelId": parcel_id,
     "complexId": complex_id,
@@ -363,42 +316,40 @@ def trades_page(
   }
 
 
-def trade_item(row: sqlite3.Row) -> dict[str, Any]:
+def trade_item(row: Trade) -> dict[str, Any]:
   return {
-    "tradeId": row["id"],
-    "dealDate": row["deal_date"],
-    "exclArea": row["excl_area"],
-    "dealAmount": row["deal_amount"],
-    "aptDong": row["apt_dong"],
-    "floor": row["floor"],
+    "tradeId": row.id,
+    "dealDate": row.deal_date,
+    "exclArea": row.excl_area,
+    "dealAmount": row.deal_amount,
+    "aptDong": row.apt_dong,
+    "floor": row.floor,
   }
 
 
-def trend_for_complex_ids(complex_ids: list[int]) -> list[dict[str, Any]]:
+def trend_for_complex_ids(session: Session, complex_ids: list[int]) -> list[dict[str, Any]]:
   if not complex_ids:
     return []
-  placeholders = ",".join("?" for _ in complex_ids)
-  rows = get_connection().execute(
-    f"""
-    SELECT substr(deal_date, 1, 7) AS month,
-           AVG(deal_amount) AS avg_amount,
-           COUNT(*) AS trade_count,
-           MIN(deal_amount) AS min_amount,
-           MAX(deal_amount) AS max_amount
-    FROM trades
-    WHERE complex_id IN ({placeholders})
-    GROUP BY substr(deal_date, 1, 7)
-    ORDER BY month
-    """,
-    complex_ids,
-  ).fetchall()
+  month_expr = func.substr(Trade.deal_date, 1, 7)
+  rows = session.execute(
+    select(
+      month_expr.label("month"),
+      func.avg(Trade.deal_amount).label("avg_amount"),
+      func.count().label("trade_count"),
+      func.min(Trade.deal_amount).label("min_amount"),
+      func.max(Trade.deal_amount).label("max_amount"),
+    )
+    .where(Trade.complex_id.in_(complex_ids))
+    .group_by(month_expr)
+    .order_by("month")
+  ).all()
   return [
     {
-      "month": row["month"],
-      "avgAmount": round(row["avg_amount"], 2),
-      "count": row["trade_count"],
-      "minAmount": row["min_amount"],
-      "maxAmount": row["max_amount"],
+      "month": row.month,
+      "avgAmount": round(float(row.avg_amount), 2),
+      "count": row.trade_count,
+      "minAmount": row.min_amount,
+      "maxAmount": row.max_amount,
     }
     for row in rows
   ]
