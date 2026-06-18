@@ -1,0 +1,38 @@
+# v1 public read API
+fastapi>=0.110
+orjson>=3.10
+python-dotenv>=1.0
+pydantic-settings>=2.0
+psycopg[binary]>=3.2
+sqlalchemy>=2.0
+uvicorn[standard]>=0.27
+
+# Test client and API contract checks
+httpx>=0.27
+pytest>=8.0
+
+# Docs-planned legacy snapshot import and validation
+pandas>=2.2
+
+# Docs-planned chatbot/query pipeline:
+# - BGE-M3 style embedding-based intent classification
+# - cosine similarity / kNN threshold evaluation
+numpy>=2.0
+scikit-learn>=1.5
+sentence-transformers>=3.0
+
+# Docs-planned legal/contract RAG and query orchestration:
+# - document loading/splitting/search
+# - optional LLM-based split/merge experiments
+# - PostgreSQL vector storage
+langchain>=0.3
+langchain-community>=0.3
+langchain-core>=0.3
+langchain-openai>=0.2
+langchain-postgres>=0.0.12
+langchain-text-splitters>=0.3
+langgraph>=0.2
+openai>=1.50
+pgvector>=0.3
+pypdf>=5.0
+tiktoken>=0.8
