@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, String
+from sqlalchemy import BigInteger, CheckConstraint, Float, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -62,3 +62,20 @@ class Trade(Base):
   apt_dong: Mapped[str | None] = mapped_column(String, nullable=True)
 
   complex: Mapped[Complex] = relationship(back_populates="trades")
+
+
+class Poi(Base):
+  __tablename__ = "pois"
+  __table_args__ = (
+    CheckConstraint("category IN ('station', 'education')", name="ck_pois_category"),
+    Index("idx_pois_category_subtype", "category", "subtype"),
+    Index("idx_pois_name", "name"),
+    Index("idx_pois_location", "latitude", "longitude"),
+  )
+
+  id: Mapped[int] = mapped_column(Integer, primary_key=True)
+  category: Mapped[str] = mapped_column(String, nullable=False)
+  name: Mapped[str] = mapped_column(String, nullable=False)
+  subtype: Mapped[str] = mapped_column(String, nullable=False)
+  latitude: Mapped[float] = mapped_column(Float, nullable=False)
+  longitude: Mapped[float] = mapped_column(Float, nullable=False)

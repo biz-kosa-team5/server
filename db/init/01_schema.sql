@@ -34,6 +34,15 @@ CREATE TABLE IF NOT EXISTS trades (
   apt_dong TEXT
 );
 
+CREATE TABLE IF NOT EXISTS pois (
+  id BIGSERIAL PRIMARY KEY,
+  category TEXT NOT NULL CHECK (category IN ('station', 'education')),
+  name TEXT NOT NULL,
+  subtype TEXT NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_regions_code ON regions(code);
 CREATE INDEX IF NOT EXISTS idx_regions_parent_id ON regions(parent_id);
 CREATE INDEX IF NOT EXISTS idx_complexes_region_id ON complexes(region_id);
@@ -43,3 +52,6 @@ CREATE INDEX IF NOT EXISTS idx_complexes_coordinate ON complexes(latitude, longi
 CREATE INDEX IF NOT EXISTS idx_trades_complex_date ON trades(complex_id, deal_date);
 CREATE INDEX IF NOT EXISTS idx_trades_amount ON trades(deal_amount);
 CREATE INDEX IF NOT EXISTS idx_trades_area ON trades(excl_area);
+CREATE INDEX IF NOT EXISTS idx_pois_category_subtype ON pois(category, subtype);
+CREATE INDEX IF NOT EXISTS idx_pois_name ON pois(name);
+CREATE INDEX IF NOT EXISTS idx_pois_location ON pois(latitude, longitude);

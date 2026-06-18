@@ -11,6 +11,7 @@ FastAPI 기반 public read API다. v1은 `web` 프론트가 호출하는 조회 
 - `db/init/`: PostgreSQL 컨테이너 최초 생성 시 실행되는 schema/seed SQL
 - `db/import/`: 나중에 큰 SQL 파일을 둘 위치
 - `scripts/import-sql.sh`: SQL 또는 SQL gzip 파일을 PostgreSQL 컨테이너에 적용하는 스크립트
+- `scripts/build-pois-csv.py`: 지하철/교육시설 원본 CSV를 `db/import/pois.csv` 형식으로 변환하는 스크립트
 
 ## 로컬 단독 실행
 
@@ -83,3 +84,6 @@ pytest
 - 프론트 호환용 `parcelId`는 `complexes.parcel_id`로 제공한다.
 - 지도 마커는 `complexes.latitude`, `complexes.longitude`를 사용한다.
 - 좌표 없는 단지는 지도 마커에서 제외하고 검색/상세에서는 반환한다.
+- 역/교육시설 좌표는 `pois` 테이블에 `category`, `name`, `subtype`, `latitude`, `longitude`만 저장한다.
+- `pois.category`는 `station` 또는 `education`이며, `subtype`은 역의 호선명 또는 교육시설 유형을 저장한다.
+- `pois` 데이터는 Excel 호환을 위해 UTF-8 BOM으로 저장한 `db/import/pois.csv`에서 적재한다.

@@ -1,6 +1,9 @@
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
 
+from app.database import SessionLocal, ensure_initialized
 from app.main import app
+from app.models import Poi
 
 client = TestClient(app)
 
@@ -121,3 +124,23 @@ def test_complex_id_routes():
   assert detail.json()["parcelId"] == 9002001
   assert trades.json()["totalElements"] == 2
   assert [point["month"] for point in trend.json()] == ["2026-01", "2026-03"]
+
+
+def test_poi_seed_supports_station_and_education_categories():
+  ensure_initialized()
+  with SessionLocal() as session:
+    station = session.scalar(
+      select(Poi).where(Poi.category == "station", Poi.name == "서초역")
+    )
+    counts = dict(session.execute(
+      select(Poi.category, func.count()).group_by(Poi.category)
+    ).all())
+    education_subtypes = set(session.scalars(
+      select(Poi.subtype).where(Poi.category == "education").distinct()
+    ).all())
+
+  assert station is not None
+  assert station.subtype == "2호선"
+  assert station.latitude == 37.491897
+  assert counts == {"education": 329, "station": 86}
+  assert education_subtypes == {"유치원", "초등학교", "중학교", "고등학교", "특수학교"}
