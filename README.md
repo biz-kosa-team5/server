@@ -11,7 +11,6 @@ FastAPI 기반 public read API다. v1은 `web` 프론트가 호출하는 조회 
 - `db/init/`: PostgreSQL 컨테이너 최초 생성 시 실행되는 schema/seed SQL
 - `db/import/`: 나중에 큰 SQL 파일을 둘 위치
 - `scripts/import-sql.sh`: SQL 또는 SQL gzip 파일을 PostgreSQL 컨테이너에 적용하는 스크립트
-- `scripts/build-pois-csv.py`: 지하철/교육시설 원본 CSV를 `db/import/pois.csv` 형식으로 변환하는 스크립트
 
 ## 로컬 단독 실행
 
