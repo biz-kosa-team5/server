@@ -16,12 +16,25 @@ FastAPI 기반 public read API다. v1은 `web` 프론트가 호출하는 조회 
 
 `DATABASE_URL`이 없으면 in-memory SQLite를 사용하고 앱 시작 시 sample seed를 자동 적재한다.
 
+프로젝트 메타데이터 기반 설치:
+
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[test]"
 uvicorn app.main:app --reload --port 8080
 ```
+
+단순 실행 환경이나 CI에서 `requirements.txt`만 사용하는 경우:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8080
+```
+
+`requirements.txt`에는 현재 public read API 의존성과 docs에 계획된 후속 작업 의존성을 함께 둔다. 포함 범위는 레거시 스냅샷 적재/검증, BGE-M3 임베딩 기반 질의 분류, 유사도/kNN 평가, pgvector 기반 문서 검색, 법률/계약 RAG, LLM 기반 질문 분해/병합 실험이다.
 
 ## PostgreSQL 실행
 
