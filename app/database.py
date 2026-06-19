@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import os
 from collections.abc import Generator
+from pathlib import Path
 from threading import Lock
 
 from sqlalchemy import create_engine
@@ -9,7 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from .models import Base, Complex, Region, Trade
+from .models import Base, Complex, Poi, Region, Trade
 
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///:memory:"
 
@@ -76,3 +78,20 @@ def seed(session: Session) -> None:
     Trade(id=5009, complex_id=1004, deal_date="2026-03-19", deal_amount=330000, excl_area=84.80, floor=21, apt_dong="118"),
     Trade(id=5010, complex_id=1005, deal_date="2026-01-05", deal_amount=180000, excl_area=59.97, floor=7, apt_dong="1"),
   ])
+  seed_pois(session)
+
+
+def seed_pois(session: Session) -> None:
+  pois_csv = Path(__file__).resolve().parents[1] / "db" / "import" / "pois.csv"
+  with pois_csv.open(encoding="utf-8-sig", newline="") as input_file:
+    reader = csv.DictReader(input_file)
+    session.add_all([
+      Poi(
+        category=row["category"],
+        name=row["name"],
+        subtype=row["subtype"],
+        latitude=float(row["latitude"]),
+        longitude=float(row["longitude"]),
+      )
+      for row in reader
+    ])
