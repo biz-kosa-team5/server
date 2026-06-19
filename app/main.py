@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from . import repository
 from .database import get_session, initialize_database
+from .legal_rag.controller import router as legal_rag_router
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ app = FastAPI(
   version="0.1.0",
   lifespan=lifespan,
 )
+app.include_router(legal_rag_router)
 
 
 @app.get("/health")
