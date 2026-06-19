@@ -27,3 +27,7 @@ INSERT INTO trades (id, complex_id, deal_date, deal_amount, excl_area, floor, ap
   (5009, 1004, '2026-03-19', 330000, 84.80, 21, '118'),
   (5010, 1005, '2026-01-05', 180000, 59.97, 7, '1')
 ON CONFLICT (id) DO NOTHING;
+
+COPY pois (category, name, subtype, latitude, longitude)
+FROM '/import/pois.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
