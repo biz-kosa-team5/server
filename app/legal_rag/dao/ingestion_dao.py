@@ -10,7 +10,7 @@ from ..model import DailyLegalTermMapping, LawDocument, RawApiResponse
 from ..parser import ParsedDocument
 
 
-class LawDao:
+class LegalDataDao:
   def __init__(self, session: Session): self.session = session
 
   def add_raw(self, **values: Any) -> RawApiResponse:

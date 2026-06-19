@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from ..client import LawApiClient
-from ..constants import DAILY_TERMS, LAW_NAMES
-from ..dao import LawDao
-from ..parser import parse_law, parse_term_mappings
+from ...client import LawApiClient
+from ...constants import DAILY_TERMS, LAW_NAMES
+from ...dao import LegalDataDao
+from ...parser import parse_law, parse_term_mappings
 
 
 class LawCollectionService:
-  def __init__(self, dao: LawDao, client: LawApiClient): self.dao, self.client = dao, client
+  def __init__(self, dao: LegalDataDao, client: LawApiClient): self.dao, self.client = dao, client
 
   def ingest(self, keywords: list[str] | None) -> dict[str, int]:
     names = list(dict.fromkeys(x.strip() for x in (keywords or LAW_NAMES) if x.strip())); success = failed = 0
@@ -28,7 +28,7 @@ class LawCollectionService:
 
 
 class LawParsingService:
-  def __init__(self, dao: LawDao): self.dao = dao
+  def __init__(self, dao: LegalDataDao): self.dao = dao
 
   def parse(self, raw_ids: list[int] | None) -> dict[str, int]:
     rows = self.dao.pending_raw(raw_ids); success = failed = saved = 0
@@ -45,7 +45,7 @@ class LawParsingService:
 
 
 class TermMappingCollectionService:
-  def __init__(self, dao: LawDao, client: LawApiClient): self.dao, self.client = dao, client
+  def __init__(self, dao: LegalDataDao, client: LawApiClient): self.dao, self.client = dao, client
 
   def ingest_raw(self, keywords: list[str] | None) -> dict[str, int]:
     terms = list(dict.fromkeys(x.strip() for x in (keywords or DAILY_TERMS) if x.strip()))
@@ -66,7 +66,7 @@ class TermMappingCollectionService:
 
 
 class TermMappingParsingService:
-  def __init__(self, dao: LawDao): self.dao = dao
+  def __init__(self, dao: LegalDataDao): self.dao = dao
 
   def parse(self, raw_ids: list[int] | None) -> dict[str, int]:
     rows = self.dao.pending_term_raw(raw_ids); success = failed = saved = 0
