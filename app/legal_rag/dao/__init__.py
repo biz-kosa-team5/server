@@ -1,3 +1,4 @@
-from .law_dao import LawDao
+from .indexing_dao import DocumentIndexingDao
+from .ingestion_dao import LegalDataDao
 
-__all__ = ["LawDao"]
+__all__ = ["DocumentIndexingDao", "LegalDataDao"]

@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, BigInteger, Date, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
 
 from ...models import Base
 
@@ -34,6 +35,13 @@ class LawDocument(Base):
     Index("idx_law_documents_law_name", "law_name"), Index("idx_law_documents_effective_date", "effective_date"),
     Index("idx_law_documents_article_no", "article_no"),
     Index("idx_law_documents_metadata", "metadata", postgresql_using="gin"),
+    Index(
+      "idx_law_documents_embedding_hnsw",
+      "embedding",
+      postgresql_using="hnsw",
+      postgresql_ops={"embedding": "vector_cosine_ops"},
+      postgresql_where=text("embedding IS NOT NULL"),
+    ),
   )
 
   id: Mapped[int] = mapped_column(ID_TYPE, primary_key=True, autoincrement=True)
@@ -55,6 +63,14 @@ class LawDocument(Base):
   effective_date: Mapped[date] = mapped_column(Date, nullable=False)
   parse_status: Mapped[str] = mapped_column(String(30), default="PARSED", server_default="PARSED", nullable=False)
   parse_error: Mapped[str | None] = mapped_column(Text)
+  embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+  embedding_model: Mapped[str | None] = mapped_column(String(100))
+  embedding_status: Mapped[str] = mapped_column(
+    String(30), default="PENDING", server_default="PENDING", nullable=False,
+  )
+  embedding_error: Mapped[str | None] = mapped_column(Text)
+  embedding_content_hash: Mapped[str | None] = mapped_column(String(64))
+  embedded_at: Mapped[datetime | None] = mapped_column(DateTime)
   collected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
   updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

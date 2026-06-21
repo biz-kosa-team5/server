@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS vector;
+
 CREATE TABLE IF NOT EXISTS regions (
   id BIGINT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
@@ -64,7 +66,10 @@ CREATE TABLE IF NOT EXISTS law_documents (
   law_type VARCHAR(50), ministry VARCHAR(100), article_no VARCHAR(50) NOT NULL, article_title VARCHAR(255),
   paragraph_no VARCHAR(50) NOT NULL DEFAULT '', doc_type VARCHAR(50) NOT NULL, content TEXT NOT NULL,
   metadata JSONB, source_url TEXT, effective_date DATE NOT NULL, parse_status VARCHAR(30) DEFAULT 'PARSED',
-  parse_error TEXT, collected_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW(),
+  parse_error TEXT, embedding vector(1536), embedding_model VARCHAR(100),
+  embedding_status VARCHAR(30) NOT NULL DEFAULT 'PENDING', embedding_error TEXT,
+  embedding_content_hash VARCHAR(64), embedded_at TIMESTAMP,
+  collected_at TIMESTAMP DEFAULT NOW(), updated_at TIMESTAMP DEFAULT NOW(),
   CONSTRAINT uq_law_documents_article UNIQUE (law_id, effective_date, article_no, paragraph_no)
 );
 
@@ -82,5 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_law_documents_effective_date ON law_documents(eff
 CREATE INDEX IF NOT EXISTS idx_law_documents_article_no ON law_documents(article_no);
 CREATE INDEX IF NOT EXISTS idx_law_documents_parent_document_id ON law_documents(parent_document_id);
 CREATE INDEX IF NOT EXISTS idx_law_documents_metadata ON law_documents USING gin(metadata);
+CREATE INDEX IF NOT EXISTS idx_law_documents_embedding_hnsw
+ON law_documents USING hnsw (embedding vector_cosine_ops)
+WHERE embedding IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_daily_legal_term ON daily_legal_term_mappings(daily_term);
 CREATE INDEX IF NOT EXISTS idx_daily_legal_term_priority ON daily_legal_term_mappings(priority);
