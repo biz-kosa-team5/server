@@ -6,3 +6,4 @@ outputs/
 *.py[cod]
 .env
 .env.*
+.DS_Store
