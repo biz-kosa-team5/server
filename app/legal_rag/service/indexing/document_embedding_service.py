@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import hashlib
 
-from ...client import OpenAIEmbeddingClient
+from app.embeddings import EmbeddingClient
+
 from ...dao import DocumentIndexingDao
 from ...model import LawDocument
 
 
 class DocumentEmbeddingService:
-  def __init__(self, dao: DocumentIndexingDao, client: OpenAIEmbeddingClient):
+  def __init__(self, dao: DocumentIndexingDao, client: EmbeddingClient):
     self.dao = dao
     self.client = client
 

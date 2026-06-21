@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.embeddings import OpenAIEmbeddingClient
+
 from ...database import get_session
-from ..client import OpenAIEmbeddingClient
 from ..dao import DocumentIndexingDao
 from ..dto.indexing_dto import (
   EmbeddingRequest,

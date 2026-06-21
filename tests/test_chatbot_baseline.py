@@ -1,7 +1,13 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.chatbot.dto import Intent
-from app.chatbot.service.classifier import classify_intent
+from app.chatbot.service.chatbot_service import handle_fragment
+from app.chatbot.service.classifier import (
+  EmbeddingIntentClassifier,
+  IntentClassification,
+  classify_intent,
+)
 from app.chatbot.service.splitter import split_question
 from app.comparison.extractor import extract_compare_slots
 from app.main import app
@@ -9,6 +15,20 @@ from app.recommendation.extractor import extract_recommendation_slots
 
 
 client = TestClient(app)
+
+
+class FakeEmbeddingClient:
+  model = "fake-embedding"
+  dimensions = 2
+
+  def __init__(self, vectors: dict[str, list[float]]):
+    self.vectors = vectors
+
+  def prepare_text(self, text: str) -> str:
+    return text.strip().lower()
+
+  def embed(self, texts: list[str]) -> list[list[float]]:
+    return [self.vectors[text] for text in texts]
 
 
 def test_chatbot_classifier_routes_docs_intents():
@@ -24,6 +44,59 @@ def test_chatbot_classifier_does_not_treat_connectors_as_comparison_intent():
   assert classify_intent("은마아파트 위치랑 잠실엘스 시세 알려줘") == Intent.SIMPLE_LOOKUP
   assert classify_intent("강남구와 서초구 아파트 추천해줘") == Intent.RECOMMENDATION
   assert classify_intent("법원역 근처 아파트 추천해줘") == Intent.RECOMMENDATION
+
+
+def test_embedding_intent_classifier_uses_top_k_majority_vote():
+  reference_sentences = {
+    Intent.RECOMMENDATION: ("recommend near station", "recommend by budget"),
+    Intent.COMPARISON: ("compare exact match",),
+  }
+  classifier = EmbeddingIntentClassifier(
+    FakeEmbeddingClient({
+      "recommend near station": [0.9, 0.1],
+      "recommend by budget": [0.8, 0.2],
+      "compare exact match": [1.0, 0.0],
+      "recommend question": [1.0, 0.0],
+    }),
+    reference_sentences=reference_sentences,
+    k=3,
+    threshold=0.55,
+  )
+
+  classification = classifier.classify("recommend question")
+
+  assert classification.intent == Intent.RECOMMENDATION
+  assert classification.confidence == pytest.approx(0.9938837346736189)
+
+
+def test_embedding_intent_classifier_returns_unsupported_below_threshold():
+  classifier = EmbeddingIntentClassifier(
+    FakeEmbeddingClient({
+      "legal contract": [1.0, 0.0],
+      "unrelated": [0.0, 1.0],
+    }),
+    reference_sentences={Intent.LEGAL_CONTRACT: ("legal contract",)},
+    k=1,
+    threshold=0.55,
+  )
+
+  classification = classifier.classify("unrelated")
+
+  assert classification.intent == Intent.UNSUPPORTED
+  assert classification.confidence == pytest.approx(0.0)
+
+
+def test_chatbot_fragment_includes_classifier_confidence(monkeypatch):
+  monkeypatch.setattr(
+    "app.chatbot.service.chatbot_service.classify_intent_with_confidence",
+    lambda _: IntentClassification(Intent.SIMPLE_LOOKUP, 0.77),
+  )
+
+  fragment = handle_fragment(None, 0, "잠실엘스 알려줘")
+
+  assert fragment["intent"] == "simple_lookup"
+  assert fragment["status"] == "not_implemented"
+  assert fragment["confidence"] == 0.77
 
 
 def test_chatbot_splitter_separates_multi_intent_questions():

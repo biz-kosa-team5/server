@@ -6,9 +6,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .. import repository
 from ..models import Complex, Region, Trade
 from ..poi.service import filter_items_by_poi_distance, find_poi_groups
+from ..real_estate import clamp, latest_trade_for_complex, optional_float
 
 
 DEFAULT_RADIUS_M = 800
@@ -38,7 +38,7 @@ def recommend_apartments_by_filters(session: Session, slots: dict[str, Any]) -> 
   candidates = list(session.scalars(statement).all())
   filtered = []
   for complex_row in candidates:
-    latest_trade = repository.latest_trade_for_complex(session, complex_row.id)
+    latest_trade = latest_trade_for_complex(session, complex_row.id)
     if latest_trade_matches(latest_trade, normalized):
       filtered.append(query_result_item(complex_row, latest_trade))
 
@@ -56,7 +56,7 @@ def recommend_apartments_by_filters(session: Session, slots: dict[str, Any]) -> 
     filtered = filter_items_by_poi_distance(filtered, poi_group, radius_m(normalized))
 
   filtered = sort_query_results(filtered, clean_text(normalized.get("sort_by")))
-  limit = repository.clamp(optional_int(normalized.get("limit")) or DEFAULT_LIMIT, 1, 100)
+  limit = clamp(optional_int(normalized.get("limit")) or DEFAULT_LIMIT, 1, 100)
   results = filtered[:limit]
 
   return {
@@ -85,7 +85,7 @@ def latest_trade_matches(latest_trade: Trade | None, slots: dict[str, Any]) -> b
   # 가격/평수 조건은 단지의 최신 거래 한 건을 기준으로 비교한다.
   min_price = optional_int(slots.get("min_price"))
   max_price = optional_int(slots.get("max_price"))
-  min_pyeong = repository.optional_float(slots.get("min_pyeong"))
+  min_pyeong = optional_float(slots.get("min_pyeong"))
 
   if latest_trade is None:
     return min_price is None and max_price is None and min_pyeong is None
@@ -156,7 +156,7 @@ def built_year_filter(slots: dict[str, Any]) -> int | None:
 
 
 def radius_m(slots: dict[str, Any]) -> int:
-  return repository.clamp(optional_int(slots.get("radius_m")) or DEFAULT_RADIUS_M, 1, 10000)
+  return clamp(optional_int(slots.get("radius_m")) or DEFAULT_RADIUS_M, 1, 10000)
 
 
 def clean_text(value: Any) -> str | None:
@@ -172,4 +172,3 @@ def optional_int(value: Any) -> int | None:
   if value in (None, ""):
     return None
   return int(value)
-

@@ -5,10 +5,10 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from .. import repository
 from ..models import Complex, Trade
 from ..poi.service import nearest_poi_for_complex
 from ..recommendation.service import clean_text, empty_result, normalize_slots
+from ..real_estate import latest_trade_for_complex
 
 
 PYEONG_DIVISOR = 3.3058
@@ -41,7 +41,7 @@ def compare_apartments_by_metrics(session: Session, slots: dict[str, Any]) -> di
       missing.append(name)
       continue
 
-    latest_trade = repository.latest_trade_for_complex(session, complex_row.id)
+    latest_trade = latest_trade_for_complex(session, complex_row.id)
     item = comparison_item(complex_row, latest_trade, metrics)
     if "nearest_station" in metrics:
       item["nearestStation"] = nearest_poi_for_complex(session, complex_row, "station")
