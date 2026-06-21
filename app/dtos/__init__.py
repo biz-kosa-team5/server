@@ -1,3 +1,1 @@
-from .query_dto import QueryRequest
-
-__all__ = ["QueryRequest"]
+"""Legacy DTO package kept for compatibility during package rehomes."""
