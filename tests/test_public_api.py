@@ -144,3 +144,73 @@ def test_poi_seed_supports_station_and_education_categories():
   assert station.latitude == 37.491897
   assert counts == {"education": 329, "station": 86}
   assert education_subtypes == {"유치원", "초등학교", "중학교", "고등학교", "특수학교"}
+
+
+def test_query_recommendation_filters_by_non_null_price_and_district_slots():
+  response = client.post(
+    "/api/v1/query",
+    json={
+      "intent": "recommendation",
+      "slots": {
+        "district": "송파구",
+        "station_name": None,
+        "school_type": None,
+        "max_price": 400000,
+        "min_price": None,
+        "min_households": None,
+        "min_pyeong": None,
+        "is_new_build": False,
+        "min_built_year": None,
+        "radius_m": None,
+        "sort_by": "price_desc",
+      },
+    },
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is True
+  assert [item["complexName"] for item in payload["results"]] == ["잠실엘스"]
+  assert payload["results"][0]["latestDealAmount"] == 330000
+
+
+def test_query_recommendation_filters_by_station_distance():
+  response = client.post(
+    "/api/v1/query",
+    json={
+      "intent": "recommendation",
+      "slots": {
+        "district": "서초구",
+        "station_name": "서초역",
+        "radius_m": 3000,
+        "sort_by": "distance_asc",
+      },
+    },
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is True
+  assert payload["results"][0]["complexName"] == "반포자이"
+  assert payload["results"][0]["matchedPois"][0]["name"] == "서초역"
+
+
+def test_query_comparison_returns_requested_metrics():
+  response = client.post(
+    "/api/v1/query",
+    json={
+      "intent": "comparison",
+      "slots": {
+        "apartment_names": ["래미안대치팰리스", "잠실엘스"],
+        "metrics": ["latest_price", "nearest_school"],
+        "school_type": "초등학교",
+      },
+    },
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is True
+  assert [item["complexName"] for item in payload["results"]] == ["래미안대치팰리스", "잠실엘스"]
+  assert payload["results"][0]["latestDealAmount"] == 435000
+  assert payload["results"][0]["nearestSchool"]["subtype"] == "초등학교"

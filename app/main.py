@@ -8,6 +8,7 @@ from fastapi import Body, Depends, FastAPI, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from . import repository
+from .controllers.query_controller import router as query_router
 from .database import get_session, initialize_database
 from .legal_rag.controller import router as legal_rag_router
 
@@ -23,6 +24,7 @@ app = FastAPI(
   version="0.1.0",
   lifespan=lifespan,
 )
+app.include_router(query_router)
 app.include_router(legal_rag_router)
 
 
