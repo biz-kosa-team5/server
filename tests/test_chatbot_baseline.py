@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.chatbot.dto import Intent
 from app.chatbot.service.classifier import classify_intent
+from app.chatbot.service.splitter import split_question
 from app.comparison.extractor import extract_compare_slots
 from app.main import app
 from app.recommendation.extractor import extract_recommendation_slots
@@ -17,6 +18,19 @@ def test_chatbot_classifier_routes_docs_intents():
   assert classify_intent("최근 많이 오른 아파트 알려줘") == Intent.PRICE_TREND
   assert classify_intent("매매 계약 시 확인할 법률 알려줘") == Intent.LEGAL_CONTRACT
   assert classify_intent("오늘 점심 뭐 먹지?") == Intent.UNSUPPORTED
+
+
+def test_chatbot_classifier_does_not_treat_connectors_as_comparison_intent():
+  assert classify_intent("은마아파트 위치랑 잠실엘스 시세 알려줘") == Intent.SIMPLE_LOOKUP
+  assert classify_intent("강남구와 서초구 아파트 추천해줘") == Intent.RECOMMENDATION
+  assert classify_intent("법원역 근처 아파트 추천해줘") == Intent.RECOMMENDATION
+
+
+def test_chatbot_splitter_separates_multi_intent_questions():
+  assert split_question("30억 이하 아파트 추천하고 매매 계약 법률 알려줘") == [
+    "30억 이하 아파트",
+    "매매 계약 법률 알려줘",
+  ]
 
 
 def test_recommendation_extractor_builds_filter_slots():
