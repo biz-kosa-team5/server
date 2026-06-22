@@ -15,6 +15,21 @@ def test_health():
   assert response.json() == {"status": "ok"}
 
 
+def test_vite_dev_origin_can_call_public_api():
+  response = client.options(
+    "/api/v1/map/complexes",
+    headers={
+      "Origin": "http://localhost:5173",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers": "content-type",
+    },
+  )
+
+  assert response.status_code == 200
+  assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+  assert "POST" in response.headers["access-control-allow-methods"]
+
+
 def test_map_region_markers_are_arrays():
   response = client.post(
     "/api/v1/map/regions",
