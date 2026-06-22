@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..model import DailyLegalTermMapping, LawDocument
@@ -12,6 +12,8 @@ from ..model import DailyLegalTermMapping, LawDocument
 class RankedLawDocument:
   document: LawDocument
   score: float
+  vector_score: float = 0.0
+  keyword_score: float = 0.0
 
 
 class LegalRagQueryDao:
@@ -24,16 +26,43 @@ class LegalRagQueryDao:
       select(DailyLegalTermMapping)
       .order_by(DailyLegalTermMapping.priority.desc(), DailyLegalTermMapping.id)
     ).all()
-    return [
+    matched_rows = [
       row
       for row in rows
       if row.daily_term and row.daily_term.lower() in normalized_question
+    ]
+    matched_terms = {row.daily_term.lower() for row in matched_rows}
+    longest_terms = {
+      term
+      for term in matched_terms
+      if not any(term != other and term in other for other in matched_terms)
+    }
+    return [
+      row
+      for row in matched_rows
+      if row.daily_term.lower() in longest_terms
     ]
 
   def list_embedded_law_documents(self) -> list[LawDocument]:
     return list(self.session.scalars(
       select(LawDocument)
       .where(LawDocument.embedding.is_not(None))
+      .order_by(LawDocument.id)
+    ).all())
+
+  def keyword_law_documents(self, terms: list[str]) -> list[LawDocument]:
+    normalized_terms = list(dict.fromkeys(term.strip() for term in terms if term.strip()))
+    if not normalized_terms:
+      return []
+
+    filters = [
+      field.ilike(f"%{term}%")
+      for term in normalized_terms
+      for field in (LawDocument.law_name, LawDocument.article_title, LawDocument.content)
+    ]
+    return list(self.session.scalars(
+      select(LawDocument)
+      .where(LawDocument.embedding.is_not(None), or_(*filters))
       .order_by(LawDocument.id)
     ).all())
 
@@ -53,6 +82,10 @@ class LegalRagQueryDao:
       .limit(top_k)
     ).all()
     return [
-      RankedLawDocument(document=row[0], score=max(0.0, 1.0 - float(row[1])))
+      RankedLawDocument(
+        document=row[0],
+        score=max(0.0, 1.0 - float(row[1])),
+        vector_score=max(0.0, 1.0 - float(row[1])),
+      )
       for row in rows
     ]
