@@ -4,7 +4,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..handler import fragment_result, get_handler
+from .dispatcher import dispatch_text
+from .handler import fragment_result
 from .classifier import classify_intent_with_confidence
 from .splitter import split_question
 
@@ -30,7 +31,7 @@ def handle_chatbot_query(session: Session, question: str) -> dict[str, Any]:
 def handle_fragment(session: Session, index: int, text: str) -> dict[str, Any]:
   classification = classify_intent_with_confidence(text)
   intent = classification.intent
-  handler_result = get_handler(intent).handle(session, text)
+  handler_result = dispatch_text(session, intent, text)
   return fragment_result(
     index,
     text,

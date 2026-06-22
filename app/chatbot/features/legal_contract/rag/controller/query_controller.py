@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.database import get_session
 from ..dao import LegalRagQueryDao
 from ..dto.query import LegalRagQueryRequest, LegalRagQueryResponse
-from ..service.query import LegalRagQueryService
+from ..service.query_service import LegalRagQueryService
 
 
 router = APIRouter(tags=["legal-rag-query"])

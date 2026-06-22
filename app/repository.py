@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from .api.health import health
-from .api.real_estate import (
+from .health import health
+from .real_estate import (
   DEFAULT_BOUNDS,
   age_from_use_date,
   bounds_from_payload,

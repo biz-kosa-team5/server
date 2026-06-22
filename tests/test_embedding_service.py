@@ -3,7 +3,7 @@ from datetime import date
 from app.database import SessionLocal, initialize_database
 from app.chatbot.features.legal_contract.rag.dao import DocumentIndexingDao
 from app.chatbot.features.legal_contract.rag.model import LawDocument
-from app.chatbot.features.legal_contract.rag.service.indexing import DocumentEmbeddingService, build_embedding_text
+from app.chatbot.features.legal_contract.rag.service.indexing_service import DocumentEmbeddingService, build_embedding_text
 
 
 class FakeEmbeddingClient:

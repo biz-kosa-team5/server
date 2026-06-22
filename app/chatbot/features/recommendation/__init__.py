@@ -1,5 +1,4 @@
-from .flow import recommend_apartments_by_filters
-from .handler import RecommendationHandler
+from .service import run_recommendation
 from .slots import extract_recommendation_slots
 
-__all__ = ["RecommendationHandler", "extract_recommendation_slots", "recommend_apartments_by_filters"]
+__all__ = ["extract_recommendation_slots", "run_recommendation"]

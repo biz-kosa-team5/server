@@ -89,13 +89,13 @@ def test_embedding_intent_classifier_returns_unsupported_below_threshold():
 def test_chatbot_fragment_includes_classifier_confidence(monkeypatch):
   monkeypatch.setattr(
     "app.chatbot.service.chatbot_service.classify_intent_with_confidence",
-    lambda _: IntentClassification(Intent.SIMPLE_LOOKUP, 0.77),
+    lambda _: IntentClassification(Intent.UNSUPPORTED, 0.77),
   )
 
   fragment = handle_fragment(None, 0, "잠실엘스 알려줘")
 
-  assert fragment["intent"] == "simple_lookup"
-  assert fragment["status"] == "not_implemented"
+  assert fragment["intent"] == "unsupported"
+  assert fragment["status"] == "unsupported"
   assert fragment["confidence"] == 0.77
 
 
@@ -154,7 +154,7 @@ def test_chatbot_query_runs_comparison_handler():
   assert [item["complexName"] for item in payload["result"]["results"]] == ["래미안대치팰리스", "잠실엘스"]
 
 
-def test_chatbot_query_returns_not_implemented_for_future_handlers():
+def test_chatbot_query_runs_simple_lookup_handler():
   response = client.post(
     "/api/v1/chatbot/query",
     json={"question": "잠실엘스 어디 있어?"},
@@ -162,10 +162,12 @@ def test_chatbot_query_returns_not_implemented_for_future_handlers():
 
   assert response.status_code == 200
   payload = response.json()
-  assert payload["success"] is False
+  assert payload["success"] is True
   assert payload["fragments"][0]["intent"] == "simple_lookup"
-  assert payload["fragments"][0]["status"] == "not_implemented"
-  assert payload["result"]["reason"] == "not_implemented"
+  assert payload["fragments"][0]["status"] == "handled"
+  assert payload["result"]["handler"] == "simple_lookup"
+  assert payload["result"]["query_type"] == "location"
+  assert payload["result"]["data"][0]["complex_name"] == "잠실엘스"
 
 
 def test_chatbot_query_returns_unsupported_for_unrelated_questions():

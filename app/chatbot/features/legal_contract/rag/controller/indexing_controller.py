@@ -10,7 +10,7 @@ from ..dto.indexing import (
   EmbeddingStatusResponse,
   EmbeddingSummary,
 )
-from ..service.indexing import DocumentEmbeddingService
+from ..service.indexing_service import DocumentEmbeddingService
 
 
 router = APIRouter(tags=["legal-rag-indexing"])

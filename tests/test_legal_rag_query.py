@@ -6,7 +6,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.chatbot.features.legal_contract.rag.dao import LegalRagQueryDao
 from app.chatbot.features.legal_contract.rag.model import DailyLegalTermMapping, LawDocument
-from app.chatbot.features.legal_contract.rag.service.query import LegalRagQueryService, build_query_embedding_text
+from app.chatbot.features.legal_contract.rag.service.query_service import LegalRagQueryService, build_query_embedding_text
 from app.models import Base
 
 

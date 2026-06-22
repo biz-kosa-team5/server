@@ -11,7 +11,7 @@ from ..dto.ingestion import (
   LawIngestRequest, LawParseRequest, MappingParseSummary, OperationSummary,
   ParseSummary, TermIngestRequest,
 )
-from ..service.ingestion import (
+from ..service.ingestion_service import (
   LawCollectionService, LawParsingService, TermMappingCollectionService,
   TermMappingParsingService,
 )

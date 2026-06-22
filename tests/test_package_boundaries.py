@@ -11,7 +11,9 @@ def test_main_only_composes_routers():
 
   assert "@app.get" not in source
   assert "@app.post" not in source
-  assert "include_router(api_router)" in source
+  assert "include_router(health.router)" in source
+  assert "include_router(chatbot_router)" in source
+  assert "include_router(real_estate_router)" in source
 
 
 def test_openapi_keeps_existing_public_paths_registered():
@@ -33,15 +35,19 @@ def test_openapi_keeps_existing_public_paths_registered():
     "/api/v1/complex/{complex_id}",
     "/api/v1/complex/{complex_id}/trades",
     "/api/v1/complex/{complex_id}/trade-trend",
+    "/api/v1/query",
+    "/api/v1/chatbot/query",
+    "/api/laws/query",
   }
 
   assert expected_paths.issubset(paths)
 
 
-def test_http_entry_points_are_grouped_under_api_package():
-  assert Path("app/api/health.py").exists()
-  assert Path("app/api/real_estate.py").exists()
-  assert Path("app/api/chatbot.py").exists()
+def test_http_entry_points_are_grouped_under_domain_packages():
+  assert not Path("app/api").exists()
+  assert Path("app/health.py").exists()
+  assert Path("app/real_estate/controller/router.py").exists()
+  assert Path("app/chatbot/controller/router.py").exists()
   assert not Path("app/public_api").exists()
 
 
@@ -52,30 +58,57 @@ def test_chatbot_flow_packages_own_slot_extraction_and_execution():
     assert Path("app/chatbot/features", feature).exists()
 
   assert Path("app/chatbot/features/recommendation/slots.py").exists()
-  assert Path("app/chatbot/features/recommendation/flow.py").exists()
+  assert Path("app/chatbot/features/recommendation/service.py").exists()
   assert Path("app/chatbot/features/comparison/slots.py").exists()
-  assert Path("app/chatbot/features/comparison/flow.py").exists()
+  assert Path("app/chatbot/features/comparison/service.py").exists()
+  assert Path("app/chatbot/features/simple_lookup/slots.py").exists()
+  assert Path("app/chatbot/features/simple_lookup/dto.py").exists()
+  assert Path("app/chatbot/features/simple_lookup/policy.py").exists()
+  assert Path("app/chatbot/features/simple_lookup/dao.py").exists()
+  assert Path("app/chatbot/features/simple_lookup/service.py").exists()
+  assert Path("app/chatbot/features/price_trend/slots.py").exists()
+  assert Path("app/chatbot/features/price_trend/dto.py").exists()
+  assert Path("app/chatbot/features/price_trend/policy.py").exists()
+  assert Path("app/chatbot/features/price_trend/dao.py").exists()
+  assert Path("app/chatbot/features/price_trend/service.py").exists()
+  assert Path("app/chatbot/service/handler.py").exists()
+  assert Path("app/chatbot/service/registry.py").exists()
+  assert not Path("app/chatbot/handler").exists()
   assert not Path("app/chatbot/slots").exists()
   assert not Path("app/chatbot/flows").exists()
   assert not Path("app/recommendation").exists()
   assert not Path("app/comparison").exists()
+  assert not Path("app/simple_lookup").exists()
+  assert not Path("app/h4").exists()
 
 
 def test_legal_contract_rag_is_nested_under_chatbot_feature():
   assert Path("app/chatbot/features/legal_contract/rag/dto").exists()
-  assert Path("app/chatbot/features/legal_contract/rag/service/query").exists()
+  assert Path("app/chatbot/features/legal_contract/rag/service/query_service.py").exists()
+  assert Path("app/chatbot/features/legal_contract/rag/service/indexing_service.py").exists()
+  assert Path("app/chatbot/features/legal_contract/rag/service/ingestion_service.py").exists()
   assert not Path("app/legal_rag").exists()
 
 
 def test_infrastructure_packages_are_nested_under_product_boundaries():
   assert Path("app/chatbot/embedding").exists()
-  assert Path("app/real_estate/poi.py").exists()
+  assert Path("app/real_estate/support/poi.py").exists()
+  assert Path("app/real_estate/controller").exists()
+  assert Path("app/real_estate/service").exists()
+  assert Path("app/real_estate/dao").exists()
+  assert Path("app/real_estate/dto").exists()
   assert not Path("app/embeddings").exists()
   assert not Path("app/poi").exists()
   assert not Path("app/dtos").exists()
-  assert not Path("app/chatbot/dto").exists()
   assert not Path("app/api/map/dto.py").exists()
   assert not Path("app/api/complex/dto.py").exists()
+
+
+def test_generic_registry_covers_every_intent():
+  from app.chatbot.dto import Intent
+  from app.chatbot.service.registry import FEATURE_REGISTRY
+
+  assert set(FEATURE_REGISTRY) == set(Intent)
 
 
 def test_repository_shim_keeps_legacy_public_functions():
