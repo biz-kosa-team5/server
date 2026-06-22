@@ -54,7 +54,8 @@ def test_chatbot_flow_packages_own_slot_extraction_and_execution():
   assert not Path("app/comparison").exists()
 
 
-def test_dto_packages_removed_from_refactored_boundaries():
+def test_only_legal_rag_keeps_dto_package_for_api_contract_models():
+  assert Path("app/legal_rag/dto").exists()
   assert not Path("app/dtos").exists()
   assert not Path("app/chatbot/dto").exists()
   assert not Path("app/api/map/dto.py").exists()

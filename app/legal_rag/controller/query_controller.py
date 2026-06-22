@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from ...database import get_session
 from ..dao import LegalRagQueryDao
-from ..schema.query import LegalRagQueryRequest, LegalRagQueryResponse
+from ..dto.query import LegalRagQueryRequest, LegalRagQueryResponse
 from ..service.query import LegalRagQueryService
 
 

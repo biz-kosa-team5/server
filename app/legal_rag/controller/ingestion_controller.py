@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ...database import get_session
 from ..client import LawApiClient
 from ..dao import LegalDataDao
-from ..schema.ingestion import (
+from ..dto.ingestion import (
   LawIngestRequest, LawParseRequest, MappingParseSummary, OperationSummary,
   ParseSummary, TermIngestRequest,
 )
