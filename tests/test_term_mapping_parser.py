@@ -1,4 +1,4 @@
-from app.legal_rag.parser import parse_term_mappings
+from app.chatbot.features.legal_contract.rag.parser import parse_term_mappings
 
 
 def test_parse_term_mappings_normalizes_relation():

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.models import Base, Complex, Region, Trade
-from app.simple_lookup import (
+from app.chatbot.features.simple_lookup import (
   LocationData,
   SimpleLookupDao,
   SimpleLookupPolicyError,
@@ -25,7 +25,7 @@ from app.simple_lookup import (
   resolve_complex_target,
   resolve_nearest_actual_area,
 )
-from app.simple_lookup.policy import subtract_calendar_period
+from app.chatbot.features.simple_lookup.policy import subtract_calendar_period
 
 
 def make_session() -> Session:

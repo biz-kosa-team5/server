@@ -1,4 +1,4 @@
-from app.legal_rag.parser import parse_law
+from app.chatbot.features.legal_contract.rag.parser import parse_law
 
 
 def test_parse_law_skips_deleted_articles():

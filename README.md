@@ -4,13 +4,139 @@ FastAPI 기반 public read API다. v1은 `web` 프론트가 호출하는 조회 
 
 ## 구조
 
-- `app/main.py`: FastAPI endpoint
+- `app/main.py`: FastAPI app 생성과 router composition만 담당
+- `app/health.py`: 운영 확인용 `GET /health` 단일 router
 - `app/models.py`: SQLAlchemy ORM model
 - `app/database.py`: SQLAlchemy engine/session, local seed bootstrap
-- `app/repository.py`: public read query
+- `app/repository.py`: 기존 import 호환용 legacy shim
+- `app/chatbot/`: 자연어 질문을 intent 단위로 분해, 분류, 실행, 병합하는 orchestration 계층
+- `app/real_estate/`: 부동산 조회/계산 도메인. controller/service/dto/dao/support로 분리
 - `db/init/`: PostgreSQL 컨테이너 최초 생성 시 실행되는 schema/seed SQL
 - `db/import/`: 나중에 큰 SQL 파일을 둘 위치
 - `scripts/import-sql.sh`: SQL 또는 SQL gzip 파일을 PostgreSQL 컨테이너에 적용하는 스크립트
+
+주요 server tree:
+
+```text
+app/
+  main.py
+  database.py
+  models.py
+  repository.py
+  health.py
+
+  chatbot/
+    controller/
+      router.py
+      chatbot_controller.py
+      intent_query_controller.py
+    dto/
+      chatbot_dto.py
+      intent_query_dto.py
+    service/
+      chatbot_service.py
+      classifier.py
+      splitter.py
+      dispatcher.py
+      handler.py
+      registry.py
+    features/
+      simple_lookup/
+        slots.py
+        dto.py
+        policy.py
+        dao.py
+        service.py
+      recommendation/
+        slots.py
+        service.py
+      comparison/
+        slots.py
+        service.py
+      price_trend/
+        slots.py
+        dto.py
+        policy.py
+        dao.py
+        service.py
+      legal_contract/
+        slots.py
+        service.py
+        rag/
+          controller/
+            router.py
+            ingestion_controller.py
+            indexing_controller.py
+            query_controller.py
+          dto/
+            ingestion.py
+            indexing.py
+            query.py
+          service/
+            ingestion_service.py
+            indexing_service.py
+            query_service.py
+          dao/
+            ingestion_dao.py
+            indexing_dao.py
+            query_dao.py
+          parser/
+            law_parser.py
+            term_mapping_parser.py
+          client/
+            law_api_client.py
+            openai_embedding_client.py
+          model/
+            entities.py
+      unsupported/
+        slots.py
+        service.py
+    embedding/
+
+  real_estate/
+    controller/
+      router.py
+      map_controller.py
+      search_controller.py
+      region_controller.py
+      complex_controller.py
+      trade_controller.py
+    dto/
+      map_dto.py
+      search_dto.py
+      region_dto.py
+      complex_dto.py
+      trade_dto.py
+    service/
+      map_service.py
+      search_service.py
+      region_service.py
+      complex_service.py
+      trade_service.py
+      lookup_service.py
+      recommendation_service.py
+      comparison_service.py
+      trend_service.py
+    dao/
+      region_dao.py
+      complex_dao.py
+      trade_dao.py
+      poi_dao.py
+    support/
+      formatting.py
+      filters.py
+      poi.py
+```
+
+의존 방향은 controller -> service -> dao/support다. controller는 FastAPI parsing, `Depends(get_session)`, HTTP 404 변환만 담당하고, service는 use case 조회/계산, dao는 SQLAlchemy DB 접근, support는 포맷팅/필터/거리 계산 같은 순수 helper를 담당한다.
+
+챗봇 intent flow:
+
+```text
+question -> split -> classify -> registry -> slots -> service -> fragment -> merge
+```
+
+`chatbot.service.registry`는 모든 `Intent`를 `FeatureSpec(intent, slot_extractor, service, default_status)`로 등록한다. `chatbot.service.handler.GenericIntentHandler` 하나가 슬롯 추출과 feature service 실행을 공통 처리한다. `recommendation`/`comparison`은 `real_estate.service.*`를 호출하고, `legal_contract`는 feature 내부 `rag` 검색 엔진을 호출한다. `/api/laws/*` 검증 endpoint는 `chatbot/features/legal_contract/rag/controller`에 남아 있으며 chatbot router에서 include한다.
 
 ## 로컬 단독 실행
 
