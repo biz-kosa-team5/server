@@ -4,11 +4,9 @@ import re
 from typing import Any
 
 from .dto import (
-  LocationData,
-  SimpleLookupQueryType,
-  SimpleLookupResult,
-  SimpleLookupSlots,
-  TradeData,
+  QUERY_LOCATION,
+  QUERY_RECORD_HIGH,
+  QUERY_TRADE_HISTORY,
 )
 
 
@@ -45,10 +43,10 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
 
 def infer_query_type(text: str) -> str:
   if any(token in text for token in ("어디", "위치", "주소", "좌표")):
-    return SimpleLookupQueryType.LOCATION.value
+    return QUERY_LOCATION
   if "최고가" in text or "가장 비싼" in text:
-    return SimpleLookupQueryType.RECORD_HIGH.value
-  return SimpleLookupQueryType.TRADE_HISTORY.value
+    return QUERY_RECORD_HIGH
+  return QUERY_TRADE_HISTORY
 
 
 def extract_complex_name(text: str) -> str | None:
@@ -65,10 +63,5 @@ def extract_complex_name(text: str) -> str | None:
 
 
 __all__ = [
-  "LocationData",
-  "SimpleLookupQueryType",
-  "SimpleLookupResult",
-  "SimpleLookupSlots",
-  "TradeData",
   "extract_simple_lookup_slots",
 ]
