@@ -17,6 +17,8 @@ class LegalSourceResponse(BaseModel):
   paragraph_no: str = Field(alias="paragraphNo")
   content: str
   score: float
+  vector_score: float | None = Field(default=None, alias="vectorScore")
+  keyword_score: float | None = Field(default=None, alias="keywordScore")
   source_url: str | None = Field(alias="sourceUrl")
   effective_date: str = Field(alias="effectiveDate")
 
