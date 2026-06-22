@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import csv
 import os
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from threading import Lock
+from typing import TypeVar
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
@@ -13,7 +14,9 @@ from sqlalchemy.pool import StaticPool
 
 from .models import Base, Complex, Poi, Region, Trade
 
+
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///:memory:"
+BATCH_SIZE = 1000
 
 database_url = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 engine = create_engine(
@@ -25,6 +28,8 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
 _initialized = False
 _initialization_lock = Lock()
+
+T = TypeVar("T")
 
 
 def get_session() -> Generator[Session, None, None]:
@@ -54,44 +59,120 @@ def ensure_initialized() -> None:
 
 
 def seed(session: Session) -> None:
-  session.add_all([
-    Region(id=11680, code="11680", name="강남구", type="district", center_lat=37.517236, center_lng=127.047325, unit_cnt_sum=124000),
-    Region(id=11650, code="11650", name="서초구", type="district", center_lat=37.483712, center_lng=127.032411, unit_cnt_sum=98000),
-    Region(id=11710, code="11710", name="송파구", type="district", center_lat=37.514544, center_lng=127.105922, unit_cnt_sum=142000),
-  ])
-  session.add_all([
-    Complex(id=1001, region_id=11680, parcel_id=9001001, pnu="1168010600106330000", name="래미안대치팰리스", trade_name="래미안대치팰리스", address="서울특별시 강남구 대치동 633", latitude=37.497953, longitude=127.058064, dong_cnt=13, unit_cnt=1608, use_date="2015-09-18"),
-    Complex(id=1002, region_id=11680, parcel_id=9001002, pnu="1168010700104670000", name="압구정현대", trade_name="현대아파트", address="서울특별시 강남구 압구정동 467", latitude=37.531884, longitude=127.028751, dong_cnt=83, unit_cnt=3130, use_date="1976-06-07"),
-    Complex(id=1003, region_id=11650, parcel_id=9002001, pnu="1165010800116880000", name="반포자이", trade_name="반포자이", address="서울특별시 서초구 반포동 20-43", latitude=37.507074, longitude=127.014592, dong_cnt=44, unit_cnt=3410, use_date="2009-03-31"),
-    Complex(id=1004, region_id=11710, parcel_id=9003001, pnu="1171010100100190000", name="잠실엘스", trade_name="잠실엘스", address="서울특별시 송파구 잠실동 19", latitude=37.513346, longitude=127.083151, dong_cnt=72, unit_cnt=5678, use_date="2008-09-30"),
-    Complex(id=1005, region_id=11680, parcel_id=9001003, pnu="1168010300100000000", name="좌표없는강남단지", trade_name="좌표없는강남단지", address="서울특별시 강남구 개포동", latitude=None, longitude=None, dong_cnt=4, unit_cnt=320, use_date="1999-01-12"),
-  ])
-  session.add_all([
-    Trade(id=5001, complex_id=1001, deal_date="2025-12-15", deal_amount=405000, excl_area=84.97, floor=12, apt_dong="101"),
-    Trade(id=5002, complex_id=1001, deal_date="2026-01-10", deal_amount=420000, excl_area=84.97, floor=18, apt_dong="102"),
-    Trade(id=5003, complex_id=1001, deal_date="2026-01-28", deal_amount=435000, excl_area=114.14, floor=9, apt_dong="103"),
-    Trade(id=5004, complex_id=1002, deal_date="2025-11-20", deal_amount=510000, excl_area=131.48, floor=8, apt_dong="10"),
-    Trade(id=5005, complex_id=1002, deal_date="2026-02-05", deal_amount=528000, excl_area=131.48, floor=11, apt_dong="11"),
-    Trade(id=5006, complex_id=1003, deal_date="2026-01-21", deal_amount=395000, excl_area=84.94, floor=17, apt_dong="110"),
-    Trade(id=5007, complex_id=1003, deal_date="2026-03-02", deal_amount=610000, excl_area=165.05, floor=20, apt_dong="210"),
-    Trade(id=5008, complex_id=1004, deal_date="2026-02-14", deal_amount=310000, excl_area=84.80, floor=15, apt_dong="117"),
-    Trade(id=5009, complex_id=1004, deal_date="2026-03-19", deal_amount=330000, excl_area=84.80, floor=21, apt_dong="118"),
-    Trade(id=5010, complex_id=1005, deal_date="2026-01-05", deal_amount=180000, excl_area=59.97, floor=7, apt_dong="1"),
-  ])
-  seed_pois(session)
+  import_regions(session)
+  import_complexes(session)
+  import_trades(session)
+  import_pois(session)
 
 
-def seed_pois(session: Session) -> None:
-  pois_csv = Path(__file__).resolve().parents[1] / "db" / "import" / "pois.csv"
-  with pois_csv.open(encoding="utf-8-sig", newline="") as input_file:
-    reader = csv.DictReader(input_file)
-    session.add_all([
-      Poi(
-        category=row["category"],
-        name=row["name"],
-        subtype=row["subtype"],
-        latitude=float(row["latitude"]),
-        longitude=float(row["longitude"]),
-      )
-      for row in reader
-    ])
+def import_regions(session: Session) -> None:
+  add_csv_objects(
+    session,
+    "regions.csv",
+    lambda row: Region(
+      id=to_int(row["id"]),
+      code=row["code"],
+      name=row["name"],
+      type=row["type"],
+      parent_id=to_optional_int(row["parent_id"]),
+      center_lat=to_float(row["center_lat"]),
+      center_lng=to_float(row["center_lng"]),
+      unit_cnt_sum=to_optional_int(row["unit_cnt_sum"]),
+    ),
+  )
+
+
+def import_complexes(session: Session) -> None:
+  add_csv_objects(
+    session,
+    "complexes.csv",
+    lambda row: Complex(
+      id=to_int(row["id"]),
+      region_id=to_int(row["region_id"]),
+      parcel_id=to_int(row["parcel_id"]),
+      pnu=to_optional_text(row["pnu"]),
+      name=row["name"],
+      trade_name=to_optional_text(row["trade_name"]),
+      address=to_optional_text(row["address"]),
+      latitude=to_optional_float(row["latitude"]),
+      longitude=to_optional_float(row["longitude"]),
+      dong_cnt=to_optional_int(row["dong_cnt"]),
+      unit_cnt=to_optional_int(row["unit_cnt"]),
+      use_date=to_optional_text(row["use_date"]),
+    ),
+  )
+
+
+def import_trades(session: Session) -> None:
+  add_csv_objects(
+    session,
+    "trades.csv",
+    lambda row: Trade(
+      id=to_int(row["id"]),
+      complex_id=to_int(row["complex_id"]),
+      deal_date=row["deal_date"],
+      deal_amount=to_int(row["deal_amount"]),
+      excl_area=to_float(row["excl_area"]),
+      floor=to_optional_int(row["floor"]),
+      apt_dong=to_optional_text(row["apt_dong"]),
+    ),
+  )
+
+
+def import_pois(session: Session) -> None:
+  add_csv_objects(
+    session,
+    "pois.csv",
+    lambda row: Poi(
+      category=row["category"],
+      name=row["name"],
+      subtype=row["subtype"],
+      latitude=to_float(row["latitude"]),
+      longitude=to_float(row["longitude"]),
+    ),
+  )
+
+
+def add_csv_objects(session: Session, filename: str, factory: Callable[[dict[str, str]], T]) -> None:
+  batch: list[T] = []
+  for row in read_import_csv(filename):
+    batch.append(factory(row))
+    if len(batch) >= BATCH_SIZE:
+      session.add_all(batch)
+      session.flush()
+      batch.clear()
+  if batch:
+    session.add_all(batch)
+    session.flush()
+
+
+def read_import_csv(filename: str) -> Generator[dict[str, str], None, None]:
+  path = Path(__file__).resolve().parents[1] / "db" / "import" / filename
+  with path.open(encoding="utf-8-sig", newline="") as input_file:
+    yield from csv.DictReader(input_file)
+
+
+def to_optional_text(value: str | None) -> str | None:
+  if value is None or value == "":
+    return None
+  return value
+
+
+def to_int(value: str) -> int:
+  return int(value)
+
+
+def to_optional_int(value: str | None) -> int | None:
+  if value is None or value == "":
+    return None
+  return int(value)
+
+
+def to_float(value: str) -> float:
+  return float(value)
+
+
+def to_optional_float(value: str | None) -> float | None:
+  if value is None or value == "":
+    return None
+  return float(value)

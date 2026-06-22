@@ -1,12 +1,10 @@
 from .dao import complexes_for_parcel, latest_trade_for_complex
 from .service import (
-  compare_apartments_by_metrics,
   complex_marker,
   complex_markers,
   detail_by_complex,
   detail_by_parcel,
   parcel_complexes,
-  recommend_apartments_by_filters,
   region_complexes,
   region_detail,
   region_markers,
@@ -40,7 +38,6 @@ __all__ = [
   "age_from_use_date",
   "bounds_from_payload",
   "clamp",
-  "compare_apartments_by_metrics",
   "complex_detail",
   "complex_marker",
   "complex_markers",
@@ -55,7 +52,6 @@ __all__ = [
   "optional_float",
   "optional_int",
   "parcel_complexes",
-  "recommend_apartments_by_filters",
   "region_complexes",
   "region_detail",
   "region_markers",

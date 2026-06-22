@@ -59,4 +59,13 @@ def calculate_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> 
 def normalize_station_name(value: str | None) -> str | None:
   if value is None:
     return None
-  return value if value.endswith("역") else f"{value}역"
+  station_name = value.strip()
+  if not station_name:
+    return None
+  if not station_name.endswith("역"):
+    station_name = f"{station_name}역"
+
+  aliases = {
+    "잠실역": "잠실(송파구청)역",
+  }
+  return aliases.get(station_name, station_name)
