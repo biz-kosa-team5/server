@@ -11,7 +11,7 @@ from ...embeddings import (
   SentenceTransformerEmbeddingClient,
   top_k_nearest_neighbors,
 )
-from ..dto.chatbot_dto import Intent
+from ..types import Intent
 
 
 LEGAL_KEYWORDS = ("법률", "계약", "매매 시", "확인할 사항", "세금", "등기")

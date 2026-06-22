@@ -11,7 +11,7 @@ def test_main_only_composes_routers():
 
   assert "@app.get" not in source
   assert "@app.post" not in source
-  assert "include_router(public_api_router)" in source
+  assert "include_router(api_router)" in source
 
 
 def test_openapi_keeps_existing_public_paths_registered():
@@ -38,12 +38,27 @@ def test_openapi_keeps_existing_public_paths_registered():
   assert expected_paths.issubset(paths)
 
 
-def test_public_api_modules_are_grouped_under_public_api_package():
-  public_modules = {"health", "map", "search", "region", "complex", "trade"}
+def test_http_entry_points_are_grouped_under_api_package():
+  assert Path("app/api/health.py").exists()
+  assert Path("app/api/real_estate.py").exists()
+  assert Path("app/api/chatbot.py").exists()
+  assert not Path("app/public_api").exists()
 
-  for module in public_modules:
-    assert Path("app/public_api", module, "controller.py").exists()
-    assert not Path("app", module, "controller.py").exists()
+
+def test_chatbot_flow_packages_own_slot_extraction_and_execution():
+  assert Path("app/chatbot/slots/recommendation.py").exists()
+  assert Path("app/chatbot/slots/comparison.py").exists()
+  assert Path("app/chatbot/flows/recommendation.py").exists()
+  assert Path("app/chatbot/flows/comparison.py").exists()
+  assert not Path("app/recommendation").exists()
+  assert not Path("app/comparison").exists()
+
+
+def test_dto_packages_removed_from_refactored_boundaries():
+  assert not Path("app/dtos").exists()
+  assert not Path("app/chatbot/dto").exists()
+  assert not Path("app/api/map/dto.py").exists()
+  assert not Path("app/api/complex/dto.py").exists()
 
 
 def test_repository_shim_keeps_legacy_public_functions():

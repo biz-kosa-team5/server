@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chatbot.dto import Intent
+from app.chatbot.types import Intent
 from app.chatbot.service.chatbot_service import handle_fragment
 from app.chatbot.service.classifier import (
   EmbeddingIntentClassifier,
@@ -9,9 +9,8 @@ from app.chatbot.service.classifier import (
   classify_intent,
 )
 from app.chatbot.service.splitter import split_question
-from app.comparison.extractor import extract_compare_slots
+from app.chatbot.slots import extract_compare_slots, extract_recommendation_slots
 from app.main import app
-from app.recommendation.extractor import extract_recommendation_slots
 
 
 client = TestClient(app)

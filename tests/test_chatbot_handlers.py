@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.chatbot.dto import FragmentStatus, Intent
+from app.chatbot.types import FragmentStatus, Intent
 from app.chatbot.handler import HANDLER_REGISTRY
 from app.chatbot.handler.legal_contract_handler import LegalContractHandler
 

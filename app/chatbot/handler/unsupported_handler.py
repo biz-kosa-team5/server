@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from ..dto.chatbot_dto import FragmentStatus
+from ..types import FragmentStatus
 from .base import HandlerResult
 
 

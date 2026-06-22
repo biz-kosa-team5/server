@@ -5,7 +5,7 @@ from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
-from ..dto.chatbot_dto import FragmentStatus, Intent
+from ..types import FragmentStatus, Intent
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ..dto.chatbot_dto import Intent
+from ..types import Intent
 from .base import IntentHandler
 from .comparison_handler import ComparisonHandler
 from .legal_contract_handler import LegalContractHandler

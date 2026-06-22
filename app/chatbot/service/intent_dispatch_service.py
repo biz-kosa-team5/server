@@ -4,20 +4,18 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ...comparison.service import compare_apartments_by_metrics
-from ...recommendation.service import recommend_apartments_by_filters
-from ..dto.intent_query_dto import QueryRequest
+from ..flows import compare_apartments_by_metrics, recommend_apartments_by_filters
 
 
-def handle_query(session: Session, payload: QueryRequest) -> dict[str, Any]:
+def handle_query(session: Session, intent: str | None, slots: dict[str, Any]) -> dict[str, Any]:
   # 이 service는 슬롯을 채우지 않는다. 이미 채워진 JSON을 보고 실행할 조회만 고른다.
-  intent = clean_text(payload.intent)
+  intent = clean_text(intent)
 
   if intent == "recommendation":
-    return recommend_apartments_by_filters(session, payload.slots)
+    return recommend_apartments_by_filters(session, slots)
 
   if intent == "comparison":
-    return compare_apartments_by_metrics(session, payload.slots)
+    return compare_apartments_by_metrics(session, slots)
 
   return {
     "success": False,
@@ -33,4 +31,3 @@ def clean_text(value: Any) -> str | None:
   if text == "" or text.lower() in {"none", "null"}:
     return None
   return text
-

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from ...recommendation.extractor import extract_recommendation_slots
-from ...recommendation.service import recommend_apartments_by_filters
-from ..dto.chatbot_dto import FragmentStatus
+from ..flows import recommend_apartments_by_filters
+from ..slots import extract_recommendation_slots
+from ..types import FragmentStatus
 from .base import HandlerResult
 
 

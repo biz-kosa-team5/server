@@ -5,7 +5,7 @@ from app.embeddings import OpenAIEmbeddingClient
 
 from ...database import get_session
 from ..dao import DocumentIndexingDao
-from ..dto.indexing_dto import (
+from ..schema.indexing import (
   EmbeddingRequest,
   EmbeddingStatusResponse,
   EmbeddingSummary,

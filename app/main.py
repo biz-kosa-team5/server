@@ -5,11 +5,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from .chatbot.controller import router as chatbot_router
 from .chatbot.service.classifier import get_intent_classifier
 from .database import initialize_database
 from .legal_rag.controller import router as legal_rag_router
-from .public_api import router as public_api_router
+from .api import router as api_router
 
 
 @asynccontextmanager
@@ -24,6 +23,5 @@ app = FastAPI(
   version="0.1.0",
   lifespan=lifespan,
 )
-app.include_router(public_api_router)
-app.include_router(chatbot_router)
+app.include_router(api_router)
 app.include_router(legal_rag_router)

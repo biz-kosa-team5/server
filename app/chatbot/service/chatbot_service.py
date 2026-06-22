@@ -4,14 +4,13 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..dto.chatbot_dto import ChatbotQueryRequest
 from ..handler import fragment_result, get_handler
 from .classifier import classify_intent_with_confidence
 from .splitter import split_question
 
 
-def handle_chatbot_query(session: Session, payload: ChatbotQueryRequest) -> dict[str, Any]:
-  question = payload.question.strip()
+def handle_chatbot_query(session: Session, question: str) -> dict[str, Any]:
+  question = question.strip()
   fragments = [
     handle_fragment(session, index, fragment)
     for index, fragment in enumerate(split_question(question) or [question])
