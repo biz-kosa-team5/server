@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from ..database import get_session
+from ...database import get_session
 from .dto import ComplexSearchResponse, ComplexSuggestionResponse
 from .service import search_complexes, suggest_complexes
 

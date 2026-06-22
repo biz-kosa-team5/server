@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Complex
-from ..real_estate import complex_detail, complex_summary
+from ...models import Complex
+from ...real_estate import complex_detail, complex_summary
 
 
 def detail_by_parcel(

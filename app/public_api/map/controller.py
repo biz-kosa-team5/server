@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
-from ..database import get_session
+from ...database import get_session
 from .dto import ComplexMarkerResponse, RegionMarkerResponse
 from .service import list_complex_markers, list_region_markers
 

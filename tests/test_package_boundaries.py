@@ -1,4 +1,5 @@
 import inspect
+from pathlib import Path
 
 from app import repository
 from app.main import app
@@ -35,6 +36,14 @@ def test_openapi_keeps_existing_public_paths_registered():
   }
 
   assert expected_paths.issubset(paths)
+
+
+def test_public_api_modules_are_grouped_under_public_api_package():
+  public_modules = {"health", "map", "search", "region", "complex", "trade"}
+
+  for module in public_modules:
+    assert Path("app/public_api", module, "controller.py").exists()
+    assert not Path("app", module, "controller.py").exists()
 
 
 def test_repository_shim_keeps_legacy_public_functions():

@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Complex, Region
-from ..real_estate import clamp, complex_summary
+from ...models import Complex, Region
+from ...real_estate import clamp, complex_summary
 
 
 def root_regions(session: Session) -> list[dict[str, Any]]:

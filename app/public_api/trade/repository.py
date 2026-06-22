@@ -4,8 +4,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..models import Complex
-from ..real_estate import complexes_for_parcel, trades_page, trend_for_complex_ids
+from ...models import Complex
+from ...real_estate import complexes_for_parcel, trades_page, trend_for_complex_ids
 
 
 def trades_by_parcel(

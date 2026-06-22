@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from ..database import get_session
+from ...database import get_session
 from .dto import TradePageResponse, TradeTrendPointResponse
 from .service import (
   get_trades_by_complex,

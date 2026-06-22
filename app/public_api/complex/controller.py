@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from ..database import get_session
+from ...database import get_session
 from .dto import ComplexDetailResponse, ParcelComplexResponse
 from .service import get_detail_by_complex, get_detail_by_parcel, list_parcel_complexes
 

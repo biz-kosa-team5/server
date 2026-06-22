@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from ..models import Complex
+from ...models import Complex
 
 
 def search_complexes(session: Session, query: str, limit: int = 20) -> list[dict[str, Any]]:

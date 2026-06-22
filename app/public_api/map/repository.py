@@ -5,8 +5,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Complex, Region, Trade
-from ..real_estate import latest_trade_for_complex, optional_float
+from ...models import Complex, Region, Trade
+from ...real_estate import latest_trade_for_complex, optional_float
 
 
 DEFAULT_BOUNDS = {

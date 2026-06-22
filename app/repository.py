@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from .complex.repository import detail_by_complex, detail_by_parcel, parcel_complexes
-from .health.service import health
-from .map.repository import (
+from .public_api.complex.repository import detail_by_complex, detail_by_parcel, parcel_complexes
+from .public_api.health.service import health
+from .public_api.map.repository import (
   DEFAULT_BOUNDS,
   age_from_use_date,
   bounds_from_payload,
@@ -23,9 +23,9 @@ from .real_estate.repository import (
   trades_page,
   trend_for_complex_ids,
 )
-from .region.repository import region_complexes, region_detail, root_regions
-from .search.repository import complex_search_result, search_complexes, search_suggestions
-from .trade.repository import trades_by_complex, trades_by_parcel, trend_by_complex, trend_by_parcel
+from .public_api.region.repository import region_complexes, region_detail, root_regions
+from .public_api.search.repository import complex_search_result, search_complexes, search_suggestions
+from .public_api.trade.repository import trades_by_complex, trades_by_parcel, trend_by_complex, trend_by_parcel
 
 __all__ = [
   "DEFAULT_BOUNDS",
