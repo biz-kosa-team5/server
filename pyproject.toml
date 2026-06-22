@@ -5,6 +5,8 @@ description = "FastAPI read API for Gangnam three-district apartment trades"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110",
+  "langchain>=0.3",
+  "langchain-openai>=0.2",
   "openai>=1.50",
   "pgvector>=0.3",
   "psycopg[binary]>=3.2",
