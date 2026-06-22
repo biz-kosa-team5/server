@@ -4,9 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.legal_rag.dao import LegalRagQueryDao
-from app.legal_rag.model import DailyLegalTermMapping, LawDocument
-from app.legal_rag.service.query import LegalRagQueryService, build_query_embedding_text
+from app.chatbot.features.legal_contract.rag.dao import LegalRagQueryDao
+from app.chatbot.features.legal_contract.rag.model import DailyLegalTermMapping, LawDocument
+from app.chatbot.features.legal_contract.rag.service.query import LegalRagQueryService, build_query_embedding_text
 from app.models import Base
 
 

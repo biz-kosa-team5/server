@@ -1,9 +1,9 @@
 from datetime import date
 
 from app.database import SessionLocal, initialize_database
-from app.legal_rag.dao import DocumentIndexingDao
-from app.legal_rag.model import LawDocument
-from app.legal_rag.service.indexing import DocumentEmbeddingService, build_embedding_text
+from app.chatbot.features.legal_contract.rag.dao import DocumentIndexingDao
+from app.chatbot.features.legal_contract.rag.model import LawDocument
+from app.chatbot.features.legal_contract.rag.service.indexing import DocumentEmbeddingService, build_embedding_text
 
 
 class FakeEmbeddingClient:

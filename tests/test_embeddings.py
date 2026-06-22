@@ -1,8 +1,8 @@
 import pytest
 
-from app.embeddings import cosine_similarity, top_k_nearest_neighbors
-from app.embeddings import OpenAIEmbeddingClient as CommonOpenAIEmbeddingClient
-from app.legal_rag.client import OpenAIEmbeddingClient as LegalRagOpenAIEmbeddingClient
+from app.chatbot.embedding import cosine_similarity, top_k_nearest_neighbors
+from app.chatbot.embedding import OpenAIEmbeddingClient as ChatbotOpenAIEmbeddingClient
+from app.chatbot.features.legal_contract.rag.client import OpenAIEmbeddingClient as LegalContractOpenAIEmbeddingClient
 
 
 def test_cosine_similarity_scores_and_top_k_neighbors_are_sorted():
@@ -37,5 +37,5 @@ def test_cosine_similarity_rejects_dimension_mismatch():
     cosine_similarity([1.0, 0.0], [1.0])
 
 
-def test_legal_rag_openai_embedding_client_import_is_compatibility_shim():
-  assert LegalRagOpenAIEmbeddingClient is CommonOpenAIEmbeddingClient
+def test_legal_contract_openai_embedding_client_uses_chatbot_embedding_client():
+  assert LegalContractOpenAIEmbeddingClient is ChatbotOpenAIEmbeddingClient

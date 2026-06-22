@@ -46,16 +46,32 @@ def test_http_entry_points_are_grouped_under_api_package():
 
 
 def test_chatbot_flow_packages_own_slot_extraction_and_execution():
-  assert Path("app/chatbot/slots/recommendation.py").exists()
-  assert Path("app/chatbot/slots/comparison.py").exists()
-  assert Path("app/chatbot/flows/recommendation.py").exists()
-  assert Path("app/chatbot/flows/comparison.py").exists()
+  expected_features = {"simple_lookup", "recommendation", "comparison", "price_trend", "legal_contract"}
+
+  for feature in expected_features:
+    assert Path("app/chatbot/features", feature).exists()
+
+  assert Path("app/chatbot/features/recommendation/slots.py").exists()
+  assert Path("app/chatbot/features/recommendation/flow.py").exists()
+  assert Path("app/chatbot/features/comparison/slots.py").exists()
+  assert Path("app/chatbot/features/comparison/flow.py").exists()
+  assert not Path("app/chatbot/slots").exists()
+  assert not Path("app/chatbot/flows").exists()
   assert not Path("app/recommendation").exists()
   assert not Path("app/comparison").exists()
 
 
-def test_only_legal_rag_keeps_dto_package_for_api_contract_models():
-  assert Path("app/legal_rag/dto").exists()
+def test_legal_contract_rag_is_nested_under_chatbot_feature():
+  assert Path("app/chatbot/features/legal_contract/rag/dto").exists()
+  assert Path("app/chatbot/features/legal_contract/rag/service/query").exists()
+  assert not Path("app/legal_rag").exists()
+
+
+def test_infrastructure_packages_are_nested_under_product_boundaries():
+  assert Path("app/chatbot/embedding").exists()
+  assert Path("app/real_estate/poi.py").exists()
+  assert not Path("app/embeddings").exists()
+  assert not Path("app/poi").exists()
   assert not Path("app/dtos").exists()
   assert not Path("app/chatbot/dto").exists()
   assert not Path("app/api/map/dto.py").exists()

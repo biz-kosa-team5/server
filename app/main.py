@@ -7,7 +7,6 @@ from fastapi import FastAPI
 
 from .chatbot.service.classifier import get_intent_classifier
 from .database import initialize_database
-from .legal_rag.controller import router as legal_rag_router
 from .api import router as api_router
 
 
@@ -24,4 +23,3 @@ app = FastAPI(
   lifespan=lifespan,
 )
 app.include_router(api_router)
-app.include_router(legal_rag_router)

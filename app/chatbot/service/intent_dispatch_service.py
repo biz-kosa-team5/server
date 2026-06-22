@@ -4,7 +4,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from ..flows import compare_apartments_by_metrics, recommend_apartments_by_filters
+from ..features.comparison import compare_apartments_by_metrics
+from ..features.recommendation import recommend_apartments_by_filters
 
 
 def handle_query(session: Session, intent: str | None, slots: dict[str, Any]) -> dict[str, Any]:

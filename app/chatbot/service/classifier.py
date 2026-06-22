@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
 
-from ...embeddings import (
+from ..embedding import (
   DEFAULT_SENTENCE_TRANSFORMER_MODEL,
   EmbeddingClient,
   SentenceTransformerEmbeddingClient,

@@ -9,7 +9,8 @@ from app.chatbot.service.classifier import (
   classify_intent,
 )
 from app.chatbot.service.splitter import split_question
-from app.chatbot.slots import extract_compare_slots, extract_recommendation_slots
+from app.chatbot.features.comparison import extract_compare_slots
+from app.chatbot.features.recommendation import extract_recommendation_slots
 from app.main import app
 
 
