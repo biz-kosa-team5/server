@@ -1,32 +1,19 @@
-INSERT INTO regions (id, code, name, type, parent_id, center_lat, center_lng, unit_cnt_sum) VALUES
-  (11680, '11680', '강남구', 'district', NULL, 37.517236, 127.047325, 124000),
-  (11650, '11650', '서초구', 'district', NULL, 37.483712, 127.032411, 98000),
-  (11710, '11710', '송파구', 'district', NULL, 37.514544, 127.105922, 142000)
-ON CONFLICT (id) DO NOTHING;
+TRUNCATE TABLE trades, complexes, regions, pois RESTART IDENTITY;
 
-INSERT INTO complexes (
+COPY regions (id, code, name, type, parent_id, center_lat, center_lng, unit_cnt_sum)
+FROM '/import/regions.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+COPY complexes (
   id, region_id, parcel_id, pnu, name, trade_name, address,
   latitude, longitude, dong_cnt, unit_cnt, use_date
-) VALUES
-  (1001, 11680, 9001001, '1168010600106330000', '래미안대치팰리스', '래미안대치팰리스', '서울특별시 강남구 대치동 633', 37.497953, 127.058064, 13, 1608, '2015-09-18'),
-  (1002, 11680, 9001002, '1168010700104670000', '압구정현대', '현대아파트', '서울특별시 강남구 압구정동 467', 37.531884, 127.028751, 83, 3130, '1976-06-07'),
-  (1003, 11650, 9002001, '1165010800116880000', '반포자이', '반포자이', '서울특별시 서초구 반포동 20-43', 37.507074, 127.014592, 44, 3410, '2009-03-31'),
-  (1004, 11710, 9003001, '1171010100100190000', '잠실엘스', '잠실엘스', '서울특별시 송파구 잠실동 19', 37.513346, 127.083151, 72, 5678, '2008-09-30'),
-  (1005, 11680, 9001003, '1168010300100000000', '좌표없는강남단지', '좌표없는강남단지', '서울특별시 강남구 개포동', NULL, NULL, 4, 320, '1999-01-12')
-ON CONFLICT (id) DO NOTHING;
+)
+FROM '/import/complexes.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
 
-INSERT INTO trades (id, complex_id, deal_date, deal_amount, excl_area, floor, apt_dong) VALUES
-  (5001, 1001, '2025-12-15', 405000, 84.97, 12, '101'),
-  (5002, 1001, '2026-01-10', 420000, 84.97, 18, '102'),
-  (5003, 1001, '2026-01-28', 435000, 114.14, 9, '103'),
-  (5004, 1002, '2025-11-20', 510000, 131.48, 8, '10'),
-  (5005, 1002, '2026-02-05', 528000, 131.48, 11, '11'),
-  (5006, 1003, '2026-01-21', 395000, 84.94, 17, '110'),
-  (5007, 1003, '2026-03-02', 610000, 165.05, 20, '210'),
-  (5008, 1004, '2026-02-14', 310000, 84.80, 15, '117'),
-  (5009, 1004, '2026-03-19', 330000, 84.80, 21, '118'),
-  (5010, 1005, '2026-01-05', 180000, 59.97, 7, '1')
-ON CONFLICT (id) DO NOTHING;
+COPY trades (id, complex_id, deal_date, deal_amount, excl_area, floor, apt_dong)
+FROM '/import/trades.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
 
 COPY pois (category, name, subtype, latitude, longitude)
 FROM '/import/pois.csv'
