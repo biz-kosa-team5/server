@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_session
@@ -17,7 +17,10 @@ def map_regions(
   payload: dict[str, Any] = Body(default={}),
   session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
-  return region_markers(session, payload)
+  try:
+    return region_markers(session, payload)
+  except ValueError as error:
+    raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post("/map/complexes")
