@@ -15,6 +15,8 @@ from .formatting import (
   trade_item,
 )
 from .poi import (
+  PoiDistanceService,
+  PoiDistanceServiceDep,
   calculate_distance_m,
   filter_items_by_poi_distance,
   nearest_poi_for_complex,
@@ -24,6 +26,8 @@ from .poi import (
 
 __all__ = [
   "DEFAULT_BOUNDS",
+  "PoiDistanceService",
+  "PoiDistanceServiceDep",
   "age_from_use_date",
   "bounds_from_payload",
   "built_year_from_use_date",
