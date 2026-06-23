@@ -1,4 +1,4 @@
-"""H1 단순조회 DTO·Policy·DAO·Service 테스트."""
+"""단순조회 DTO·Policy·DAO·Service 테스트."""
 
 from datetime import date
 

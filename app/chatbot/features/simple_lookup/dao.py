@@ -147,7 +147,7 @@ class SimpleLookupDao:
             ],
         )
 
-    # Trade ORM 객체를 H1 응답용 dict로 변환
+    # Trade ORM 객체를 단순조회 응답용 dict로 변환
     @staticmethod
     def _to_trade_dict(row: Trade, complex_: Complex) -> dict[str, Any]:
         return {
