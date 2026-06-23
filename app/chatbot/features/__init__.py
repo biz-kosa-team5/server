@@ -1,1 +1,1 @@
-"""Intent feature packages for chatbot flows."""
+"""Feature packages that can be exposed as chatbot tools."""

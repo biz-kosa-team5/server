@@ -35,7 +35,6 @@ def test_openapi_keeps_existing_public_paths_registered():
     "/api/v1/complex/{complex_id}",
     "/api/v1/complex/{complex_id}/trades",
     "/api/v1/complex/{complex_id}/trade-trend",
-    "/api/v1/query",
     "/api/v1/chatbot/query",
     "/api/laws/query",
   }
@@ -71,8 +70,10 @@ def test_chatbot_flow_packages_own_slot_extraction_and_execution():
   assert Path("app/chatbot/features/price_trend/policy.py").exists()
   assert Path("app/chatbot/features/price_trend/dao.py").exists()
   assert Path("app/chatbot/features/price_trend/service.py").exists()
-  assert Path("app/chatbot/service/handler.py").exists()
-  assert Path("app/chatbot/service/registry.py").exists()
+  assert not Path("app/chatbot/service/classifier.py").exists()
+  assert not Path("app/chatbot/service/dispatcher.py").exists()
+  assert not Path("app/chatbot/service/handler.py").exists()
+  assert not Path("app/chatbot/service/registry.py").exists()
   assert not Path("app/chatbot/handler").exists()
   assert not Path("app/chatbot/slots").exists()
   assert not Path("app/chatbot/flows").exists()
@@ -91,24 +92,17 @@ def test_legal_contract_rag_is_nested_under_chatbot_feature():
 
 
 def test_infrastructure_packages_are_nested_under_product_boundaries():
-  assert Path("app/chatbot/embedding").exists()
   assert Path("app/real_estate/support/poi.py").exists()
   assert Path("app/real_estate/controller").exists()
   assert Path("app/real_estate/service").exists()
   assert Path("app/real_estate/dao").exists()
   assert Path("app/real_estate/dto").exists()
+  assert Path("app/chatbot/embedding").exists()
   assert not Path("app/embeddings").exists()
   assert not Path("app/poi").exists()
   assert not Path("app/dtos").exists()
   assert not Path("app/api/map/dto.py").exists()
   assert not Path("app/api/complex/dto.py").exists()
-
-
-def test_generic_registry_covers_every_intent():
-  from app.chatbot.dto import Intent
-  from app.chatbot.service.registry import FEATURE_REGISTRY
-
-  assert set(FEATURE_REGISTRY) == set(Intent)
 
 
 def test_repository_shim_keeps_legacy_public_functions():

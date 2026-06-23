@@ -5,12 +5,10 @@ from fastapi import APIRouter
 from app.chatbot.features.legal_contract.rag.controller.router import router as legal_contract_rag_router
 
 from .chatbot_controller import router as chatbot_router
-from .intent_query_controller import router as intent_query_router
 
 
 router = APIRouter()
 v1_router = APIRouter(prefix="/api/v1")
-v1_router.include_router(intent_query_router)
 v1_router.include_router(chatbot_router)
 
 router.include_router(v1_router)

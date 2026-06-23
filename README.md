@@ -29,17 +29,11 @@ app/
     controller/
       router.py
       chatbot_controller.py
-      intent_query_controller.py
     dto/
       chatbot_dto.py
-      intent_query_dto.py
     service/
       chatbot_service.py
-      classifier.py
       splitter.py
-      dispatcher.py
-      handler.py
-      registry.py
     features/
       simple_lookup/
         slots.py
@@ -72,10 +66,14 @@ app/
             ingestion.py
             indexing.py
             query.py
+            answer.py
           service/
             ingestion_service.py
             indexing_service.py
             query_service.py
+            answer_service.py
+            answer_generator.py
+            answer_prompt.py
           dao/
             ingestion_dao.py
             indexing_dao.py
@@ -88,9 +86,6 @@ app/
             openai_embedding_client.py
           model/
             entities.py
-      unsupported/
-        slots.py
-        service.py
     embedding/
 
   real_estate/
@@ -130,13 +125,13 @@ app/
 
 의존 방향은 controller -> service -> dao/support다. controller는 FastAPI parsing, `Depends(get_session)`, HTTP 404 변환만 담당하고, service는 use case 조회/계산, dao는 SQLAlchemy DB 접근, support는 포맷팅/필터/거리 계산 같은 순수 helper를 담당한다.
 
-챗봇 intent flow:
+챗봇 endpoint flow:
 
 ```text
-question -> split -> classify -> registry -> slots -> service -> fragment -> merge
+question -> split -> agent/tool-calling pending fragment -> merge
 ```
 
-`chatbot.service.registry`는 모든 `Intent`를 `FeatureSpec(intent, slot_extractor, service, default_status)`로 등록한다. `chatbot.service.handler.GenericIntentHandler` 하나가 슬롯 추출과 feature service 실행을 공통 처리한다. `recommendation`/`comparison`은 `real_estate.service.*`를 호출하고, `legal_contract`는 feature 내부 `rag` 검색 엔진을 호출한다. `/api/laws/*` 검증 endpoint는 `chatbot/features/legal_contract/rag/controller`에 남아 있으며 chatbot router에서 include한다.
+기존 intent classifier/dispatcher/registry 레이어는 Agent tool-calling 전환을 위해 제거했다. 현재 `/api/v1/chatbot/query`는 요청 검증, 질문 분리, 공통 응답 형태만 유지하며 tool 연결 전 placeholder 응답을 반환한다. `recommendation`/`comparison` 등 feature별 slot/service 코드는 다음 단계에서 LangChain `@tool` 함수 내부에서 재사용할 수 있게 남겨둔다. `/api/laws/*` 검증 endpoint는 `chatbot/features/legal_contract/rag/controller`에 남아 있으며 chatbot router에서 include한다.
 
 ## 로컬 단독 실행
 
@@ -160,7 +155,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8080
 ```
 
-`requirements.txt`에는 현재 public read API 의존성과 docs에 계획된 후속 작업 의존성을 함께 둔다. 포함 범위는 레거시 스냅샷 적재/검증, BGE-M3 임베딩 기반 질의 분류, 유사도/kNN 평가, pgvector 기반 문서 검색, 법률/계약 RAG, LLM 기반 질문 분해/병합 실험이다.
+`requirements.txt`에는 현재 public read API 의존성과 docs에 계획된 후속 작업 의존성을 함께 둔다. 포함 범위는 레거시 스냅샷 적재/검증, 법률/계약 데이터 수집·파싱, LLM 기반 질문 분해/병합 실험이다.
 
 ## PostgreSQL 실행
 

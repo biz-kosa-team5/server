@@ -4,18 +4,19 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .dispatcher import dispatch_text
-from .handler import fragment_result
-from .classifier import classify_intent_with_confidence
+from .agent import ChatbotAgent, agent_execution_failed_result
 from .splitter import split_question
 
 
-def handle_chatbot_query(session: Session, question: str) -> dict[str, Any]:
-  question = question.strip()
-  fragments = [
-    handle_fragment(session, index, fragment)
-    for index, fragment in enumerate(split_question(question) or [question])
-  ]
+async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
+  question = str(payload.get("question", "")).strip()
+  try:
+    agent = ChatbotAgent(session)
+  except Exception:
+    agent = None
+  fragments = []
+  for index, fragment in enumerate(split_question(question) or [question]):
+    fragments.append(await handle_fragment(agent, index, fragment))
   results = [fragment["result"] for fragment in fragments]
   success = any(result.get("success") is True for result in results)
 
@@ -28,16 +29,15 @@ def handle_chatbot_query(session: Session, question: str) -> dict[str, Any]:
   }
 
 
-def handle_fragment(session: Session, index: int, text: str) -> dict[str, Any]:
-  classification = classify_intent_with_confidence(text)
-  intent = classification.intent
-  handler_result = dispatch_text(session, intent, text)
-  return fragment_result(
-    index,
-    text,
-    intent,
-    handler_result.status,
-    handler_result.slots,
-    handler_result.result,
-    classification.confidence,
-  )
+async def handle_fragment(agent: ChatbotAgent | None, index: int, text: str) -> dict[str, Any]:
+  try:
+    result = agent_execution_failed_result() if agent is None else await agent.run(text)
+  except Exception:
+    result = agent_execution_failed_result()
+
+  return {
+    "index": index,
+    "text": text,
+    "status": "handled" if result.get("success") is True else "not_handled",
+    "result": result,
+  }

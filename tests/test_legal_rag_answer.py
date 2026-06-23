@@ -51,7 +51,6 @@ def source(document_id: int, score: float = 0.7) -> dict:
     "paragraphNo": "",
     "content": f"법령 근거 {document_id}",
     "score": score,
-    "vectorScore": score - 0.1,
     "keywordScore": 0.1,
     "sourceUrl": f"https://example.com/{document_id}",
     "effectiveDate": "2026-06-22",
