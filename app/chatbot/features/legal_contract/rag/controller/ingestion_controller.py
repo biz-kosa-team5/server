@@ -5,15 +5,16 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_session
-from ..client import LawApiClient
 from ..dao import LegalDataDao
 from ..dto.ingestion import (
   LawIngestRequest, LawParseRequest, MappingParseSummary, OperationSummary,
   ParseSummary, TermIngestRequest,
 )
-from ..service.ingestion_service import (
-  LawCollectionService, LawParsingService, TermMappingCollectionService,
-  TermMappingParsingService,
+from .dependencies import (
+  LawCollectionServiceDep,
+  LawParsingServiceDep,
+  TermMappingCollectionServiceDep,
+  TermMappingParsingServiceDep,
 )
 
 
@@ -21,23 +22,23 @@ router = APIRouter(tags=["legal-rag-ingestion"])
 
 
 @router.post("/api/laws/ingest/raw", response_model=OperationSummary)
-def ingest_raw(request: LawIngestRequest, session: Session = Depends(get_session)):
-  return LawCollectionService(LegalDataDao(session), LawApiClient()).ingest(request.keywords)
+def ingest_raw(request: LawIngestRequest, service: LawCollectionServiceDep):
+  return service.ingest(request.keywords)
 
 
 @router.post("/api/laws/parse", response_model=ParseSummary)
-def parse_documents(request: LawParseRequest, session: Session = Depends(get_session)):
-  return LawParsingService(LegalDataDao(session)).parse(request.raw_ids)
+def parse_documents(request: LawParseRequest, service: LawParsingServiceDep):
+  return service.parse(request.raw_ids)
 
 
 @router.post("/api/terms/ingest/raw", response_model=OperationSummary)
-def ingest_term_raw(request: TermIngestRequest, session: Session = Depends(get_session)):
-  return TermMappingCollectionService(LegalDataDao(session), LawApiClient()).ingest_raw(request.keywords)
+def ingest_term_raw(request: TermIngestRequest, service: TermMappingCollectionServiceDep):
+  return service.ingest_raw(request.keywords)
 
 
 @router.post("/api/terms/parse", response_model=MappingParseSummary)
-def parse_term_raw(request: LawParseRequest, session: Session = Depends(get_session)):
-  return TermMappingParsingService(LegalDataDao(session)).parse(request.raw_ids)
+def parse_term_raw(request: LawParseRequest, service: TermMappingParsingServiceDep):
+  return service.parse(request.raw_ids)
 
 
 @router.get("/api/terms/raw")
