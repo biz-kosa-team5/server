@@ -12,12 +12,14 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from .config import load_environment
 from .models import Base, Complex, Poi, Region, Trade
 
 
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///:memory:"
 BATCH_SIZE = 1000
 
+load_environment()
 database_url = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
 engine = create_engine(
   database_url,
