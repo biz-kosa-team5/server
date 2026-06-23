@@ -11,11 +11,12 @@ from app.chatbot.features.simple_lookup.dto import (
 )
 from app.models import Complex, Trade
 
-
+# 단순조회에서 단지 확정과 실제 DB 조회를 담당하는 DAO
 class SimpleLookupDao:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    # 단지명을 확정한 뒤 주소와 좌표 정보를 반환
     def find_location(self, criteria: SimpleLookupCriteria) -> list[dict[str, Any]]:
         complex_ = self._resolve_complex(criteria.complex_name)
 
@@ -38,6 +39,7 @@ class SimpleLookupDao:
             "longitude": complex_.longitude,
         }]
 
+    # 단지 확정 후 조건에 맞는 실거래 내역을 최신순으로 조회
     def find_trade_history(
         self,
         criteria: SimpleLookupCriteria,
@@ -59,6 +61,7 @@ class SimpleLookupDao:
 
         return [self._to_trade_dict(row, complex_) for row in rows]
 
+    # 단지 확정 후 조건에 맞는 거래 중 최고가 1건을 조회
     def find_record_high(
         self,
         criteria: SimpleLookupCriteria,
@@ -83,6 +86,7 @@ class SimpleLookupDao:
 
         return [self._to_trade_dict(row, complex_)]
 
+    # name/trade_name 기준으로 정확 일치 우선, 이후 부분 일치로 단지 확정
     def _resolve_complex(self, complex_name: str) -> Complex:
         pattern = f"%{complex_name}%"
         search_steps = [
@@ -105,6 +109,7 @@ class SimpleLookupDao:
             "일치하는 아파트 단지를 찾지 못했습니다.",
         )
 
+    # 전달받은 검색 조건으로 complexes 테이블에서 단지 후보 조회
     def _find_complexes(self, condition: Any) -> list[Complex]:
         stmt = (
             select(Complex)
@@ -112,7 +117,8 @@ class SimpleLookupDao:
             .order_by(Complex.name, Complex.id)
         )
         return list(self.session.scalars(stmt).all())
-
+    
+    # Criteria에 포함된 면적 조건과 기간 조건을 Trade 조회 쿼리에 적용
     def _apply_trade_filters(self, stmt, criteria: SimpleLookupCriteria):
         if criteria.area_min is not None:
             stmt = stmt.where(Trade.excl_area >= criteria.area_min)
@@ -124,6 +130,7 @@ class SimpleLookupDao:
             stmt = stmt.where(Trade.deal_date <= criteria.end_date.isoformat())
         return stmt
 
+    # 단지 후보가 여러 개인 경우 상위 단계에서 재질문할 수 있도록 후보 목록 생성
     @staticmethod
     def _ambiguous_error(candidates: list[Complex]) -> SimpleLookupError:
         return SimpleLookupError(
@@ -140,6 +147,7 @@ class SimpleLookupDao:
             ],
         )
 
+    # Trade ORM 객체를 H1 응답용 dict로 변환
     @staticmethod
     def _to_trade_dict(row: Trade, complex_: Complex) -> dict[str, Any]:
         return {

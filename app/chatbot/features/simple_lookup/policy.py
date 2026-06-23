@@ -27,7 +27,7 @@ PYEONG_TOLERANCE = 3.0
 
 PERIOD_PATTERN = re.compile(r"^(?P<amount>[1-9]\d*)(?P<unit>[my])$")
 
-
+# 슬롯을 정책에 맞게 검증하고 DAO 조회 조건인 Criteria로 변환
 def normalize_simple_lookup_policy(slots: SimpleLookupSlots) -> SimpleLookupCriteria:
     query_type = _normalize_query_type(slots.query_type)
     complex_name = _normalize_complex_name(slots.complex_name)
@@ -45,7 +45,7 @@ def normalize_simple_lookup_policy(slots: SimpleLookupSlots) -> SimpleLookupCrit
         limit=limit,
     )
 
-
+# 조회 유형 문자열을 정리하고 지원 가능한 query_type인지 검증
 def _normalize_query_type(query_type: str) -> str:
     query_type = query_type.strip()
 
@@ -57,7 +57,7 @@ def _normalize_query_type(query_type: str) -> str:
 
     return query_type
 
-
+# 조회 유형 문자열을 정리하고 지원 가능한 query_type인지 검증
 def _normalize_complex_name(complex_name: str) -> str:
     complex_name = " ".join(complex_name.split())
 
@@ -69,7 +69,7 @@ def _normalize_complex_name(complex_name: str) -> str:
 
     return complex_name
 
-
+# 전용면적 또는 평형 입력을 실제 조회용 면적 범위로 변환
 def _normalize_area(slots: SimpleLookupSlots) -> tuple[float | None, float | None]:
     if slots.area is not None and slots.pyeong is not None:
         raise SimpleLookupError(
@@ -104,7 +104,7 @@ def _normalize_area(slots: SimpleLookupSlots) -> tuple[float | None, float | Non
 
     return None, None
 
-
+# period, start_date, end_date 조합을 조회 시작일과 종료일로 정규화
 def _normalize_period(slots: SimpleLookupSlots) -> tuple[date | None, date | None]:
     period = slots.period
     start_date = slots.start_date
@@ -146,7 +146,7 @@ def _normalize_period(slots: SimpleLookupSlots) -> tuple[date | None, date | Non
         "지원하지 않는 기간 조건 조합입니다.",
     )
 
-
+# period, start_date, end_date 조합을 조회 시작일과 종료일로 정규화
 def _normalize_limit(query_type: str, limit: int | None) -> int | None:
     if query_type == QUERY_LOCATION:
         return None
@@ -174,19 +174,19 @@ def _normalize_limit(query_type: str, limit: int | None) -> int | None:
         "지원하지 않는 조회 유형입니다.",
     )
 
-
+# 기준일에서 period만큼 이전 날짜를 계산
 def _subtract_period(base_date: date, period: str) -> date:
     unit, amount = _parse_period(period)
     months = amount if unit == "m" else amount * 12
     return _shift_month(base_date, -months)
 
-
+# 시작일에서 period만큼 이후 날짜를 계산
 def _add_period(start_date: date, period: str) -> date:
     unit, amount = _parse_period(period)
     months = amount if unit == "m" else amount * 12
     return _shift_month(start_date, months)
 
-
+# period 문자열이 1m, 6m, 1y 형식인지 검증하고 단위와 값을 분리
 def _parse_period(period: str) -> tuple[str, int]:
     matched = PERIOD_PATTERN.fullmatch(period)
 
@@ -198,7 +198,7 @@ def _parse_period(period: str) -> tuple[str, int]:
 
     return matched.group("unit"), int(matched.group("amount"))
 
-
+# 월 단위 날짜 이동을 처리하고 월말 날짜를 보정
 def _shift_month(value: date, months: int) -> date:
     total_month = value.year * 12 + value.month - 1 + months
     target_year, zero_based_month = divmod(total_month, 12)
