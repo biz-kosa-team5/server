@@ -1,102 +1,20 @@
-import pytest
 from fastapi.testclient import TestClient
 
-from app.chatbot.types import Intent
-from app.chatbot.service.chatbot_service import handle_fragment
-from app.chatbot.service.classifier import (
-  EmbeddingIntentClassifier,
-  IntentClassification,
-  classify_intent,
-)
 from app.chatbot.service.splitter import split_question
 from app.chatbot.features.comparison import extract_compare_slots
 from app.chatbot.features.recommendation import extract_recommendation_slots
+from app.chatbot.service.tools import (
+  build_comparison_tool,
+  build_legal_contract_tool,
+  build_price_trend_tool,
+  build_recommendation_tool,
+  build_simple_lookup_tool,
+)
+from app.database import SessionLocal, ensure_initialized
 from app.main import app
 
 
 client = TestClient(app)
-
-
-class FakeEmbeddingClient:
-  model = "fake-embedding"
-  dimensions = 2
-
-  def __init__(self, vectors: dict[str, list[float]]):
-    self.vectors = vectors
-
-  def prepare_text(self, text: str) -> str:
-    return text.strip().lower()
-
-  def embed(self, texts: list[str]) -> list[list[float]]:
-    return [self.vectors[text] for text in texts]
-
-
-def test_chatbot_classifier_routes_docs_intents():
-  assert classify_intent("서초역 근처 30억 이하 신축 아파트 추천해줘") == Intent.RECOMMENDATION
-  assert classify_intent("래미안대치팰리스랑 잠실엘스 가격 비교해줘") == Intent.COMPARISON
-  assert classify_intent("잠실엘스 어디 있어?") == Intent.SIMPLE_LOOKUP
-  assert classify_intent("최근 많이 오른 아파트 알려줘") == Intent.PRICE_TREND
-  assert classify_intent("매매 계약 시 확인할 법률 알려줘") == Intent.LEGAL_CONTRACT
-  assert classify_intent("오늘 점심 뭐 먹지?") == Intent.UNSUPPORTED
-
-
-def test_chatbot_classifier_does_not_treat_connectors_as_comparison_intent():
-  assert classify_intent("은마아파트 위치랑 잠실엘스 시세 알려줘") == Intent.SIMPLE_LOOKUP
-  assert classify_intent("강남구와 서초구 아파트 추천해줘") == Intent.RECOMMENDATION
-  assert classify_intent("법원역 근처 아파트 추천해줘") == Intent.RECOMMENDATION
-
-
-def test_embedding_intent_classifier_uses_top_k_majority_vote():
-  reference_sentences = {
-    Intent.RECOMMENDATION: ("recommend near station", "recommend by budget"),
-    Intent.COMPARISON: ("compare exact match",),
-  }
-  classifier = EmbeddingIntentClassifier(
-    FakeEmbeddingClient({
-      "recommend near station": [0.9, 0.1],
-      "recommend by budget": [0.8, 0.2],
-      "compare exact match": [1.0, 0.0],
-      "recommend question": [1.0, 0.0],
-    }),
-    reference_sentences=reference_sentences,
-    k=3,
-    threshold=0.55,
-  )
-
-  classification = classifier.classify("recommend question")
-
-  assert classification.intent == Intent.RECOMMENDATION
-  assert classification.confidence == pytest.approx(0.9938837346736189)
-
-
-def test_embedding_intent_classifier_returns_unsupported_below_threshold():
-  classifier = EmbeddingIntentClassifier(
-    FakeEmbeddingClient({
-      "legal contract": [1.0, 0.0],
-      "unrelated": [0.0, 1.0],
-    }),
-    reference_sentences={Intent.LEGAL_CONTRACT: ("legal contract",)},
-    k=1,
-    threshold=0.55,
-  )
-
-  classification = classifier.classify("unrelated")
-
-  assert classification.intent == Intent.UNSUPPORTED
-  assert classification.confidence == pytest.approx(0.0)
-
-
-def test_chatbot_fragment_includes_classifier_confidence(monkeypatch):
-  monkeypatch.setattr(
-    "app.chatbot.service.chatbot_service.classify_intent_with_confidence",
-    lambda _: IntentClassification(Intent.UNSUPPORTED, 0.77),
-  )
-
-  fragment = handle_fragment(None, 0, "잠실엘스 알려줘")
-
-  assert fragment["intent"] == "unsupported"
-  assert fragment["status"] == "unsupported"
-  assert fragment["confidence"] == 0.77
 
 
 def test_chatbot_splitter_separates_multi_intent_questions():
@@ -124,37 +42,20 @@ def test_comparison_extractor_builds_subject_and_metric_slots():
   assert slots["metrics"] == ["latest_price", "pyeong", "price_per_pyeong"]
 
 
-def test_chatbot_query_runs_recommendation_handler():
-  response = client.post(
-    "/api/v1/chatbot/query",
-    json={"question": "송파구 40억 이하 아파트 추천해줘"},
-  )
+def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
+  class FakeChatbotAgent:
+    def __init__(self, _):
+      pass
 
-  assert response.status_code == 200
-  payload = response.json()
-  assert payload["success"] is True
-  assert payload["fragments"][0]["intent"] == "recommendation"
-  assert payload["fragments"][0]["status"] == "handled"
-  assert payload["result"]["handler"] == "recommendation"
-  assert [item["complexName"] for item in payload["result"]["results"]] == ["잠실엘스"]
+    async def run(self, __):
+      return {
+        "success": False,
+        "reason": "no_matching_tool",
+        "message": "현재 챗봇은 부동산 단지 조회, 아파트 추천, 단지 비교, 시세 추이, 계약 관련 법령 질문을 처리할 수 있습니다.",
+      }
 
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAgent", FakeChatbotAgent)
 
-def test_chatbot_query_runs_comparison_handler():
-  response = client.post(
-    "/api/v1/chatbot/query",
-    json={"question": "래미안대치팰리스랑 잠실엘스 가격 비교해줘"},
-  )
-
-  assert response.status_code == 200
-  payload = response.json()
-  assert payload["success"] is True
-  assert payload["fragments"][0]["intent"] == "comparison"
-  assert payload["fragments"][0]["status"] == "handled"
-  assert payload["result"]["handler"] == "comparison"
-  assert [item["complexName"] for item in payload["result"]["results"]] == ["래미안대치팰리스", "잠실엘스"]
-
-
-def test_chatbot_query_runs_simple_lookup_handler():
   response = client.post(
     "/api/v1/chatbot/query",
     json={"question": "잠실엘스 어디 있어?"},
@@ -162,23 +63,53 @@ def test_chatbot_query_runs_simple_lookup_handler():
 
   assert response.status_code == 200
   payload = response.json()
-  assert payload["success"] is True
-  assert payload["fragments"][0]["intent"] == "simple_lookup"
-  assert payload["fragments"][0]["status"] == "handled"
-  assert payload["result"]["handler"] == "simple_lookup"
-  assert payload["result"]["query_type"] == "location"
-  assert payload["result"]["data"][0]["complex_name"] == "잠실엘스"
-
-
-def test_chatbot_query_returns_unsupported_for_unrelated_questions():
-  response = client.post(
-    "/api/v1/chatbot/query",
-    json={"question": "오늘 점심 뭐 먹지?"},
-  )
-
-  assert response.status_code == 200
-  payload = response.json()
   assert payload["success"] is False
-  assert payload["fragments"][0]["intent"] == "unsupported"
-  assert payload["fragments"][0]["status"] == "unsupported"
-  assert payload["result"]["reason"] == "unsupported_intent"
+  assert payload["fragments"][0]["status"] == "not_handled"
+  assert "intent" not in payload["fragments"][0]
+  assert payload["result"]["reason"] == "no_matching_tool"
+
+
+def test_simple_lookup_tool_calls_existing_service():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = build_simple_lookup_tool(session).invoke({"query": "잠실엘스 어디 있어?"})
+
+  assert result["handler"] == "simple_lookup"
+  assert result["success"] is True
+  assert result["query_type"] == "location"
+
+
+def test_simple_lookup_tool_overrides_extracted_slots():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = build_simple_lookup_tool(session).invoke({
+      "query": "잠실 엘스 시세 알려줘",
+      "query_type": "location",
+      "complex_name": "잠실엘스",
+    })
+
+  assert result["handler"] == "simple_lookup"
+  assert result["success"] is True
+  assert result["query_type"] == "location"
+  assert result["criteria"]["complex_name"] == "잠실엘스"
+
+
+def test_feature_tools_are_langchain_tools():
+  ensure_initialized()
+  with SessionLocal() as session:
+    tools = [
+      build_simple_lookup_tool(session),
+      build_recommendation_tool(session),
+      build_comparison_tool(session),
+      build_price_trend_tool(session),
+      build_legal_contract_tool(session),
+    ]
+
+  assert [tool.name for tool in tools] == [
+    "simple_lookup",
+    "recommend_apartments",
+    "compare_apartments",
+    "analyze_price_trend",
+    "search_legal_contract",
+  ]
+  assert all(tool.description for tool in tools)

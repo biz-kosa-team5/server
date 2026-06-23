@@ -9,7 +9,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import health
 from .chatbot.controller import router as chatbot_router
-from .chatbot.service.classifier import get_intent_classifier
 from .database import initialize_database
 from .real_estate.controller import router as real_estate_router
 
@@ -17,7 +16,6 @@ from .real_estate.controller import router as real_estate_router
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
   initialize_database()
-  get_intent_classifier()
   yield
 
 

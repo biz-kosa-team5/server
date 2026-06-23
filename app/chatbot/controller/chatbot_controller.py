@@ -14,8 +14,8 @@ router = APIRouter(tags=["chatbot"])
 
 
 @router.post("/chatbot/query")
-def query_by_natural_language(
+async def query_by_natural_language(
   payload: ChatbotQueryRequest = Body(...),
   session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-  return handle_chatbot_query(session, payload.question)
+  return await handle_chatbot_query(session, payload.model_dump())
