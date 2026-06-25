@@ -67,16 +67,16 @@ def search_result(sources: list[dict]) -> dict:
   }
 
 
-def test_answer_prompt_uses_at_most_five_sources():
+def test_answer_prompt_uses_at_most_configured_sources():
   messages = build_legal_answer_messages(
     "계약금을 돌려받을 수 있나요?",
-    [source(index) for index in range(1, 7)],
+    [source(index) for index in range(1, 9)],
   )
 
-  assert MAX_ANSWER_SOURCES == 5
+  assert MAX_ANSWER_SOURCES == 7
   assert '"documentId": 1' in messages[1]["content"]
-  assert '"documentId": 5' in messages[1]["content"]
-  assert '"documentId": 6' not in messages[1]["content"]
+  assert '"documentId": 7' in messages[1]["content"]
+  assert '"documentId": 8' not in messages[1]["content"]
 
 
 def test_answer_service_combines_only_valid_db_citations():
@@ -92,6 +92,7 @@ def test_answer_service_combines_only_valid_db_citations():
     search_result([
       source(1, 0.8), source(2, 0.7), source(3, 0.6),
       source(4, 0.5), source(5, 0.4), source(6, 0.3),
+      source(7, 0.2), source(8, 0.1),
     ]),
   )
 
@@ -100,13 +101,33 @@ def test_answer_service_combines_only_valid_db_citations():
   assert result["retrievalScore"] == 0.8
   assert [item["documentId"] for item in result["citations"]] == [2]
   assert result["citations"][0]["lawName"] == "민법"
-  assert "출처" in result["answer"]
-  assert f'[2] {source(2)["lawName"]}' in result["answer"]
-  assert "시행일: 2026-06-22" in result["answer"]
-  assert "https://example.com/2" in result["answer"]
+  assert "근거는 민법의 제2조(해약금)를 참조했습니다." in result["answer"]
+  assert "출처" not in result["answer"]
+  assert "시행일: 2026-06-22" not in result["answer"]
+  assert "https://example.com/2" not in result["answer"]
   assert "[999]" not in result["answer"]
-  assert len(result["sources"]) == 5
+  assert len(result["sources"]) == 7
   json.dumps(result)
+
+
+def test_answer_service_removes_model_written_reference_sentence():
+  generator = FakeAnswerGenerator(LegalAnswerDraft(
+    answer="계약 이행 전에는 해제할 수 있습니다.\n근거는 민법의 제2조를 참조했습니다.",
+    citedDocumentIds=[2],
+    status=LegalAnswerStatus.ANSWERED,
+  ))
+  service = LegalAnswerService(generator)
+
+  result = service.answer(
+    "계약금을 돌려받을 수 있나요?",
+    search_result([source(2)]),
+  )
+
+  assert result["answer"].count("근거는") == 1
+  assert result["answer"] == (
+    "계약 이행 전에는 해제할 수 있습니다.\n\n"
+    "근거는 민법의 제2조(해약금)를 참조했습니다."
+  )
 
 
 def test_answer_service_skips_llm_without_sources():
