@@ -200,6 +200,35 @@ def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
   assert payload["result"]["reason"] == "no_matching_tool"
 
 
+def test_chatbot_query_uses_supervisor_for_single_domain_question(monkeypatch):
+  calls = []
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, question):
+      calls.append(question)
+      return {
+        "success": True,
+        "handler": "simple_lookup",
+      }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 위치 알려줘"},
+  )
+
+  assert response.status_code == 200
+  assert calls == ["잠실엘스 위치 알려줘"]
+  assert response.json()["result"] == {
+    "success": True,
+    "handler": "simple_lookup",
+  }
+
+
 def test_chatbot_query_marks_partial_success_across_fragments(monkeypatch):
   class FakeChatbotSupervisor:
     def __init__(self, _):

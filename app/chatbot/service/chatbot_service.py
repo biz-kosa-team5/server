@@ -139,19 +139,19 @@ class ChatbotQueryResponse:
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
-  agent_initialization_failed = False
+  supervisor_initialization_failed = False
   try:
-    agent = ChatbotSupervisor(session)
+    supervisor = ChatbotSupervisor(session)
   except Exception:
-    logger.exception("Failed to initialize chatbot agent")
-    agent = None
-    agent_initialization_failed = True
+    logger.exception("Failed to initialize chatbot supervisor")
+    supervisor = None
+    supervisor_initialization_failed = True
   task_results = []
   for task in ChatbotTask.from_question(question):
     task_results.append(await execute_task(
-      agent,
+      supervisor,
       task,
-      agent_initialization_failed=agent_initialization_failed,
+      supervisor_initialization_failed=supervisor_initialization_failed,
     ))
   return ChatbotQueryResponse(
     question=question,
@@ -160,22 +160,22 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
 
 
 async def execute_task(
-  agent: ChatbotSupervisor | None,
+  supervisor: ChatbotSupervisor | None,
   task: ChatbotTask,
   *,
-  agent_initialization_failed: bool = False,
+  supervisor_initialization_failed: bool = False,
 ) -> TaskExecutionResult:
   try:
-    if agent is None:
+    if supervisor is None:
       result = (
         agent_initialization_failed_result()
-        if agent_initialization_failed
+        if supervisor_initialization_failed
         else agent_execution_failed_result()
       )
     else:
-      result = await agent.run(task.text)
+      result = await supervisor.run(task.text)
   except Exception:
-    logger.exception("Failed to run chatbot agent for task %s", task.index)
+    logger.exception("Failed to run chatbot supervisor for task %s", task.index)
     result = agent_execution_failed_result()
 
   return TaskExecutionResult(task=task, result=result)
