@@ -7,11 +7,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # 단순조회에서 지원하는 조회 유형
 QUERY_LOCATION = "location"
-QUERY_TRADE_HISTORY = "trade_history"
-QUERY_RECORD_HIGH = "record_high"
+QUERY_TRADE = "trade"
 
 # 단순조회에서 허용하는 query_type 목록
-SUPPORTED_QUERY_TYPES = {QUERY_LOCATION, QUERY_TRADE_HISTORY, QUERY_RECORD_HIGH}
+SUPPORTED_QUERY_TYPES = {
+    QUERY_LOCATION,
+    QUERY_TRADE,
+}
 
 
 # 단순조회 처리 중 발생하는 업무 실패를 표현하는 예외
@@ -44,6 +46,8 @@ class SimpleLookupSlots(BaseModel):
     end_date: date | None = None
 
     limit: int | None = None
+    sort_order: str | None = None
+    price_order: str | None = None
     original_question: str | None = None
 
 
@@ -61,6 +65,8 @@ class SimpleLookupCriteria(BaseModel):
     end_date: date | None = None
 
     limit: int | None = None
+    sort_order: str | None = None
+    price_order: str | None = None
 
 
 # 단순조회의 성공/실패 공통 응답 DTO
