@@ -78,10 +78,55 @@ def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
   assert response.status_code == 200
   payload = response.json()
   assert payload["success"] is False
+  assert payload["status"] == "failed"
+  assert payload["executionSummary"] == {
+    "total": 1,
+    "succeeded": 0,
+    "failed": 1,
+  }
   assert payload["fragments"][0]["status"] == "not_handled"
   assert "intent" not in payload["fragments"][0]
   assert payload["result"]["reason"] == "no_matching_tool"
   assert payload["result"]["suggestedQuestions"] == SUPPORTED_QUESTION_EXAMPLES
+
+
+def test_chatbot_query_marks_partial_success_across_fragments(monkeypatch):
+  class FakeChatbotAgent:
+    def __init__(self, _):
+      pass
+
+    async def run(self, question):
+      if "잠실엘스" in question:
+        return {
+          "success": True,
+          "handler": "simple_lookup",
+        }
+      return {
+        "success": False,
+        "reason": "no_matching_tool",
+      }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAgent", FakeChatbotAgent)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 위치 알려줘 그리고 오늘 날씨 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is True
+  assert payload["status"] == "partial_success"
+  assert payload["message"] == "일부 질문만 처리했습니다."
+  assert payload["executionSummary"] == {
+    "total": 2,
+    "succeeded": 1,
+    "failed": 1,
+  }
+  assert [fragment["status"] for fragment in payload["fragments"]] == [
+    "handled",
+    "not_handled",
+  ]
 
 
 def test_extract_agent_result_returns_no_matching_tool_without_tool_messages():

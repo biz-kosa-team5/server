@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Any
 
@@ -14,6 +15,51 @@ from .splitter import split_question
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FragmentExecutionSummary:
+  total: int
+  succeeded: int
+  failed: int
+
+  @classmethod
+  def from_results(cls, results: list[dict[str, Any]]) -> FragmentExecutionSummary:
+    total = len(results)
+    succeeded = sum(1 for result in results if result.get("success") is True)
+    return cls(
+      total=total,
+      succeeded=succeeded,
+      failed=total - succeeded,
+    )
+
+  @property
+  def success(self) -> bool:
+    return self.succeeded > 0
+
+  @property
+  def status(self) -> str:
+    if self.succeeded == self.total and self.total > 0:
+      return "success"
+    if self.succeeded > 0:
+      return "partial_success"
+    return "failed"
+
+  @property
+  def message(self) -> str:
+    messages = {
+      "success": "질문을 처리했습니다.",
+      "partial_success": "일부 질문만 처리했습니다.",
+      "failed": "처리할 수 있는 질문이 없습니다.",
+    }
+    return messages[self.status]
+
+  def to_dict(self) -> dict[str, int]:
+    return {
+      "total": self.total,
+      "succeeded": self.succeeded,
+      "failed": self.failed,
+    }
 
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
@@ -34,14 +80,16 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
       agent_initialization_failed=agent_initialization_failed,
     ))
   results = [fragment["result"] for fragment in fragments]
-  success = any(result.get("success") is True for result in results)
+  summary = FragmentExecutionSummary.from_results(results)
 
   return {
-    "success": success,
+    "success": summary.success,
+    "status": summary.status,
     "question": question,
     "fragments": fragments,
     "result": results[0] if len(results) == 1 else results,
-    "message": "질문을 처리했습니다." if success else "처리할 수 있는 질문이 없습니다.",
+    "message": summary.message,
+    "executionSummary": summary.to_dict(),
   }
 
 
