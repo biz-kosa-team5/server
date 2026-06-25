@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .agent import (
-  ChatbotAgent,
+  ChatbotSupervisor,
   agent_execution_failed_result,
   agent_initialization_failed_result,
 )
@@ -141,7 +141,7 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   question = str(payload.get("question", "")).strip()
   agent_initialization_failed = False
   try:
-    agent = ChatbotAgent(session)
+    agent = ChatbotSupervisor(session)
   except Exception:
     logger.exception("Failed to initialize chatbot agent")
     agent = None
@@ -160,7 +160,7 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
 
 
 async def execute_task(
-  agent: ChatbotAgent | None,
+  agent: ChatbotSupervisor | None,
   task: ChatbotTask,
   *,
   agent_initialization_failed: bool = False,
