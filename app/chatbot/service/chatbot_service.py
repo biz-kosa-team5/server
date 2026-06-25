@@ -18,15 +18,51 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class FragmentExecutionSummary:
+class ChatbotTask:
+  index: int
+  text: str
+
+  @classmethod
+  def from_question(cls, question: str) -> list[ChatbotTask]:
+    fragments = split_question(question) or [question]
+    return [
+      cls(index=index, text=fragment)
+      for index, fragment in enumerate(fragments)
+    ]
+
+
+@dataclass(frozen=True)
+class TaskExecutionResult:
+  task: ChatbotTask
+  result: dict[str, Any]
+
+  @property
+  def success(self) -> bool:
+    return self.result.get("success") is True
+
+  @property
+  def status(self) -> str:
+    return "handled" if self.success else "not_handled"
+
+  def to_fragment_dict(self) -> dict[str, Any]:
+    return {
+      "index": self.task.index,
+      "text": self.task.text,
+      "status": self.status,
+      "result": self.result,
+    }
+
+
+@dataclass(frozen=True)
+class TaskExecutionSummary:
   total: int
   succeeded: int
   failed: int
 
   @classmethod
-  def from_results(cls, results: list[dict[str, Any]]) -> FragmentExecutionSummary:
-    total = len(results)
-    succeeded = sum(1 for result in results if result.get("success") is True)
+  def from_task_results(cls, task_results: list[TaskExecutionResult]) -> TaskExecutionSummary:
+    total = len(task_results)
+    succeeded = sum(1 for task_result in task_results if task_result.success)
     return cls(
       total=total,
       succeeded=succeeded,
@@ -71,16 +107,16 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
     logger.exception("Failed to initialize chatbot agent")
     agent = None
     agent_initialization_failed = True
-  fragments = []
-  for index, fragment in enumerate(split_question(question) or [question]):
-    fragments.append(await handle_fragment(
+  task_results = []
+  for task in ChatbotTask.from_question(question):
+    task_results.append(await execute_task(
       agent,
-      index,
-      fragment,
+      task,
       agent_initialization_failed=agent_initialization_failed,
     ))
-  results = [fragment["result"] for fragment in fragments]
-  summary = FragmentExecutionSummary.from_results(results)
+  fragments = [task_result.to_fragment_dict() for task_result in task_results]
+  results = [task_result.result for task_result in task_results]
+  summary = TaskExecutionSummary.from_task_results(task_results)
 
   return {
     "success": summary.success,
@@ -93,13 +129,12 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   }
 
 
-async def handle_fragment(
+async def execute_task(
   agent: ChatbotAgent | None,
-  index: int,
-  text: str,
+  task: ChatbotTask,
   *,
   agent_initialization_failed: bool = False,
-) -> dict[str, Any]:
+) -> TaskExecutionResult:
   try:
     if agent is None:
       result = (
@@ -108,14 +143,9 @@ async def handle_fragment(
         else agent_execution_failed_result()
       )
     else:
-      result = await agent.run(text)
+      result = await agent.run(task.text)
   except Exception:
-    logger.exception("Failed to run chatbot agent for fragment %s", index)
+    logger.exception("Failed to run chatbot agent for task %s", task.index)
     result = agent_execution_failed_result()
 
-  return {
-    "index": index,
-    "text": text,
-    "status": "handled" if result.get("success") is True else "not_handled",
-    "result": result,
-  }
+  return TaskExecutionResult(task=task, result=result)

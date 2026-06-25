@@ -2,6 +2,11 @@ from fastapi.testclient import TestClient
 
 from app.chatbot.service.splitter import split_question
 from app.chatbot.service.agent import SUPPORTED_QUESTION_EXAMPLES, extract_agent_result
+from app.chatbot.service.chatbot_service import (
+  ChatbotTask,
+  TaskExecutionResult,
+  TaskExecutionSummary,
+)
 from app.chatbot.features.comparison import extract_compare_slots
 from app.chatbot.features.recommendation import extract_recommendation_slots
 from app.chatbot.service.tools import (
@@ -35,6 +40,57 @@ def test_chatbot_splitter_keeps_intent_verbs_inside_fragment():
   assert split_question("30억 이하 아파트 추천하고 매매 계약 법률 알려줘") == [
     "30억 이하 아파트 추천하고 매매 계약 법률 알려줘",
   ]
+
+
+def test_chatbot_task_builds_ordered_tasks_from_question():
+  tasks = ChatbotTask.from_question("잠실엘스 위치 알려줘 그리고 매매 계약 법률 알려줘")
+
+  assert tasks == [
+    ChatbotTask(index=0, text="잠실엘스 위치 알려줘"),
+    ChatbotTask(index=1, text="매매 계약 법률 알려줘"),
+  ]
+
+
+def test_task_execution_result_keeps_fragment_response_shape():
+  task_result = TaskExecutionResult(
+    task=ChatbotTask(index=0, text="잠실엘스 위치 알려줘"),
+    result={
+      "success": True,
+      "handler": "simple_lookup",
+    },
+  )
+
+  assert task_result.to_fragment_dict() == {
+    "index": 0,
+    "text": "잠실엘스 위치 알려줘",
+    "status": "handled",
+    "result": {
+      "success": True,
+      "handler": "simple_lookup",
+    },
+  }
+
+
+def test_task_execution_summary_counts_task_results():
+  summary = TaskExecutionSummary.from_task_results([
+    TaskExecutionResult(
+      task=ChatbotTask(index=0, text="잠실엘스 위치 알려줘"),
+      result={"success": True},
+    ),
+    TaskExecutionResult(
+      task=ChatbotTask(index=1, text="오늘 날씨 알려줘"),
+      result={"success": False},
+    ),
+  ])
+
+  assert summary.success is True
+  assert summary.status == "partial_success"
+  assert summary.message == "일부 질문만 처리했습니다."
+  assert summary.to_dict() == {
+    "total": 2,
+    "succeeded": 1,
+    "failed": 1,
+  }
 
 
 def test_recommendation_extractor_builds_filter_slots():
