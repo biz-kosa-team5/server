@@ -13,6 +13,14 @@ from .tools import build_chatbot_tools
 
 DEFAULT_AGENT_MODEL = "openai:gpt-4o-mini"
 
+SUPPORTED_QUESTION_EXAMPLES = [
+  "잠실엘스 위치 알려줘",
+  "송파구 30억 이하 아파트 추천해줘",
+  "래미안대치팰리스랑 잠실엘스 가격 비교해줘",
+  "최근 1년 잠실엘스 시세 추이 알려줘",
+  "매매 계약금 해제 규정 알려줘",
+]
+
 CHATBOT_AGENT_SYSTEM_PROMPT = """
 당신은 강남 3구 부동산과 부동산 계약 법령 질문을 처리하는 챗봇 Agent입니다.
 
@@ -41,17 +49,24 @@ class ChatbotAgent:
 
 
 def extract_agent_result(result: dict[str, Any]) -> dict[str, Any]:
+  tool_messages = [
+    message
+    for message in result.get("messages", [])
+    if getattr(message, "type", None) == "tool"
+  ]
   tool_results = [
     parsed
     for parsed in (
       parse_tool_message(message)
-      for message in result.get("messages", [])
+      for message in tool_messages
     )
     if parsed is not None
   ]
 
-  if not tool_results:
+  if not tool_messages:
     return no_matching_tool_result()
+  if not tool_results:
+    return tool_result_parse_failed_result()
   if len(tool_results) == 1:
     return tool_results[0]
   return {
@@ -105,7 +120,16 @@ def no_matching_tool_result() -> dict[str, Any]:
   return {
     "success": False,
     "reason": "no_matching_tool",
-    "message": "현재 챗봇은 부동산 단지 조회, 아파트 추천, 단지 비교, 시세 추이, 계약 관련 법령 질문을 처리할 수 있습니다.",
+    "message": "지원 가능한 질문은 단지 조회, 아파트 추천, 단지 비교, 시세 추이, 계약 법령 질문입니다.",
+    "suggestedQuestions": SUPPORTED_QUESTION_EXAMPLES,
+  }
+
+
+def tool_result_parse_failed_result() -> dict[str, Any]:
+  return {
+    "success": False,
+    "reason": "tool_result_parse_failed",
+    "message": "조회 결과를 해석하지 못했습니다. 잠시 후 다시 시도해 주세요.",
   }
 
 
@@ -113,5 +137,13 @@ def agent_execution_failed_result() -> dict[str, Any]:
   return {
     "success": False,
     "reason": "agent_execution_failed",
-    "message": "Agent 실행 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+    "message": "질문 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
+  }
+
+
+def agent_initialization_failed_result() -> dict[str, Any]:
+  return {
+    "success": False,
+    "reason": "agent_initialization_failed",
+    "message": "챗봇 실행 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
   }
