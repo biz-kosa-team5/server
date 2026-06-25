@@ -10,8 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app.chatbot.features.simple_lookup.dao import SimpleLookupDao
 from app.chatbot.features.simple_lookup.dto import (
     QUERY_LOCATION,
-    QUERY_RECORD_HIGH,
-    QUERY_TRADE_HISTORY,
+    QUERY_TRADE,
     SimpleLookupCriteria,
     SimpleLookupError,
     SimpleLookupResult,
@@ -79,6 +78,36 @@ def make_session() -> Session:
             parcel_id=1004,
             name="위치정보없는단지",
             trade_name="위치정보없는단지",
+        ),
+        Complex(
+            id=105,
+            region_id=1,
+            parcel_id=1005,
+            name="은마",
+            trade_name="은마",
+            address="서울 강남구 대치동",
+            latitude=37.497524,
+            longitude=127.065451,
+        ),
+        Complex(
+            id=106,
+            region_id=1,
+            parcel_id=1006,
+            name="스카이써밋아파트",
+            trade_name="스카이써밋아파트",
+            address="서울 강남구 대치동",
+            latitude=37.501141,
+            longitude=127.058316,
+        ),
+        Complex(
+            id=107,
+            region_id=1,
+            parcel_id=1007,
+            name="개포주공5단지",
+            trade_name="개포주공5단지",
+            address="서울 강남구 개포동",
+            latitude=37.489,
+            longitude=127.068,
         ),
     ])
     session.add_all([
@@ -153,7 +182,7 @@ def test_result_has_one_stable_shape():
 def test_policy_normalizes_area_pyeong_and_limit():
     area = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="  잠실엘스  ",
             area=84,
             limit=100,
@@ -161,7 +190,7 @@ def test_policy_normalizes_area_pyeong_and_limit():
     )
     pyeong = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             pyeong=34,
         )
@@ -176,6 +205,86 @@ def test_policy_normalizes_area_pyeong_and_limit():
     assert pyeong.limit == 5
 
 
+def test_policy_removes_spaces_from_complex_name():
+    criteria = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_LOCATION,
+            complex_name="개포 5단지",
+        )
+    )
+
+    assert criteria.complex_name == "개포5단지"
+
+
+def test_policy_treats_square_meter_text_as_area_when_llm_uses_pyeong():
+    criteria = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+            pyeong=84,
+            original_question="잠실엘스 84㎡ 최근 거래내역 알려줘",
+        )
+    )
+
+    assert criteria.area_min == 83
+    assert criteria.area_max == 85
+
+
+def test_policy_rejects_new_record_price_questions():
+    error = assert_lookup_error(
+        "unsupported_query",
+        lambda: normalize_simple_lookup_policy(
+            SimpleLookupSlots(
+                query_type=QUERY_TRADE,
+                complex_name="은마아파트",
+                original_question="은마아파트 신고가 갱신했어?",
+            )
+        ),
+    )
+
+    assert "신고가" in error.message
+
+
+def test_policy_normalizes_trade_sort_order():
+    default_order = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+        )
+    )
+    oldest_order = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+            sort_order="oldest",
+        )
+    )
+
+    assert default_order.sort_order == "latest"
+    assert oldest_order.sort_order == "oldest"
+
+
+def test_policy_normalizes_price_order_only_when_provided():
+    default_order = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+        )
+    )
+    lowest_order = normalize_simple_lookup_policy(
+        SimpleLookupSlots(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+            price_order="lowest",
+        )
+    )
+
+    assert default_order.price_order is None
+    assert default_order.limit == 5
+    assert lowest_order.price_order == "lowest"
+    assert lowest_order.limit == 1
+
+
 def test_policy_rejects_invalid_request_values():
     invalid_slots = [
         SimpleLookupSlots(
@@ -183,20 +292,20 @@ def test_policy_rejects_invalid_request_values():
             complex_name="잠실엘스",
         ),
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             area=84,
             pyeong=34,
         ),
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             limit=0,
         ),
         SimpleLookupSlots(
-            query_type=QUERY_RECORD_HIGH,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
-            limit=2,
+            price_order="invalid",
         ),
     ]
 
@@ -210,14 +319,14 @@ def test_policy_rejects_invalid_request_values():
 def test_policy_normalizes_supported_period_combinations():
     period = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             period="1y",
         )
     )
     explicit = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             start_date=date(2025, 1, 1),
             end_date=date(2025, 12, 31),
@@ -225,21 +334,21 @@ def test_policy_normalizes_supported_period_combinations():
     )
     start_only = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             start_date=date(2025, 1, 1),
         )
     )
     end_only = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             end_date=date(2025, 12, 31),
         )
     )
     from_start = normalize_simple_lookup_policy(
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             start_date=date(2023, 1, 31),
             period="1m",
@@ -271,20 +380,20 @@ def test_policy_normalizes_supported_period_combinations():
 def test_policy_rejects_unsupported_period_combinations():
     invalid_slots = [
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             period="1y",
             end_date=date(2025, 12, 31),
         ),
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             period="1y",
             start_date=date(2025, 1, 1),
             end_date=date(2025, 12, 31),
         ),
         SimpleLookupSlots(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             start_date=date(2025, 12, 31),
             end_date=date(2025, 1, 1),
@@ -302,7 +411,7 @@ def test_dao_public_methods_receive_only_criteria():
     with make_session() as session:
         dao = SimpleLookupDao(session)
         criteria = SimpleLookupCriteria(
-            query_type=QUERY_TRADE_HISTORY,
+            query_type=QUERY_TRADE,
             complex_name="잠실엘스",
             area_min=83,
             area_max=85,
@@ -323,6 +432,35 @@ def test_dao_public_methods_receive_only_criteria():
             "floor": 12,
             "apt_dong": None,
         }]
+
+
+def test_dao_can_return_oldest_trade_history():
+    with make_session() as session:
+        dao = SimpleLookupDao(session)
+        criteria = SimpleLookupCriteria(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+            limit=1,
+            sort_order="oldest",
+        )
+
+        rows = dao.find_trade_history(criteria)
+
+        assert rows[0]["deal_date"] == "2025-01-10"
+
+
+def test_dao_can_return_price_order_lowest():
+    with make_session() as session:
+        dao = SimpleLookupDao(session)
+        criteria = SimpleLookupCriteria(
+            query_type=QUERY_TRADE,
+            complex_name="잠실엘스",
+            price_order="lowest",
+        )
+
+        rows = dao.find_record_price(criteria)
+
+        assert rows[0]["deal_amount"] == 190000
 
 
 def test_dao_resolves_missing_and_ambiguous_complexes():
@@ -368,6 +506,48 @@ def test_dao_searches_trade_name_without_duplicate_candidates_from_trades():
         assert result[0]["trade_name"] == "잠실엘스"
 
 
+def test_dao_resolves_common_apartment_suffix_alias():
+    with make_session() as session:
+        dao = SimpleLookupDao(session)
+        criteria = SimpleLookupCriteria(
+            query_type=QUERY_LOCATION,
+            complex_name="은마아파트",
+        )
+
+        result = dao.find_location(criteria)
+
+        assert result[0]["complex_id"] == 105
+        assert result[0]["complex_name"] == "은마"
+
+
+def test_dao_resolves_space_normalized_complex_name():
+    with make_session() as session:
+        dao = SimpleLookupDao(session)
+        criteria = SimpleLookupCriteria(
+            query_type=QUERY_LOCATION,
+            complex_name="스카이 써밋",
+        )
+
+        result = dao.find_location(criteria)
+
+        assert result[0]["complex_id"] == 106
+        assert result[0]["complex_name"] == "스카이써밋아파트"
+
+
+def test_dao_resolves_numbered_complex_name_without_spaces():
+    with make_session() as session:
+        dao = SimpleLookupDao(session)
+        criteria = SimpleLookupCriteria(
+            query_type=QUERY_LOCATION,
+            complex_name="개포 5단지",
+        )
+
+        result = dao.find_location(criteria)
+
+        assert result[0]["complex_id"] == 107
+        assert result[0]["complex_name"] == "개포주공5단지"
+
+
 def test_service_handles_all_query_types():
     with make_session() as session:
         service = SimpleLookupService(SimpleLookupDao(session))
@@ -380,15 +560,23 @@ def test_service_handles_all_query_types():
         )
         history = service.handle(
             SimpleLookupSlots(
-                query_type=QUERY_TRADE_HISTORY,
+                query_type=QUERY_TRADE,
                 complex_name="잠실엘스",
                 area=84,
             )
         )
         high = service.handle(
             SimpleLookupSlots(
-                query_type=QUERY_RECORD_HIGH,
+                query_type=QUERY_TRADE,
                 complex_name="잠실엘스",
+                price_order="highest",
+            )
+        )
+        low = service.handle(
+            SimpleLookupSlots(
+                query_type=QUERY_TRADE,
+                complex_name="잠실엘스",
+                price_order="lowest",
             )
         )
 
@@ -396,6 +584,7 @@ def test_service_handles_all_query_types():
         assert location.data[0]["address"] == "서울 송파구 잠실동"
         assert [row["deal_amount"] for row in history.data] == [210000, 200000]
         assert high.data[0]["deal_amount"] == 210000
+        assert low.data[0]["deal_amount"] == 190000
 
 
 def test_service_converts_business_errors_but_not_database_errors():
@@ -404,7 +593,7 @@ def test_service_converts_business_errors_but_not_database_errors():
 
         invalid = service.handle(
             SimpleLookupSlots(
-                query_type=QUERY_TRADE_HISTORY,
+                query_type=QUERY_TRADE,
                 complex_name="잠실엘스",
                 area=84,
                 pyeong=34,
@@ -439,3 +628,4 @@ def test_run_simple_lookup_returns_same_result_shape_for_validation_errors():
         assert result["criteria"] == {}
         assert result["data"] == []
         assert result["candidates"] == []
+

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy import select
@@ -39,8 +40,8 @@ class SimpleLookupDao:
             "longitude": complex_.longitude,
         }]
 
-    # 단지 확정 후 조건에 맞는 실거래 내역을 최신순으로 조회
-    def find_trade_history(
+    # 단지 확정 후 조건에 맞는 실거래 내역을 조회
+    def find_trades(
         self,
         criteria: SimpleLookupCriteria,
     ) -> list[dict[str, Any]]:
@@ -48,7 +49,24 @@ class SimpleLookupDao:
 
         stmt = select(Trade).where(Trade.complex_id == complex_.id)
         stmt = self._apply_trade_filters(stmt, criteria)
-        stmt = stmt.order_by(Trade.deal_date.desc(), Trade.id.desc())
+
+        date_order = criteria.sort_order or "latest"
+        if criteria.price_order == "highest":
+            amount_direction = Trade.deal_amount.desc()
+        elif criteria.price_order == "lowest":
+            amount_direction = Trade.deal_amount.asc()
+        else:
+            amount_direction = None
+
+        if date_order == "oldest":
+            date_directions = (Trade.deal_date.asc(), Trade.id.asc())
+        else:
+            date_directions = (Trade.deal_date.desc(), Trade.id.desc())
+
+        if amount_direction is not None:
+            stmt = stmt.order_by(amount_direction, *date_directions)
+        else:
+            stmt = stmt.order_by(*date_directions)
         stmt = stmt.limit(criteria.limit)
 
         rows = self.session.scalars(stmt).all()
@@ -61,48 +79,41 @@ class SimpleLookupDao:
 
         return [self._to_trade_dict(row, complex_) for row in rows]
 
-    # 단지 확정 후 조건에 맞는 거래 중 최고가 1건을 조회
-    def find_record_high(
+    # 이전 이름과의 호환을 위한 래퍼
+    def find_trade_history(
         self,
         criteria: SimpleLookupCriteria,
     ) -> list[dict[str, Any]]:
-        complex_ = self._resolve_complex(criteria.complex_name)
+        return self.find_trades(criteria)
 
-        stmt = select(Trade).where(Trade.complex_id == complex_.id)
-        stmt = self._apply_trade_filters(stmt, criteria)
-        stmt = stmt.order_by(
-            Trade.deal_amount.desc(),
-            Trade.deal_date.desc(),
-            Trade.id.desc(),
-        ).limit(1)
-
-        row = self.session.scalars(stmt).first()
-
-        if row is None:
-            raise SimpleLookupError(
-                "no_result",
-                "조건에 맞는 최고가 거래를 찾지 못했습니다.",
-            )
-
-        return [self._to_trade_dict(row, complex_)]
+    # 이전 이름과의 호환을 위한 래퍼
+    def find_record_price(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> list[dict[str, Any]]:
+        return self.find_trades(criteria)
 
     # name/trade_name 기준으로 정확 일치 우선, 이후 부분 일치로 단지 확정
     def _resolve_complex(self, complex_name: str) -> Complex:
-        pattern = f"%{complex_name}%"
-        search_steps = [
-            Complex.name == complex_name,
-            Complex.trade_name == complex_name,
-            Complex.name.ilike(pattern),
-            Complex.trade_name.ilike(pattern),
-        ]
+        for name, allow_partial in _complex_name_variants(complex_name):
+            pattern = f"%{name}%"
+            search_steps = [
+                Complex.name == name,
+                Complex.trade_name == name,
+            ]
+            if allow_partial:
+                search_steps.extend([
+                    Complex.name.ilike(pattern),
+                    Complex.trade_name.ilike(pattern),
+                ])
 
-        for condition in search_steps:
-            candidates = self._find_complexes(condition)
+            for condition in search_steps:
+                candidates = self._find_complexes(condition)
 
-            if len(candidates) == 1:
-                return candidates[0]
-            if len(candidates) > 1:
-                raise self._ambiguous_error(candidates)
+                if len(candidates) == 1:
+                    return candidates[0]
+                if len(candidates) > 1:
+                    raise self._ambiguous_error(candidates)
 
         raise SimpleLookupError(
             "target_not_found",
@@ -160,3 +171,36 @@ class SimpleLookupDao:
             "floor": row.floor,
             "apt_dong": row.apt_dong,
         }
+
+
+def _complex_name_variants(complex_name: str) -> list[tuple[str, bool]]:
+    normalized = " ".join(complex_name.split())
+    compact = normalized.replace(" ", "")
+    variants = [(normalized, True)]
+
+    if compact != normalized:
+        variants.append((compact, True))
+
+    jugong_alias = _numbered_jugong_alias(compact)
+    if jugong_alias is not None:
+        variants.append((jugong_alias, True))
+
+    for suffix in ("아파트",):
+        if compact.endswith(suffix) and len(compact) > len(suffix):
+            variants.append((compact[: -len(suffix)], False))
+
+    deduped: list[tuple[str, bool]] = []
+    seen: set[str] = set()
+    for value, allow_partial in variants:
+        if value and value not in seen:
+            deduped.append((value, allow_partial))
+            seen.add(value)
+    return deduped
+
+
+def _numbered_jugong_alias(complex_name: str) -> str | None:
+    matched = re.fullmatch(r"(?P<prefix>.+?)(?P<number>\d+)단지", complex_name)
+    if matched is None or "주공" in complex_name:
+        return None
+
+    return f"{matched.group('prefix')}주공{matched.group('number')}단지"

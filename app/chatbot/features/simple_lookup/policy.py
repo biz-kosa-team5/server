@@ -6,8 +6,7 @@ from datetime import date
 
 from app.chatbot.features.simple_lookup.dto import (
     QUERY_LOCATION,
-    QUERY_RECORD_HIGH,
-    QUERY_TRADE_HISTORY,
+    QUERY_TRADE,
     SUPPORTED_QUERY_TYPES,
     SimpleLookupCriteria,
     SimpleLookupError,
@@ -19,7 +18,11 @@ from app.chatbot.features.simple_lookup.dto import (
 BASE_DATE = date(2026, 6, 20)
 
 DEFAULT_TRADE_LIMIT = 5
+DEFAULT_PRICE_LIMIT = 1
 MAX_TRADE_LIMIT = 20
+DEFAULT_SORT_ORDER = "latest"
+SUPPORTED_SORT_ORDERS = {"latest", "oldest"}
+SUPPORTED_PRICE_ORDERS = {"highest", "lowest"}
 
 AREA_TOLERANCE = 1.0
 PYEONG_TO_EXCLUSIVE_RATE = 3.3 * 0.75
@@ -31,9 +34,12 @@ PERIOD_PATTERN = re.compile(r"^(?P<amount>[1-9]\d*)(?P<unit>[my])$")
 def normalize_simple_lookup_policy(slots: SimpleLookupSlots) -> SimpleLookupCriteria:
     query_type = _normalize_query_type(slots.query_type)
     complex_name = _normalize_complex_name(slots.complex_name)
+    _reject_unsupported_question(slots.original_question)
     area_min, area_max = _normalize_area(slots)
     start_date, end_date = _normalize_period(slots)
-    limit = _normalize_limit(query_type, slots.limit)
+    price_order = _normalize_price_order(query_type, slots.price_order)
+    limit = _normalize_limit(query_type, slots.limit, price_order)
+    sort_order = _normalize_sort_order(query_type, slots.sort_order)
 
     return SimpleLookupCriteria(
         query_type=query_type,
@@ -43,6 +49,8 @@ def normalize_simple_lookup_policy(slots: SimpleLookupSlots) -> SimpleLookupCrit
         start_date=start_date,
         end_date=end_date,
         limit=limit,
+        sort_order=sort_order,
+        price_order=price_order,
     )
 
 # 조회 유형 문자열을 정리하고 지원 가능한 query_type인지 검증
@@ -59,7 +67,7 @@ def _normalize_query_type(query_type: str) -> str:
 
 # 조회 유형 문자열을 정리하고 지원 가능한 query_type인지 검증
 def _normalize_complex_name(complex_name: str) -> str:
-    complex_name = " ".join(complex_name.split())
+    complex_name = "".join(complex_name.split())
 
     if not complex_name:
         raise SimpleLookupError(
@@ -69,6 +77,18 @@ def _normalize_complex_name(complex_name: str) -> str:
 
     return complex_name
 
+
+def _reject_unsupported_question(original_question: str | None) -> None:
+    if original_question is None:
+        return
+
+    if "신고가" in original_question or "신저가" in original_question:
+        raise SimpleLookupError(
+            "unsupported_query",
+            "신고가/신저가 갱신 여부는 단순 조회에서 처리하지 않습니다.",
+        )
+
+
 # 전용면적 또는 평형 입력을 실제 조회용 면적 범위로 변환
 def _normalize_area(slots: SimpleLookupSlots) -> tuple[float | None, float | None]:
     if slots.area is not None and slots.pyeong is not None:
@@ -77,16 +97,20 @@ def _normalize_area(slots: SimpleLookupSlots) -> tuple[float | None, float | Non
             "전용면적과 평형은 동시에 사용할 수 없습니다.",
         )
 
-    if slots.area is not None:
-        if slots.area <= 0:
+    area = slots.area
+    if area is None and slots.pyeong is not None:
+        area = _area_from_original_question(slots.original_question, slots.pyeong)
+
+    if area is not None:
+        if area <= 0:
             raise SimpleLookupError(
                 "invalid_request",
                 "전용면적은 0보다 커야 합니다.",
             )
 
         return (
-            round(slots.area - AREA_TOLERANCE, 2),
-            round(slots.area + AREA_TOLERANCE, 2),
+            round(area - AREA_TOLERANCE, 2),
+            round(area + AREA_TOLERANCE, 2),
         )
 
     if slots.pyeong is not None:
@@ -103,6 +127,25 @@ def _normalize_area(slots: SimpleLookupSlots) -> tuple[float | None, float | Non
         )
 
     return None, None
+
+
+def _area_from_original_question(
+    original_question: str | None,
+    pyeong: int,
+) -> float | None:
+    if original_question is None:
+        return None
+
+    for matched in re.finditer(
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:㎡|m2|제곱미터)",
+        original_question,
+        re.IGNORECASE,
+    ):
+        value = float(matched.group("value"))
+        if value == float(pyeong):
+            return value
+    return None
+
 
 # period, start_date, end_date 조합을 조회 시작일과 종료일로 정규화
 def _normalize_period(slots: SimpleLookupSlots) -> tuple[date | None, date | None]:
@@ -147,32 +190,62 @@ def _normalize_period(slots: SimpleLookupSlots) -> tuple[date | None, date | Non
     )
 
 # period, start_date, end_date 조합을 조회 시작일과 종료일로 정규화
-def _normalize_limit(query_type: str, limit: int | None) -> int | None:
+def _normalize_limit(
+    query_type: str,
+    limit: int | None,
+    price_order: str | None,
+) -> int | None:
     if query_type == QUERY_LOCATION:
         return None
 
-    if query_type == QUERY_TRADE_HISTORY:
+    if query_type == QUERY_TRADE:
         if limit is None:
+            if price_order is not None:
+                return DEFAULT_PRICE_LIMIT
             return DEFAULT_TRADE_LIMIT
         if limit <= 0:
             raise SimpleLookupError(
                 "invalid_request",
-                "실거래 내역 조회 limit은 1 이상이어야 합니다.",
+                "거래 조회 limit은 1 이상이어야 합니다.",
             )
         return min(limit, MAX_TRADE_LIMIT)
-
-    if query_type == QUERY_RECORD_HIGH:
-        if limit is not None and limit != 1:
-            raise SimpleLookupError(
-                "invalid_request",
-                "최고가 조회는 1건만 지원합니다.",
-            )
-        return None
 
     raise SimpleLookupError(
         "invalid_request",
         "지원하지 않는 조회 유형입니다.",
     )
+
+
+def _normalize_sort_order(query_type: str, sort_order: str | None) -> str | None:
+    if query_type != QUERY_TRADE:
+        return None
+
+    if sort_order is None:
+        return DEFAULT_SORT_ORDER
+
+    normalized = sort_order.strip()
+    if normalized not in SUPPORTED_SORT_ORDERS:
+        raise SimpleLookupError(
+            "invalid_request",
+            "sort_order는 latest 또는 oldest 중 하나여야 합니다.",
+        )
+    return normalized
+
+
+def _normalize_price_order(query_type: str, price_order: str | None) -> str | None:
+    if query_type != QUERY_TRADE:
+        return None
+
+    if price_order is None:
+        return None
+
+    normalized = price_order.strip()
+    if normalized not in SUPPORTED_PRICE_ORDERS:
+        raise SimpleLookupError(
+            "invalid_request",
+            "price_order는 highest 또는 lowest 중 하나여야 합니다.",
+        )
+    return normalized
 
 # 기준일에서 period만큼 이전 날짜를 계산
 def _subtract_period(base_date: date, period: str) -> date:

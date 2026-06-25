@@ -9,8 +9,7 @@ from sqlalchemy.orm import Session
 from app.chatbot.features.simple_lookup.dao import SimpleLookupDao
 from app.chatbot.features.simple_lookup.dto import (
     QUERY_LOCATION,
-    QUERY_RECORD_HIGH,
-    QUERY_TRADE_HISTORY,
+    QUERY_TRADE,
     SimpleLookupCriteria,
     SimpleLookupError,
     SimpleLookupResult,
@@ -36,12 +35,13 @@ class SimpleLookupService:
             criteria = normalize_simple_lookup_policy(slots)
             action = self._resolve_action(criteria.query_type)
             data = action.fetch(criteria)
+            success_message = self._success_message(action, criteria)
 
             return SimpleLookupResult.ok(
                 query_type=criteria.query_type,
                 criteria=criteria,
                 data=data,
-                message=action.success_message,
+                message=success_message,
             )
         except SimpleLookupError as error:
             return SimpleLookupResult.fail(
@@ -58,13 +58,9 @@ class SimpleLookupService:
                 fetch=self.dao.find_location,
                 success_message="단지 위치를 조회했습니다.",
             ),
-            QUERY_TRADE_HISTORY: _LookupAction(
-                fetch=self.dao.find_trade_history,
+            QUERY_TRADE: _LookupAction(
+                fetch=self.dao.find_trades,
                 success_message="실거래 내역을 조회했습니다.",
-            ),
-            QUERY_RECORD_HIGH: _LookupAction(
-                fetch=self.dao.find_record_high,
-                success_message="최고가 거래를 조회했습니다.",
             ),
         }
 
@@ -75,6 +71,15 @@ class SimpleLookupService:
                 "지원하지 않는 조회 유형입니다.",
             )
         return action
+
+    @staticmethod
+    def _success_message(
+        action: _LookupAction,
+        criteria: SimpleLookupCriteria,
+    ) -> str:
+        if criteria.query_type == QUERY_TRADE and criteria.price_order is not None:
+            return "조회 조건 내 최고가/최저가 거래를 조회했습니다."
+        return action.success_message
 
 
 def run_simple_lookup(session: Session, slots: dict[str, Any], _: str = "") -> dict[str, Any]:
