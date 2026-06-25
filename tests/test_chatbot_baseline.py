@@ -115,6 +115,79 @@ def test_extract_agent_result_parses_tool_message_json():
   }
 
 
+def test_extract_agent_result_wraps_multiple_successful_tool_results():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage("tool", '{"success": true, "handler": "simple_lookup"}'),
+      FakeAgentMessage("tool", '{"success": true, "handler": "price_trend"}'),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "status": "success",
+    "message": "여러 조회 결과를 처리했습니다.",
+    "results": [
+      {"success": True, "handler": "simple_lookup"},
+      {"success": True, "handler": "price_trend"},
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 2,
+      "failed": 0,
+    },
+  }
+
+
+def test_extract_agent_result_marks_partial_success_for_mixed_tool_results():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage("tool", '{"success": true, "handler": "simple_lookup"}'),
+      FakeAgentMessage("tool", '{"success": false, "reason": "no_result"}'),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 조회 결과만 처리했습니다.",
+    "results": [
+      {"success": True, "handler": "simple_lookup"},
+      {"success": False, "reason": "no_result"},
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 1,
+      "failed": 1,
+    },
+  }
+
+
+def test_extract_agent_result_marks_failure_when_all_tool_results_fail():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage("tool", '{"success": false, "reason": "no_result"}'),
+      FakeAgentMessage("tool", '{"success": false, "reason": "invalid_request"}'),
+    ],
+  })
+
+  assert result == {
+    "success": False,
+    "status": "failed",
+    "reason": "all_tool_results_failed",
+    "message": "조회 결과를 처리하지 못했습니다.",
+    "results": [
+      {"success": False, "reason": "no_result"},
+      {"success": False, "reason": "invalid_request"},
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 0,
+      "failed": 2,
+    },
+  }
+
+
 def test_chatbot_query_rejects_blank_question():
   response = client.post(
     "/api/v1/chatbot/query",

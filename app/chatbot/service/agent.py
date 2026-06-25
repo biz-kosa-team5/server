@@ -67,11 +67,47 @@ def extract_agent_result(result: dict[str, Any]) -> dict[str, Any]:
     return no_matching_tool_result()
   if not tool_results:
     return tool_result_parse_failed_result()
-  if len(tool_results) == 1:
+  if len(tool_messages) == 1:
     return tool_results[0]
+  return aggregate_tool_results(tool_messages, tool_results)
+
+
+def aggregate_tool_results(tool_messages: list[Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
+  total = len(tool_messages)
+  succeeded = sum(1 for item in tool_results if item.get("success") is True)
+  failed = total - succeeded
+
+  if succeeded == total:
+    return {
+      "success": True,
+      "status": "success",
+      "message": "여러 조회 결과를 처리했습니다.",
+      "results": tool_results,
+      "executionSummary": execution_summary(total, succeeded, failed),
+    }
+  if succeeded > 0:
+    return {
+      "success": True,
+      "status": "partial_success",
+      "message": "일부 조회 결과만 처리했습니다.",
+      "results": tool_results,
+      "executionSummary": execution_summary(total, succeeded, failed),
+    }
   return {
-    "success": any(item.get("success") is True for item in tool_results),
+    "success": False,
+    "status": "failed",
+    "reason": "all_tool_results_failed",
+    "message": "조회 결과를 처리하지 못했습니다.",
     "results": tool_results,
+    "executionSummary": execution_summary(total, succeeded, failed),
+  }
+
+
+def execution_summary(total: int, succeeded: int, failed: int) -> dict[str, int]:
+  return {
+    "total": total,
+    "succeeded": succeeded,
+    "failed": failed,
   }
 
 
