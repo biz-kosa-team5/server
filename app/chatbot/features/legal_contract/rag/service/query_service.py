@@ -7,6 +7,8 @@ from app.chatbot.features.legal_contract.normalization import normalize_query
 
 from ..dao import LegalRagQueryDao
 from .query_ranking import hybrid_rank_documents, python_rank_documents
+from .query_expansion import build_intent_expansion_terms
+from .query_intent import LegalQueryIntent, detect_query_intents
 from .query_response import failure_result, source_item, success_result
 from .query_text import (
   build_query_embedding_text,
@@ -16,9 +18,9 @@ from .query_text import (
 )
 
 
-DEFAULT_TOP_K = 5
+DEFAULT_TOP_K = 7
 DEFAULT_MIN_SCORE = 0.45
-DEFAULT_CANDIDATE_K = 50
+DEFAULT_CANDIDATE_K = 70
 
 
 class LegalRagQueryService:
@@ -34,9 +36,11 @@ class LegalRagQueryService:
 
   def query(self, question: str, top_k: int = DEFAULT_TOP_K) -> dict[str, Any]:
     normalized_question = normalize_query(question)
+    intents = detect_query_intents(normalized_question)
     mappings = self.dao.matching_term_mappings(normalized_question)
     daily_terms = unique_terms([mapping.daily_term for mapping in mappings])
-    expanded_terms = unique_terms([mapping.legal_term for mapping in mappings])
+    db_expanded_terms = unique_terms([mapping.legal_term for mapping in mappings])
+    expanded_terms = unique_terms(db_expanded_terms + build_intent_expansion_terms(intents))
     primary_terms = longest_terms(extract_query_terms(normalized_question) + daily_terms)
     client = self.embedding_client()
     if client is None:
@@ -59,6 +63,8 @@ class LegalRagQueryService:
       )
 
     candidate_k = max(DEFAULT_CANDIDATE_K, top_k * 10)
+    if LegalQueryIntent.BROAD in intents:
+      candidate_k = max(candidate_k, top_k * 20)
     ranked = self.dao.nearest_law_documents(query_embedding, candidate_k)
     if ranked is None:
       ranked = python_rank_documents(
@@ -72,6 +78,7 @@ class LegalRagQueryService:
       query_embedding,
       primary_terms,
       expanded_terms,
+      intents,
       top_k,
     )
 
