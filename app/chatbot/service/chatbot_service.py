@@ -98,6 +98,45 @@ class TaskExecutionSummary:
     }
 
 
+@dataclass(frozen=True)
+class ChatbotQueryResponse:
+  question: str
+  task_results: list[TaskExecutionResult]
+
+  @property
+  def summary(self) -> TaskExecutionSummary:
+    return TaskExecutionSummary.from_task_results(self.task_results)
+
+  @property
+  def fragments(self) -> list[dict[str, Any]]:
+    return [
+      task_result.to_fragment_dict()
+      for task_result in self.task_results
+    ]
+
+  @property
+  def results(self) -> list[dict[str, Any]]:
+    return [
+      task_result.result
+      for task_result in self.task_results
+    ]
+
+  def to_response_dict(self) -> dict[str, Any]:
+    summary = self.summary
+    fragments = self.fragments
+    results = self.results
+    result = results[0] if len(results) == 1 else results
+    return {
+      "success": summary.success,
+      "status": summary.status,
+      "question": self.question,
+      "fragments": fragments,
+      "result": result,
+      "message": summary.message,
+      "executionSummary": summary.to_dict(),
+    }
+
+
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
   agent_initialization_failed = False
@@ -114,19 +153,10 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
       task,
       agent_initialization_failed=agent_initialization_failed,
     ))
-  fragments = [task_result.to_fragment_dict() for task_result in task_results]
-  results = [task_result.result for task_result in task_results]
-  summary = TaskExecutionSummary.from_task_results(task_results)
-
-  return {
-    "success": summary.success,
-    "status": summary.status,
-    "question": question,
-    "fragments": fragments,
-    "result": results[0] if len(results) == 1 else results,
-    "message": summary.message,
-    "executionSummary": summary.to_dict(),
-  }
+  return ChatbotQueryResponse(
+    question=question,
+    task_results=task_results,
+  ).to_response_dict()
 
 
 async def execute_task(

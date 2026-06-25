@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from app.chatbot.service.splitter import split_question
 from app.chatbot.service.agent import SUPPORTED_QUESTION_EXAMPLES, extract_agent_result
 from app.chatbot.service.chatbot_service import (
+  ChatbotQueryResponse,
   ChatbotTask,
   TaskExecutionResult,
   TaskExecutionSummary,
@@ -87,6 +88,89 @@ def test_task_execution_summary_counts_task_results():
   assert summary.status == "partial_success"
   assert summary.message == "일부 질문만 처리했습니다."
   assert summary.to_dict() == {
+    "total": 2,
+    "succeeded": 1,
+    "failed": 1,
+  }
+
+
+def test_chatbot_query_response_builds_single_task_response_shape():
+  response = ChatbotQueryResponse(
+    question="잠실엘스 위치 알려줘",
+    task_results=[
+      TaskExecutionResult(
+        task=ChatbotTask(index=0, text="잠실엘스 위치 알려줘"),
+        result={
+          "success": True,
+          "handler": "simple_lookup",
+        },
+      ),
+    ],
+  ).to_response_dict()
+
+  assert response == {
+    "success": True,
+    "status": "success",
+    "question": "잠실엘스 위치 알려줘",
+    "fragments": [
+      {
+        "index": 0,
+        "text": "잠실엘스 위치 알려줘",
+        "status": "handled",
+        "result": {
+          "success": True,
+          "handler": "simple_lookup",
+        },
+      },
+    ],
+    "result": {
+      "success": True,
+      "handler": "simple_lookup",
+    },
+    "message": "질문을 처리했습니다.",
+    "executionSummary": {
+      "total": 1,
+      "succeeded": 1,
+      "failed": 0,
+    },
+  }
+
+
+def test_chatbot_query_response_builds_multiple_task_response_shape():
+  response = ChatbotQueryResponse(
+    question="잠실엘스 위치 알려줘 그리고 오늘 날씨 알려줘",
+    task_results=[
+      TaskExecutionResult(
+        task=ChatbotTask(index=0, text="잠실엘스 위치 알려줘"),
+        result={
+          "success": True,
+          "handler": "simple_lookup",
+        },
+      ),
+      TaskExecutionResult(
+        task=ChatbotTask(index=1, text="오늘 날씨 알려줘"),
+        result={
+          "success": False,
+          "reason": "no_matching_tool",
+        },
+      ),
+    ],
+  ).to_response_dict()
+
+  assert response["success"] is True
+  assert response["status"] == "partial_success"
+  assert response["message"] == "일부 질문만 처리했습니다."
+  assert response["result"] == [
+    {
+      "success": True,
+      "handler": "simple_lookup",
+    },
+    {
+      "success": False,
+      "reason": "no_matching_tool",
+    },
+  ]
+  assert response["executionSummary"] == {
     "total": 2,
     "succeeded": 1,
     "failed": 1,
