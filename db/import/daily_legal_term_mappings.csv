@@ -106,3 +106,64 @@ id,daily_term,legal_term,relation_type,domain,priority,raw_data,created_at,updat
 890,대지권,대지권등기,RELATED,apartment_sale,50,"{""note"": """", ""source"": ""law_api"", ""source_id"": ""1"", ""relation_code"": ""140305"", ""relation_name"": ""연관어""}",2026-06-18 10:47:30.550739,2026-06-18 10:47:30.550739
 892,대지권,대지사용권,RELATED,apartment_sale,50,"{""note"": """", ""source"": ""law_api"", ""source_id"": ""3"", ""relation_code"": ""140305"", ""relation_name"": ""연관어""}",2026-06-18 10:47:30.550739,2026-06-18 10:47:30.550739
 893,대지권,대지소유권,RELATED,apartment_sale,50,"{""note"": """", ""source"": ""law_api"", ""source_id"": ""4"", ""relation_code"": ""140305"", ""relation_name"": ""연관어""}",2026-06-18 10:47:30.550739,2026-06-18 10:47:30.550739
+894,명의 이전,소유권 이전등기,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+895,명의 이전,소유권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+896,명의 이전,등기명의인,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+897,명의이전,소유권 이전등기,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+898,명의이전,소유권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+899,명의이전,등기명의인,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+900,소유권 이전,소유권 이전등기,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+901,소유권 이전,권리 이전,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+902,소유권 이전,등기명의인,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+903,빚,근저당권,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+904,빚,저당권,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+905,빚,압류,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+906,빚 잡힌 집,근저당권,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+907,빚 잡힌 집,저당권,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+908,빚 잡힌 집,가압류,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+909,등기부,권리관계,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+910,등기부,저당권,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+911,등기부,근저당권,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+912,세입자,임대차,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+913,세입자,대항력,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+914,세입자,임차권등기,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+915,세입자 있는 집,임대차,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+916,세입자 있는 집,대항력,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+917,세입자 있는 집,임차권등기,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+918,부모님 돈,증여,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+919,부모님 돈,증여세,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+920,부모님 돈,취득자금,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+921,부모님,증여,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+922,부모님,증여세,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+923,부모님,특수관계인,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+924,돈을 보태,증여,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+925,돈을 보태,자금 제공,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+926,돈을 보태,취득자금,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+927,자금 출처,취득자금,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+928,자금 출처,자금조달계획,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+929,자금 출처,증여세,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+930,언제 성립,매매의 의의,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+931,언제 성립,재산권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+932,언제 성립,대금 지급,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+933,계약 성립,매매의 의의,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+934,계약 성립,재산권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+935,계약 성립,대금 지급,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+936,매매계약 성립,매매의 의의,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+937,매매계약 성립,재산권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+938,매매계약 성립,대금 지급,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+939,매매대금,매매의 의의,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+940,매매대금,대금 지급,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+941,매매대금,재산권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+942,대금을 지급,매매의 의의,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+943,대금을 지급,대금 지급 약정,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+944,대금을 지급,재산권 이전,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+945,계약금,계약 해제,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+946,계약금,이행 착수,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+947,계약 취소,해약금,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+948,계약 취소,계약 해제,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+949,계약 취소,이행 착수,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+950,실거래 신고,부동산 거래의 신고,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+951,실거래 신고,거래계약 신고,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+952,실거래 신고,신고필증,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+953,신고,부동산 거래의 신고,RELATED,apartment_sale,90,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
+954,신고,신고필증,RELATED,apartment_sale,80,"{""note"": ""QA 검색 보강용 수동 확장어"", ""source"": ""manual_curated"", ""relation_name"": ""연관어""}",2026-06-25 00:00:00,2026-06-25 00:00:00
