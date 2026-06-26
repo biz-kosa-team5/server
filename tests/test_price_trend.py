@@ -1,21 +1,18 @@
-"""시세추이 DTO·Policy·DAO·Service 테스트."""
+from __future__ import annotations
 
-import json
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app.chatbot.features.price_trend import (
-    QUERY_COMPLEX_TREND,
-    QUERY_PRICE_CHANGE_RANKING,
-    QUERY_REGION_TREND,
-    PriceTrendDao,
+    ANALYSIS_RANKING,
+    ANALYSIS_TIMESERIES,
+    TARGET_COMPLEX,
+    TARGET_REGION,
     TrendError,
-    TrendService,
     TrendSlots,
     extract_price_trend_slots,
     normalize_trend_policy,
@@ -33,66 +30,32 @@ def session() -> Session:
     )
     Base.metadata.create_all(engine)
     session = Session(engine)
+
     session.add_all([
-        Region(
-            id=1,
-            code="SEOUL",
-            name="서울특별시",
-            type="city",
-            center_lat=37.56,
-            center_lng=126.97,
-        ),
-        Region(
-            id=2,
-            code="GANGNAM",
-            name="강남구",
-            type="district",
-            parent_id=1,
-            center_lat=37.51,
-            center_lng=127.04,
-        ),
-        Region(
-            id=3,
-            code="SEOCHO",
-            name="서초구",
-            type="district",
-            parent_id=1,
-            center_lat=37.48,
-            center_lng=127.03,
-        ),
-        Complex(
-            id=10,
-            region_id=2,
-            parcel_id=10,
-            name="래미안대치팰리스",
-            trade_name="래미안 대치 팰리스",
-            address="서울 강남구",
-        ),
-        Complex(
-            id=20,
-            region_id=2,
-            parcel_id=20,
-            name="은마아파트",
-            address="서울 강남구",
-        ),
-        Complex(
-            id=30,
-            region_id=3,
-            parcel_id=30,
-            name="서초테스트",
-            address="서울 서초구",
-        ),
+        Region(id=1, code="SEOUL", name="서울특별시", type="city", center_lat=37.56, center_lng=126.97),
+        Region(id=2, code="GANGNAM", name="강남구", type="district", parent_id=1, center_lat=37.51, center_lng=127.04),
+        Region(id=3, code="SEOCHO", name="서초구", type="district", parent_id=1, center_lat=37.48, center_lng=127.03),
+        Region(id=4, code="SONGPA", name="송파구", type="district", parent_id=1, center_lat=37.50, center_lng=127.11),
+        Complex(id=10, region_id=2, parcel_id=10, name="래미안대치팰리스", address="대치동"),
+        Complex(id=20, region_id=2, parcel_id=20, name="은마", address="대치동"),
+        Complex(id=30, region_id=3, parcel_id=30, name="서초더샵", address="서초동"),
+        Complex(id=40, region_id=4, parcel_id=40, name="잠실엘스", address="잠실동"),
     ])
     session.add_all([
-        Trade(id=1, complex_id=10, deal_date="2025-01-10", deal_amount=100000, excl_area=84),
-        Trade(id=2, complex_id=10, deal_date="2025-02-10", deal_amount=102000, excl_area=84),
-        Trade(id=3, complex_id=10, deal_date="2025-11-10", deal_amount=120000, excl_area=84),
-        Trade(id=4, complex_id=10, deal_date="2025-12-10", deal_amount=122000, excl_area=84),
-        Trade(id=5, complex_id=20, deal_date="2025-01-15", deal_amount=90000, excl_area=84),
-        Trade(id=6, complex_id=20, deal_date="2025-02-15", deal_amount=92000, excl_area=84),
-        Trade(id=7, complex_id=20, deal_date="2025-11-15", deal_amount=85000, excl_area=84),
-        Trade(id=8, complex_id=20, deal_date="2025-12-15", deal_amount=84000, excl_area=84),
-        Trade(id=9, complex_id=30, deal_date="2025-12-20", deal_amount=130000, excl_area=84),
+        Trade(id=1, complex_id=10, deal_date="2025-07-10", deal_amount=100000, excl_area=84),
+        Trade(id=2, complex_id=10, deal_date="2025-08-10", deal_amount=102000, excl_area=84),
+        Trade(id=3, complex_id=10, deal_date="2026-04-10", deal_amount=120000, excl_area=84),
+        Trade(id=4, complex_id=10, deal_date="2026-05-10", deal_amount=122000, excl_area=84),
+        Trade(id=5, complex_id=20, deal_date="2025-07-15", deal_amount=90000, excl_area=84),
+        Trade(id=6, complex_id=20, deal_date="2025-08-15", deal_amount=92000, excl_area=84),
+        Trade(id=7, complex_id=20, deal_date="2026-04-15", deal_amount=85000, excl_area=84),
+        Trade(id=8, complex_id=20, deal_date="2026-05-15", deal_amount=84000, excl_area=84),
+        Trade(id=9, complex_id=30, deal_date="2025-07-20", deal_amount=110000, excl_area=84),
+        Trade(id=10, complex_id=30, deal_date="2025-08-20", deal_amount=111000, excl_area=84),
+        Trade(id=11, complex_id=30, deal_date="2026-04-20", deal_amount=100000, excl_area=84),
+        Trade(id=12, complex_id=30, deal_date="2026-05-20", deal_amount=99000, excl_area=84),
+        Trade(id=13, complex_id=40, deal_date="2025-07-25", deal_amount=80000, excl_area=84),
+        Trade(id=14, complex_id=40, deal_date="2026-05-25", deal_amount=130000, excl_area=84),
     ])
     session.commit()
     try:
@@ -101,256 +64,140 @@ def session() -> Session:
         session.close()
 
 
-def test_slots_accept_only_three_query_types():
-    for query_type in (
-        QUERY_COMPLEX_TREND,
-        QUERY_REGION_TREND,
-        QUERY_PRICE_CHANGE_RANKING,
-    ):
-        assert TrendSlots(query_type=query_type).query_type == query_type
-
-    with pytest.raises(ValidationError):
-        TrendSlots(query_type="price_ranking")
+def slots(**overrides) -> dict:
+    values = {
+        "analysis_type": ANALYSIS_TIMESERIES,
+        "target_type": TARGET_REGION,
+        "target_name": "강남구",
+    }
+    values.update(overrides)
+    return values
 
 
-def test_slots_reject_unknown_and_boolean_values():
-    with pytest.raises(ValidationError):
-        TrendSlots(query_type=QUERY_REGION_TREND, unknown="value")
-    with pytest.raises(ValidationError):
-        TrendSlots(query_type=QUERY_REGION_TREND, area=True)
+def test_slots_accept_single_target_name():
+    item = TrendSlots(
+        analysis_type=ANALYSIS_TIMESERIES,
+        target_type=TARGET_COMPLEX,
+        target_name="은마아파트",
+    )
+
+    assert item.target_name == "은마아파트"
 
 
-def test_policy_normalizes_target_period_area_and_interval():
-    criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_COMPLEX_TREND,
-            complex_name="  래미안  대치팰리스 ",
-            area=84,
-            period="1y",
-        ),
+def test_policy_keeps_only_minimum_rules():
+    spec = normalize_trend_policy(
+        TrendSlots(**slots(target_type=TARGET_COMPLEX, target_name="은마아파트", pyeong=34, period="1y")),
         base_date=date(2025, 12, 31),
     )
 
-    assert criteria.complex_name == "래미안 대치팰리스"
-    assert criteria.area_min == 83
-    assert criteria.area_max == 85
-    assert criteria.start_date == "2024-12-31"
-    assert criteria.end_date == "2025-12-31"
-    assert criteria.interval == "month"
-
-
-def test_policy_converts_pyeong_and_deduplicates_regions():
-    criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_REGION_TREND,
-            region_names=[" 강남구 ", "서초구", "강남구"],
-            pyeong=34,
-        ),
-        base_date="2025-12-31",
-    )
-
-    assert criteria.region_names == ("강남구", "서초구")
-    assert criteria.area_min == pytest.approx(81.3)
-    assert criteria.area_max == pytest.approx(87.3)
+    assert spec.target_name == "은마아파트"
+    assert spec.interval == "month"
+    assert spec.start_date == "2024-12-31"
+    assert spec.end_date == "2025-12-31"
+    assert spec.area_min == pytest.approx(81.3)
+    assert spec.area_max == pytest.approx(87.3)
 
 
 @pytest.mark.parametrize(
-    ("slots", "reason"),
+    "bad_slots",
     [
-        (
-            TrendSlots(query_type=QUERY_COMPLEX_TREND),
-            "missing_area",
-        ),
-        (
-            TrendSlots(query_type=QUERY_REGION_TREND),
-            "invalid_request",
-        ),
-        (
-            TrendSlots(
-                query_type=QUERY_COMPLEX_TREND,
-                complex_name="래미안",
-                region_name="강남구",
-            ),
-            "invalid_request",
-        ),
-        (
-            TrendSlots(
-                query_type=QUERY_REGION_TREND,
-                region_name="강남구",
-                interval="week",
-            ),
-            "invalid_request",
-        ),
-        (
-            TrendSlots(
-                query_type=QUERY_PRICE_CHANGE_RANKING,
-                region_name="강남구",
-                period="1y",
-                start_date="2025-01-01",
-            ),
-            "invalid_request",
-        ),
+        slots(interval="week"),
+        slots(area=84, pyeong=34),
+        slots(analysis_type=ANALYSIS_RANKING, target_type=TARGET_COMPLEX, target_name="은마"),
+        slots(analysis_type=ANALYSIS_RANKING, rank_by="unknown"),
     ],
 )
-def test_policy_rejects_invalid_combinations(slots: TrendSlots, reason: str):
-    with pytest.raises(TrendError) as captured:
-        normalize_trend_policy(slots, base_date="2025-12-31")
-    assert captured.value.reason == reason
+def test_policy_rejects_bad_inputs(bad_slots):
+    with pytest.raises(TrendError):
+        normalize_trend_policy(TrendSlots(**bad_slots), base_date="2025-12-31")
 
 
-def test_policy_builds_price_change_windows():
-    criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_PRICE_CHANGE_RANKING,
-            region_name="강남구",
-            period="1y",
-            change_direction="down",
-            limit=3,
-        ),
-        base_date="2025-12-31",
-    )
-
-    assert criteria.region_names == ("강남구",)
-    assert criteria.change_direction == "down"
-    assert criteria.limit == 3
-    assert criteria.start_window_start == "2024-12-31"
-    assert criteria.start_window_end == "2025-03-30"
-    assert criteria.end_window_start == "2025-10-01"
-    assert criteria.end_window_end == "2025-12-31"
+def test_period_extractor_keeps_relative_period():
+    assert extract_price_trend_slots("은마아파트 최근 1년 시세 흐름")["period"] == "1y"
+    assert extract_price_trend_slots("강남구 최근 6개월 시세추이")["period"] == "6m"
 
 
-def test_slot_extractor_routes_supported_questions():
-    complex_slots = extract_price_trend_slots("은마아파트 84㎡ 최근 1년 시세 추이")
-    assert complex_slots["query_type"] == QUERY_COMPLEX_TREND
-    assert complex_slots["complex_name"] == "은마아파트"
-    assert complex_slots["area"] == 84
-    assert extract_price_trend_slots("강남구 최근 1년 시세 추이")["query_type"] == QUERY_REGION_TREND
-    ranking = extract_price_trend_slots("강남구 최근 1년 많이 오른 아파트 5곳")
-    assert ranking["query_type"] == QUERY_PRICE_CHANGE_RANKING
-    assert ranking["limit"] == 5
-
-
-def test_dao_complex_and_region_trend(session: Session):
-    dao = PriceTrendDao(session)
-    complex_criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_COMPLEX_TREND,
-            complex_name="래미안대치팰리스",
-            area=84,
-            period="1y",
-        ),
-        base_date="2025-12-31",
-    )
-    region_criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_REGION_TREND,
-            region_name="강남구",
-            period="1y",
-        ),
-        base_date="2025-12-31",
-    )
-
-    complex_rows = dao.find_complex_trend(complex_criteria)
-    region_rows = dao.find_region_trend(region_criteria)
-
-    assert sum(row["trade_count"] for row in complex_rows) == 4
-    assert sum(row["trade_count"] for row in region_rows) == 8
-
-
-def test_dao_price_change_ranking(session: Session):
-    criteria = normalize_trend_policy(
-        TrendSlots(
-            query_type=QUERY_PRICE_CHANGE_RANKING,
-            region_name="강남구",
-            period="1y",
-        ),
-        base_date="2025-12-31",
-    )
-
-    rows = PriceTrendDao(session).find_price_change_ranking(criteria)
-
-    assert [row["complex_name"] for row in rows] == ["래미안대치팰리스"]
-    assert rows[0]["change_rate"] > 0
-
-
-def test_service_returns_success_and_business_failure(session: Session):
-    service = TrendService(PriceTrendDao(session))
-    success = service.handle(
-        TrendSlots(
-            query_type=QUERY_COMPLEX_TREND,
-            complex_name="래미안대치팰리스",
-            area=84,
-            period="1y",
-        )
-    )
-    failure = service.handle(
-        TrendSlots(
-            query_type=QUERY_COMPLEX_TREND,
-            complex_name="없는아파트",
-            area=84,
-            period="1y",
-        )
-    )
-
-    assert success.success is True
-    assert success.summary["observed_period_count"] == 2
-    assert failure.success is False
-    assert failure.reason == "target_not_found"
-
-
-def test_run_price_trend_keeps_external_response_contract(session: Session):
+def test_complex_timeseries(session: Session):
     result = run_price_trend(
         session,
-        {
-            "query_type": QUERY_REGION_TREND,
-            "region_name": "강남구",
-            "period": "1y",
-        },
-        "강남구 최근 1년 시세 추이",
+        slots(target_type=TARGET_COMPLEX, target_name="은마", period="1y"),
+        "은마아파트 시세추이 알려줘",
     )
 
-    assert result["handler"] == "price_trend"
     assert result["success"] is True
-    assert result["query_type"] == QUERY_REGION_TREND
+    assert result["criteria"]["target_name"] == "은마"
+    assert result["criteria"]["interval"] == "month"
+    assert sum(row["trade_count"] for row in result["results"]) == 4
 
 
-def test_run_price_trend_reports_validation_errors(session: Session):
+def test_complex_timeseries_with_pyeong(session: Session):
     result = run_price_trend(
         session,
-        {"query_type": "price_ranking"},
+        slots(target_type=TARGET_COMPLEX, target_name="은마", pyeong=34, period="1y"),
+        "은마아파트 34평 시세추이 알려줘",
     )
+
+    assert result["success"] is True
+    assert result["criteria"]["area_min"] == pytest.approx(81.3)
+    assert result["criteria"]["area_max"] == pytest.approx(87.3)
+
+
+def test_region_timeseries(session: Session):
+    result = run_price_trend(session, slots(target_name="강남구", period="1y"), "강남구 시세추이")
+
+    assert result["success"] is True
+    assert result["criteria"]["target_name"] == "강남구"
+    assert sum(row["trade_count"] for row in result["results"]) == 8
+
+
+def test_gangnam_3_timeseries(session: Session):
+    result = run_price_trend(session, slots(target_name="강남3구", period="1y"), "강남 3구 시세추이")
+
+    assert result["success"] is True
+    assert result["criteria"]["target_name"] == "강남3구"
+    assert sum(row["trade_count"] for row in result["results"]) == 14
+
+
+def test_change_rate_ranking_up_and_down(session: Session):
+    up = run_price_trend(
+        session,
+        slots(analysis_type=ANALYSIS_RANKING, target_name="강남구", rank_by="change_rate", direction="desc", limit=5),
+        "최근 1년 강남구에서 많이 오른 아파트 TOP 5 알려줘",
+    )
+    down = run_price_trend(
+        session,
+        slots(analysis_type=ANALYSIS_RANKING, target_name="서초구", rank_by="change_rate", direction="asc", limit=5),
+        "최근 1년 서초구에서 많이 내린 아파트 5곳 보여줘",
+    )
+
+    assert up["success"] is True
+    assert up["results"][0]["complex_name"] == "래미안대치팰리스"
+    assert down["success"] is True
+    assert down["results"][0]["complex_name"] == "서초더샵"
+
+
+def test_price_rankings(session: Session):
+    highest = run_price_trend(
+        session,
+        slots(analysis_type=ANALYSIS_RANKING, target_name="강남구", rank_by="max_deal_amount", direction="desc", limit=5),
+        "강남구 최고가 아파트 TOP 5 알려줘",
+    )
+    lowest = run_price_trend(
+        session,
+        slots(analysis_type=ANALYSIS_RANKING, target_name="송파구", rank_by="min_deal_amount", direction="asc", limit=5),
+        "송파구 최저가 아파트 5곳 알려줘",
+    )
+
+    assert highest["success"] is True
+    assert highest["results"][0]["max_deal_amount"] == 122000
+    assert lowest["success"] is True
+    assert lowest["results"][0]["complex_name"] == "잠실엘스"
+    assert lowest["results"][0]["min_deal_amount"] == 80000
+
+
+def test_validation_error_response(session: Session):
+    result = run_price_trend(session, {"analysis_type": "unknown", "target_type": "region", "target_name": "강남구"})
 
     assert result["handler"] == "price_trend"
     assert result["success"] is False
     assert result["reason"] == "invalid_request"
-    assert result["errors"]
-
-
-def test_console_output_for_price_trend(session: Session):
-    """`pytest -s` 실행 시 외부 응답 구조를 콘솔에서 확인한다."""
-
-    success = run_price_trend(
-        session,
-        {
-            "query_type": QUERY_COMPLEX_TREND,
-            "complex_name": "래미안대치팰리스",
-            "area": 84,
-            "period": "1y",
-        },
-        "래미안대치팰리스 최근 1년 시세 추이",
-    )
-    failure = run_price_trend(
-        session,
-        {"query_type": "price_ranking"},
-        "강남구에서 가장 비싼 아파트",
-    )
-
-    print("\n[시세추이 성공 응답]")
-    print(json.dumps(success, ensure_ascii=False, indent=2))
-    print("\n[시세추이 실패 응답]")
-    print(json.dumps(failure, ensure_ascii=False, indent=2))
-
-    assert success["handler"] == "price_trend"
-    assert success["success"] is True
-    assert failure["handler"] == "price_trend"
-    assert failure["reason"] == "invalid_request"
