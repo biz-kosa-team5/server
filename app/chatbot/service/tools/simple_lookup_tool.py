@@ -1,3 +1,7 @@
+"""
+단순 조회 기능을 LangChain tool로 감싼 adapter입니다.
+LLM이 구조화 인자를 일부 생략해도 원문 query에서 기본 슬롯을 추출한 뒤 명시 인자로 덮어씁니다.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +10,7 @@ from langchain.tools import tool
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.simple_lookup.service import run_simple_lookup
+from app.chatbot.features.simple_lookup.slots import extract_simple_lookup_slots
 from .utils import compact_none
 
 
@@ -72,8 +77,8 @@ def build_simple_lookup_tool(session: Session):
     Returns:
       dict: simple_lookup service가 반환한 구조화된 JSON 결과입니다.
     """
-    slots = compact_none({
-      "original_question": query,
+    slots = extract_simple_lookup_slots(query)
+    slots.update(compact_none({
       "query_type": query_type,
       "complex_name": complex_name,
       "pyeong": pyeong,
@@ -84,7 +89,7 @@ def build_simple_lookup_tool(session: Session):
       "limit": limit,
       "sort_order": sort_order,
       "price_order": price_order,
-    })
+    }))
     return run_simple_lookup(session, slots, query)
 
   return simple_lookup
