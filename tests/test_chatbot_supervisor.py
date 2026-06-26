@@ -1,6 +1,6 @@
 import asyncio
 
-from app.chatbot.service.agent import (
+from app.chatbot.service.supervisor import (
   SUPPORTED_QUESTION_EXAMPLES,
   ChatbotAgent,
   ChatbotSupervisor,

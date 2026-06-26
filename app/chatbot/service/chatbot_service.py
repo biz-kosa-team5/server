@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .agent import (
+from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
   agent_initialization_failed_result,
