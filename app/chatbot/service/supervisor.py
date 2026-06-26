@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 import logging
 import os
+import re
 from typing import Any
 
 from langchain.agents import create_agent
@@ -49,8 +50,10 @@ SUPERVISOR_AGENT_SYSTEM_PROMPT = """
 
 반드시 지켜야 할 규칙:
 - 직접 답변하지 말고, 지원 범위 안의 질문은 반드시 전문 agent tool 중 하나 이상을 호출하세요.
+- 질문 안에 서로 다른 종류의 근거가 필요해 보이면 여러 전문 agent tool 호출을 고려하세요.
+- 추천과 함께 시세/가격 흐름, 실거래/위치, 후보 비교, 계약/법령 근거를 함께 묻는 경우 관련 전문 agent를 추가로 호출할 수 있습니다.
+- "추천 이유"처럼 recommendation_agent 결과만으로 설명 가능한 경우에는 recommendation_agent 하나로 충분합니다.
 - 하나의 전문 agent로 충분하면 하나만 호출하세요.
-- 복합 질문이면 필요한 전문 agent tool을 모두 호출하세요.
 - 같은 질문을 여러 전문 agent에 중복 위임하지 마세요.
 - 전문 agent 선택이 애매하면 가장 직접적인 하나만 호출하세요.
 - 전문 agent tool 결과에 없는 부동산 사실, 가격, 법령 내용을 추측하지 마세요.
@@ -77,6 +80,13 @@ class SpecialistAgentSpec:
 
 
 @dataclass(frozen=True)
+class SupervisorRoutingRule:
+  agent: str
+  signals: tuple[str, ...]
+  reason: str
+
+
+@dataclass(frozen=True)
 class SpecialistAgentResult:
   agent: str
   result: dict[str, Any]
@@ -93,36 +103,102 @@ class SpecialistAgentResult:
     }
 
 
+SUPERVISOR_ROUTING_RULES = (
+  SupervisorRoutingRule(
+    agent="recommendation_agent",
+    signals=("추천", "권해", "골라", "조건에 맞는", "아파트 3개"),
+    reason="지역, 가격, 역세권, 신축, 세대수 조건에 맞는 후보 추천",
+  ),
+  SupervisorRoutingRule(
+    agent="lookup_agent",
+    signals=("위치", "주소", "어디", "실거래", "최근 거래", "최고가"),
+    reason="단지 위치, 주소, 실거래, 최고가 같은 단순 조회",
+  ),
+  SupervisorRoutingRule(
+    agent="comparison_agent",
+    signals=("비교", "차이", "vs", "둘 중", "어디가 더"),
+    reason="둘 이상의 단지 비교",
+  ),
+  SupervisorRoutingRule(
+    agent="price_trend_agent",
+    signals=(
+      "시세 추이",
+      "가격 추이",
+      "가격 흐름",
+      "변화율",
+      "변동률",
+      "가격 순위",
+      "오른",
+      "내린",
+    ),
+    reason="시세 흐름, 가격 변화율, 순위 분석",
+  ),
+  SupervisorRoutingRule(
+    agent="legal_contract_agent",
+    signals=("계약", "법령", "법률", "임대차", "전세", "계약금", "해제", "위약금"),
+    reason="부동산 계약, 매매, 전세, 임대차, 법령 근거",
+  ),
+)
+
+
+def specialist_system_prompt(role: str, responsibility: str, tool_name: str) -> str:
+  return (
+    f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n"
+    f"당신은 {role} 전문 Agent입니다. "
+    f"{responsibility} 질문만 {tool_name} tool로 처리하세요."
+  )
+
+
 SPECIALIST_AGENT_SPECS = [
   SpecialistAgentSpec(
     name="lookup_agent",
-    description="단지 위치, 주소, 실거래 내역, 최고가 같은 단순 조회 담당",
+    description="단지 위치, 주소, 실거래 내역, 최고가 조회 담당",
     tool_builders=(build_simple_lookup_tool,),
-    system_prompt=f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n당신은 단순 조회 전문 Agent입니다. 단지 위치, 주소, 실거래 내역, 최고가 질문만 simple_lookup tool로 처리하세요.",
+    system_prompt=specialist_system_prompt(
+      "단순 조회",
+      "단지 위치, 주소, 실거래 내역, 최고가",
+      "simple_lookup",
+    ),
   ),
   SpecialistAgentSpec(
     name="recommendation_agent",
-    description="지역, 가격, 역세권, 신축, 세대수 조건 기반 아파트 추천 담당",
+    description="지역, 가격, 역세권, 신축, 세대수 조건 기반 추천 담당",
     tool_builders=(build_recommendation_tool,),
-    system_prompt=f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n당신은 아파트 추천 전문 Agent입니다. 조건 기반 추천 질문만 recommend_apartments tool로 처리하세요.",
+    system_prompt=specialist_system_prompt(
+      "아파트 추천",
+      "조건 기반 추천",
+      "recommend_apartments",
+    ),
   ),
   SpecialistAgentSpec(
     name="comparison_agent",
     description="둘 이상의 아파트 가격, 평형, 연식, 교통, 교육 비교 담당",
     tool_builders=(build_comparison_tool,),
-    system_prompt=f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n당신은 아파트 비교 전문 Agent입니다. 둘 이상의 단지 비교 질문만 compare_apartments tool로 처리하세요.",
+    system_prompt=specialist_system_prompt(
+      "아파트 비교",
+      "둘 이상의 단지 비교",
+      "compare_apartments",
+    ),
   ),
   SpecialistAgentSpec(
     name="price_trend_agent",
     description="시세 추이, 가격 변화율, 가격 순위 분석 담당",
     tool_builders=(build_price_trend_tool,),
-    system_prompt=f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n당신은 시세 추이 전문 Agent입니다. 가격 추이, 변동률, 순위 질문만 analyze_price_trend tool로 처리하세요.",
+    system_prompt=specialist_system_prompt(
+      "시세 추이",
+      "가격 추이, 변동률, 순위",
+      "analyze_price_trend",
+    ),
   ),
   SpecialistAgentSpec(
     name="legal_contract_agent",
     description="부동산 계약, 매매, 전세, 임대차, 법령 근거 질문 담당",
     tool_builders=(build_legal_contract_tool,),
-    system_prompt=f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n당신은 부동산 계약 법령 전문 Agent입니다. 계약/법령 근거 질문만 search_legal_contract tool로 처리하세요.",
+    system_prompt=specialist_system_prompt(
+      "부동산 계약 법령",
+      "계약/법령 근거",
+      "search_legal_contract",
+    ),
   ),
 ]
 
@@ -172,12 +248,50 @@ class ChatbotSupervisor:
 
   async def run(self, question: str) -> dict[str, Any]:
     result = await self.supervisor.ainvoke({
-      "messages": [{"role": "user", "content": question}],
+      "messages": [{"role": "user", "content": build_supervisor_user_content(question)}],
     })
     return extract_supervisor_result(result)
 
 
 ChatbotAgent = ChatbotSupervisor
+
+
+def build_supervisor_user_content(question: str) -> str:
+  hinted_agents = suggest_specialist_agents(question)
+  if not hinted_agents:
+    return question
+
+  agent_reasons = {
+    rule.agent: rule.reason
+    for rule in SUPERVISOR_ROUTING_RULES
+  }
+  hint_lines = [
+    f"- {agent}: {agent_reasons[agent]}"
+    for agent in hinted_agents
+  ]
+  return (
+    f"{question}\n\n"
+    "라우팅 참고:\n"
+    "질문 신호상 아래 전문 agent를 고려할 수 있습니다.\n"
+    + "\n".join(hint_lines)
+    + "\n이 힌트는 강제가 아니며, 실제 질문 의도에 맞는 전문 agent만 호출하세요."
+  )
+
+
+def suggest_specialist_agents(question: str) -> list[str]:
+  normalized = normalize_question_signal_text(question)
+  if not normalized:
+    return []
+
+  agents = []
+  for rule in SUPERVISOR_ROUTING_RULES:
+    if any(signal in normalized for signal in rule.signals):
+      agents.append(rule.agent)
+  return agents
+
+
+def normalize_question_signal_text(question: str) -> str:
+  return re.sub(r"\s+", " ", question.strip().lower())
 
 
 def extract_supervisor_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -186,30 +300,14 @@ def extract_supervisor_result(result: dict[str, Any]) -> dict[str, Any]:
     for message in result.get("messages", [])
     if getattr(message, "type", None) == "tool"
   ]
-  tool_results = [
-    parsed
-    for parsed in (
-      parse_tool_message(message)
-      for message in tool_messages
-    )
-    if parsed is not None
-  ]
+  tool_results = parse_tool_messages(tool_messages)
 
   if not tool_messages:
     return no_matching_tool_result()
-  if not tool_results:
-    return tool_result_parse_failed_result()
 
   specialist_results = []
   for tool_result in tool_results:
-    agent_name = tool_result.get("agent")
-    specialist_result = tool_result.get("result")
-    if not isinstance(agent_name, str) or not isinstance(specialist_result, dict):
-      return tool_result_parse_failed_result()
-    specialist_results.append(SpecialistAgentResult(
-      agent=agent_name,
-      result=specialist_result,
-    ))
+    specialist_results.append(specialist_result_from_tool_result(tool_result))
 
   if len(specialist_results) == 1:
     return specialist_results[0].result
@@ -222,30 +320,50 @@ def extract_agent_result(result: dict[str, Any]) -> dict[str, Any]:
     for message in result.get("messages", [])
     if getattr(message, "type", None) == "tool"
   ]
-  tool_results = [
-    parsed
+  tool_results = parse_tool_messages(tool_messages)
+
+  if not tool_messages:
+    return no_matching_tool_result()
+  if len(tool_messages) == 1:
+    return tool_results[0]
+  return aggregate_tool_results(tool_messages, tool_results)
+
+
+def parse_tool_messages(tool_messages: list[Any]) -> list[dict[str, Any]]:
+  return [
+    parsed if parsed is not None else tool_result_parse_failed_result()
     for parsed in (
       parse_tool_message(message)
       for message in tool_messages
     )
-    if parsed is not None
   ]
 
-  if not tool_messages:
-    return no_matching_tool_result()
-  if not tool_results:
-    return tool_result_parse_failed_result()
-  if len(tool_messages) == 1:
-    return tool_results[0]
-  return aggregate_tool_results(tool_messages, tool_results)
+
+def specialist_result_from_tool_result(tool_result: dict[str, Any]) -> SpecialistAgentResult:
+  agent_name = tool_result.get("agent")
+  specialist_result = tool_result.get("result")
+  if isinstance(agent_name, str) and isinstance(specialist_result, dict):
+    return SpecialistAgentResult(
+      agent=agent_name,
+      result=specialist_result,
+    )
+  return SpecialistAgentResult(
+    agent=agent_name if isinstance(agent_name, str) else "unknown_agent",
+    result=tool_result_parse_failed_result(),
+  )
 
 
 def aggregate_tool_results(tool_messages: list[Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
   total = len(tool_messages)
   succeeded = sum(1 for item in tool_results if item.get("success") is True)
   failed = total - succeeded
+  partial_succeeded = sum(
+    1
+    for item in tool_results
+    if item.get("success") is True and item.get("status") == "partial_success"
+  )
 
-  if succeeded == total:
+  if succeeded == total and partial_succeeded == 0:
     return {
       "success": True,
       "status": "success",
@@ -275,9 +393,14 @@ def aggregate_specialist_results(specialist_results: list[SpecialistAgentResult]
   total = len(specialist_results)
   succeeded = sum(1 for item in specialist_results if item.success)
   failed = total - succeeded
+  partial_succeeded = sum(
+    1
+    for item in specialist_results
+    if item.success and item.result.get("status") == "partial_success"
+  )
   results = [item.to_dict() for item in specialist_results]
 
-  if succeeded == total:
+  if succeeded == total and partial_succeeded == 0:
     return {
       "success": True,
       "status": "success",

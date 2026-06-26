@@ -1,5 +1,4 @@
-from app.chatbot.service.answer_fallback import fallback_answer
-from app.chatbot.service.chatbot_service import ChatbotAnswerContext
+from app.chatbot.service.answer import ChatbotAnswerContext, fallback_answer
 
 from chatbot_answer_helpers import partial_success_context, success_context
 
@@ -59,12 +58,78 @@ def test_chatbot_answer_fallback_formats_partial_success():
   )
 
 
+def test_chatbot_answer_fallback_formats_nested_partial_success():
+  successful_result = {
+    "success": True,
+    "handler": "simple_lookup",
+    "message": "잠실엘스 위치 조회 결과입니다.",
+  }
+  failed_result = {
+    "success": False,
+    "reason": "no_matching_tool",
+    "message": "지원 가능한 질문이 아닙니다.",
+  }
+  aggregate_result = {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 전문 에이전트 결과만 처리했습니다.",
+    "results": [successful_result, failed_result],
+  }
+  context = success_context(
+    result=aggregate_result,
+    status="partial_success",
+    message="일부 질문만 처리했습니다.",
+  )
+
+  assert fallback_answer(context) == (
+    "잠실엘스 위치 조회 결과입니다.\n"
+    "지원 가능한 질문이 아닙니다."
+  )
+
+
+def test_chatbot_answer_fallback_formats_failed_specialist_wrapper_message():
+  lookup_result = {
+    "agent": "lookup_agent",
+    "success": True,
+    "result": {
+      "success": True,
+      "handler": "simple_lookup",
+      "message": "잠실엘스 위치 조회 결과입니다.",
+    },
+  }
+  failed_legal_result = {
+    "agent": "legal_contract_agent",
+    "success": False,
+    "result": {
+      "success": False,
+      "reason": "insufficient_evidence",
+      "message": "답변을 생성할 충분한 법령 근거를 찾지 못했습니다.",
+    },
+  }
+  context = success_context(
+    result={
+      "success": True,
+      "status": "partial_success",
+      "message": "일부 전문 에이전트 결과만 처리했습니다.",
+      "results": [lookup_result, failed_legal_result],
+    },
+    status="partial_success",
+    message="일부 질문만 처리했습니다.",
+  )
+
+  assert fallback_answer(context) == (
+    "잠실엘스 위치 조회 결과입니다.\n"
+    "답변을 생성할 충분한 법령 근거를 찾지 못했습니다."
+  )
+
+
 def test_chatbot_answer_fallback_formats_price_trend_summary():
   context = success_context(result={
     "success": True,
     "handler": "price_trend",
     "query_type": "complex_trend",
     "summary": {
+      "primary_metric": "avg_deal_amount",
       "first_period": "2025-01",
       "last_period": "2025-12",
       "first_value": 100000,
@@ -77,6 +142,6 @@ def test_chatbot_answer_fallback_formats_price_trend_summary():
   })
 
   assert fallback_answer(context) == (
-    "시세추이를 조회했습니다. 2025-01 100,000에서 2025-12 120,000로 변했습니다. "
+    "시세추이를 조회했습니다. 2025-01 100,000만원에서 2025-12 120,000만원으로 변했습니다. "
     "변화율은 20.00%입니다. 거래 건수는 4건입니다."
   )

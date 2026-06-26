@@ -1,12 +1,13 @@
+"""
+tool 결과 JSON을 최종 fallback 문장으로 라우팅합니다.
+feature 단계에서 만든 answer를 우선 사용하고, 별도 answer가 없는 simple_lookup/price_trend만 formatter로 요약합니다.
+"""
 from __future__ import annotations
 
 from typing import Any
 
 from .common import clean_text, collect_result_messages, format_failure_reason
-from .comparison import format_comparison_result
-from .legal_contract import format_legal_contract_result
 from .price_trend import format_price_trend_result
-from .recommendation import format_recommendation_result
 from .simple_lookup import format_simple_lookup_result
 
 
@@ -21,6 +22,10 @@ def format_result_messages(result: Any) -> list[str]:
     return []
 
   if result.get("success") is False:
+    nested_result = result.get("result")
+    nested_messages = format_result_messages(nested_result)
+    if nested_messages:
+      return nested_messages
     reason = format_failure_reason(result)
     return [reason] if reason else []
 
@@ -49,12 +54,6 @@ def format_domain_result(result: dict[str, Any]) -> str:
   handler = clean_text(result.get("handler"))
   if handler == "simple_lookup":
     return format_simple_lookup_result(result)
-  if handler == "recommendation":
-    return format_recommendation_result(result)
-  if handler == "comparison":
-    return format_comparison_result(result)
   if handler == "price_trend":
     return format_price_trend_result(result)
-  if handler == "legal_contract":
-    return format_legal_contract_result(result)
   return ""

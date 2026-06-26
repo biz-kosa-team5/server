@@ -8,8 +8,10 @@ from app.chatbot.service.supervisor import (
   SpecialistAgentResult,
   SPECIALIST_AGENT_SPECS,
   aggregate_specialist_results,
+  build_supervisor_user_content,
   extract_agent_result,
   extract_supervisor_result,
+  suggest_specialist_agents,
 )
 
 
@@ -22,9 +24,45 @@ class FakeAgentMessage:
 class FakeSupervisorAgent:
   def __init__(self, result):
     self.result = result
+    self.payloads = []
 
-  async def ainvoke(self, _payload):
+  async def ainvoke(self, payload):
+    self.payloads.append(payload)
     return self.result
+
+
+def test_suggest_specialist_agents_keeps_recommendation_reason_to_recommendation_agent():
+  assert suggest_specialist_agents("강남구에 있는 아파트 3개를 추천해주고 그 이유를 알려줘") == [
+    "recommendation_agent",
+  ]
+
+
+def test_suggest_specialist_agents_opens_additional_agents_for_distinct_evidence():
+  assert suggest_specialist_agents("강남구 아파트 3개 추천하고 최근 시세 추이도 알려줘") == [
+    "recommendation_agent",
+    "price_trend_agent",
+  ]
+  assert suggest_specialist_agents("강남구 아파트 추천하고 실거래도 알려줘") == [
+    "recommendation_agent",
+    "lookup_agent",
+  ]
+  assert suggest_specialist_agents("강남구 아파트 추천하고 후보 비교도 해줘") == [
+    "recommendation_agent",
+    "comparison_agent",
+  ]
+  assert suggest_specialist_agents("강남구 아파트 추천하고 매매 계약 법령도 알려줘") == [
+    "recommendation_agent",
+    "legal_contract_agent",
+  ]
+
+
+def test_build_supervisor_user_content_adds_non_forced_routing_hint():
+  content = build_supervisor_user_content("강남구 아파트 추천하고 최근 시세 추이도 알려줘")
+
+  assert "라우팅 참고" in content
+  assert "recommendation_agent" in content
+  assert "price_trend_agent" in content
+  assert "강제가 아니며" in content
 
 
 def test_aggregate_specialist_results_marks_partial_success():
@@ -75,6 +113,64 @@ def test_aggregate_specialist_results_marks_partial_success():
   }
 
 
+def test_aggregate_specialist_results_preserves_nested_partial_success():
+  result = aggregate_specialist_results([
+    SpecialistAgentResult(
+      agent="recommendation_agent",
+      result={
+        "success": True,
+        "handler": "recommendation",
+      },
+    ),
+    SpecialistAgentResult(
+      agent="lookup_agent",
+      result={
+        "success": True,
+        "status": "partial_success",
+        "message": "일부 조회 결과만 처리했습니다.",
+        "results": [
+          {"success": True, "handler": "simple_lookup"},
+          {"success": False, "reason": "no_result"},
+        ],
+      },
+    ),
+  ])
+
+  assert result == {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 전문 에이전트 결과만 처리했습니다.",
+    "results": [
+      {
+        "agent": "recommendation_agent",
+        "success": True,
+        "result": {
+          "success": True,
+          "handler": "recommendation",
+        },
+      },
+      {
+        "agent": "lookup_agent",
+        "success": True,
+        "result": {
+          "success": True,
+          "status": "partial_success",
+          "message": "일부 조회 결과만 처리했습니다.",
+          "results": [
+            {"success": True, "handler": "simple_lookup"},
+            {"success": False, "reason": "no_result"},
+          ],
+        },
+      },
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 2,
+      "failed": 0,
+    },
+  }
+
+
 def test_extract_supervisor_result_unwraps_single_specialist_result():
   result = extract_supervisor_result({
     "messages": [
@@ -116,6 +212,48 @@ def test_extract_supervisor_result_aggregates_multiple_specialist_results():
     "recommendation_agent",
     "legal_contract_agent",
   ]
+
+
+def test_extract_supervisor_result_marks_partial_success_for_mixed_parse_failure():
+  result = extract_supervisor_result({
+    "messages": [
+      FakeAgentMessage(
+        "tool",
+        '{"agent": "recommendation_agent", "success": true, "result": {"success": true, "handler": "recommendation"}}',
+      ),
+      FakeAgentMessage("tool", "not json"),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 전문 에이전트 결과만 처리했습니다.",
+    "results": [
+      {
+        "agent": "recommendation_agent",
+        "success": True,
+        "result": {
+          "success": True,
+          "handler": "recommendation",
+        },
+      },
+      {
+        "agent": "unknown_agent",
+        "success": False,
+        "result": {
+          "success": False,
+          "reason": "tool_result_parse_failed",
+          "message": "조회 결과를 해석하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+        },
+      },
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 1,
+      "failed": 1,
+    },
+  }
 
 
 def test_specialist_chatbot_agent_can_be_exposed_as_tool():
@@ -176,6 +314,10 @@ def test_chatbot_supervisor_runs_supervisor_agent_without_langchain():
     "recommendation_agent",
     "legal_contract_agent",
   ]
+  supervisor_message = supervisor.supervisor.payloads[0]["messages"][0]["content"]
+  assert "라우팅 참고" in supervisor_message
+  assert "recommendation_agent" in supervisor_message
+  assert "legal_contract_agent" in supervisor_message
 
 
 def test_extract_agent_result_returns_no_matching_tool_without_tool_messages():
@@ -233,6 +375,48 @@ def test_extract_agent_result_wraps_multiple_successful_tool_results():
   }
 
 
+def test_extract_agent_result_preserves_nested_partial_success_for_tool_results():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage("tool", '{"success": true, "handler": "simple_lookup"}'),
+      FakeAgentMessage(
+        "tool",
+        (
+          '{"success": true, "status": "partial_success", '
+          '"message": "일부 조회 결과만 처리했습니다.", '
+          '"results": ['
+          '{"success": true, "handler": "simple_lookup"}, '
+          '{"success": false, "reason": "no_result"}'
+          ']}'
+        ),
+      ),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 조회 결과만 처리했습니다.",
+    "results": [
+      {"success": True, "handler": "simple_lookup"},
+      {
+        "success": True,
+        "status": "partial_success",
+        "message": "일부 조회 결과만 처리했습니다.",
+        "results": [
+          {"success": True, "handler": "simple_lookup"},
+          {"success": False, "reason": "no_result"},
+        ],
+      },
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 2,
+      "failed": 0,
+    },
+  }
+
+
 def test_extract_agent_result_marks_partial_success_for_mixed_tool_results():
   result = extract_agent_result({
     "messages": [
@@ -248,6 +432,34 @@ def test_extract_agent_result_marks_partial_success_for_mixed_tool_results():
     "results": [
       {"success": True, "handler": "simple_lookup"},
       {"success": False, "reason": "no_result"},
+    ],
+    "executionSummary": {
+      "total": 2,
+      "succeeded": 1,
+      "failed": 1,
+    },
+  }
+
+
+def test_extract_agent_result_marks_partial_success_for_mixed_parse_failure():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage("tool", '{"success": true, "handler": "simple_lookup"}'),
+      FakeAgentMessage("tool", "not json"),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "status": "partial_success",
+    "message": "일부 조회 결과만 처리했습니다.",
+    "results": [
+      {"success": True, "handler": "simple_lookup"},
+      {
+        "success": False,
+        "reason": "tool_result_parse_failed",
+        "message": "조회 결과를 해석하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      },
     ],
     "executionSummary": {
       "total": 2,

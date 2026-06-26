@@ -1,3 +1,7 @@
+"""
+최종 answer를 작성하는 LLM의 시스템 프롬프트입니다.
+제공된 JSON만 근거로 답변하고, 복합 질문은 fragment 순서와 부분 성공/실패 정보를 보존하도록 제한합니다.
+"""
 DEFAULT_ANSWER_MODEL = "gpt-4o-mini"
 
 CHATBOT_ANSWER_SYSTEM_PROMPT = """

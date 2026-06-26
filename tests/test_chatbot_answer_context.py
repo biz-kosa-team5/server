@@ -1,4 +1,4 @@
-from app.chatbot.service.answer_context import build_llm_context
+from app.chatbot.service.answer import build_llm_context
 
 from chatbot_answer_helpers import partial_success_context
 

@@ -1,19 +1,21 @@
+"""
+수집된 fragment/tool JSON을 근거로 최상위 answer 문자열을 생성합니다.
+전체 실패, API 키 없음, LLM 예외, 빈 응답에서는 도메인 fallback으로 내려가며 새 부동산 사실은 만들지 않습니다.
+동기 OpenAI SDK 호출은 이벤트 루프를 막지 않도록 별도 thread에서 실행합니다.
+"""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from openai import OpenAI
 
-from .answer_context import build_llm_context
-from .answer_fallback import fallback_answer
-from .answer_prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
-
-if TYPE_CHECKING:
-  from .chatbot_service import ChatbotAnswerContext
-
+from .context import ChatbotAnswerContext, build_llm_context
+from .fallback import fallback_answer
+from .prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -32,12 +34,15 @@ class ChatbotAnswerComposer:
   async def compose(self, context: ChatbotAnswerContext) -> str:
     if context.success is False:
       return context.message or fallback_answer(context)
+    if direct_answer := direct_single_result_answer(context):
+      return direct_answer
     if not os.getenv("OPENAI_API_KEY"):
       return fallback_answer(context)
 
     try:
       client = self._client or OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-      response = client.chat.completions.create(
+      response = await asyncio.to_thread(
+        client.chat.completions.create,
         model=self.model,
         temperature=0.2,
         messages=[
@@ -68,6 +73,15 @@ def normalize_openai_model(model: str) -> str:
   if model.startswith("openai:"):
     model = model.split(":", 1)[1]
   return model or DEFAULT_ANSWER_MODEL
+
+
+def direct_single_result_answer(context: ChatbotAnswerContext) -> str:
+  if context.status != "success" or not isinstance(context.result, dict):
+    return ""
+  answer = context.result.get("answer")
+  if not isinstance(answer, str):
+    return ""
+  return answer.strip()
 
 
 def extract_response_content(response: Any) -> str:

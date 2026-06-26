@@ -1,3 +1,7 @@
+"""
+챗봇 질문을 fragment로 나누고 Supervisor 실행 결과를 기존 JSON 응답으로 조립합니다.
+응답 필드는 유지한 채 최상위 answer만 추가하며, answer 생성 책임은 service.answer 패키지에 위임합니다.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,7 +10,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from .answer_composer import ChatbotAnswerComposer
+from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
 from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
@@ -42,6 +46,10 @@ class TaskExecutionResult:
     return self.result.get("success") is True
 
   @property
+  def partial_success(self) -> bool:
+    return self.success and self.result.get("status") == "partial_success"
+
+  @property
   def status(self) -> str:
     return "handled" if self.success else "not_handled"
 
@@ -59,15 +67,18 @@ class TaskExecutionSummary:
   total: int
   succeeded: int
   failed: int
+  partial_succeeded: int = 0
 
   @classmethod
   def from_task_results(cls, task_results: list[TaskExecutionResult]) -> TaskExecutionSummary:
     total = len(task_results)
     succeeded = sum(1 for task_result in task_results if task_result.success)
+    partial_succeeded = sum(1 for task_result in task_results if task_result.partial_success)
     return cls(
       total=total,
       succeeded=succeeded,
       failed=total - succeeded,
+      partial_succeeded=partial_succeeded,
     )
 
   @property
@@ -76,7 +87,7 @@ class TaskExecutionSummary:
 
   @property
   def status(self) -> str:
-    if self.succeeded == self.total and self.total > 0:
+    if self.succeeded == self.total and self.total > 0 and self.partial_succeeded == 0:
       return "success"
     if self.succeeded > 0:
       return "partial_success"
@@ -96,42 +107,6 @@ class TaskExecutionSummary:
       "total": self.total,
       "succeeded": self.succeeded,
       "failed": self.failed,
-    }
-
-
-@dataclass(frozen=True)
-class ChatbotAnswerContext:
-  question: str
-  success: bool
-  status: str
-  message: str
-  fragments: list[dict[str, Any]]
-  result: Any
-  executionSummary: dict[str, int]
-
-  @classmethod
-  def from_response_dict(cls, response: dict[str, Any]) -> ChatbotAnswerContext:
-    fragments = response.get("fragments")
-    execution_summary = response.get("executionSummary")
-    return cls(
-      question=str(response.get("question", "")),
-      success=response.get("success") is True,
-      status=str(response.get("status", "")),
-      message=str(response.get("message", "")),
-      fragments=fragments if isinstance(fragments, list) else [],
-      result=response.get("result"),
-      executionSummary=execution_summary if isinstance(execution_summary, dict) else {},
-    )
-
-  def to_dict(self) -> dict[str, Any]:
-    return {
-      "question": self.question,
-      "success": self.success,
-      "status": self.status,
-      "message": self.message,
-      "fragments": self.fragments,
-      "result": self.result,
-      "executionSummary": self.executionSummary,
     }
 
 

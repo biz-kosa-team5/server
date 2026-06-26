@@ -1,9 +1,9 @@
 from fastapi.testclient import TestClient
 import pytest
 
+from app.chatbot.service.answer import ChatbotAnswerContext
 from app.chatbot.service.splitter import split_question
 from app.chatbot.service.chatbot_service import (
-  ChatbotAnswerContext,
   ChatbotQueryResponse,
   ChatbotTask,
   TaskExecutionResult,
@@ -85,6 +85,31 @@ def test_task_execution_summary_counts_task_results():
     "total": 2,
     "succeeded": 1,
     "failed": 1,
+  }
+
+
+def test_task_execution_summary_promotes_nested_partial_success():
+  summary = TaskExecutionSummary.from_task_results([
+    TaskExecutionResult(
+      task=ChatbotTask(index=0, text="복합 부동산 질문"),
+      result={
+        "success": True,
+        "status": "partial_success",
+        "results": [
+          {"success": True, "handler": "simple_lookup"},
+          {"success": False, "reason": "no_matching_tool"},
+        ],
+      },
+    ),
+  ])
+
+  assert summary.success is True
+  assert summary.status == "partial_success"
+  assert summary.message == "일부 질문만 처리했습니다."
+  assert summary.to_dict() == {
+    "total": 1,
+    "succeeded": 1,
+    "failed": 0,
   }
 
 
@@ -323,6 +348,50 @@ def test_chatbot_query_marks_partial_success_across_fragments(monkeypatch):
     "handled",
     "not_handled",
   ]
+
+
+def test_chatbot_query_marks_nested_partial_success(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, __):
+      return {
+        "success": True,
+        "status": "partial_success",
+        "message": "일부 전문 에이전트 결과만 처리했습니다.",
+        "results": [
+          {
+            "success": True,
+            "handler": "simple_lookup",
+          },
+          {
+            "success": False,
+            "reason": "no_matching_tool",
+            "message": "지원 가능한 질문이 아닙니다.",
+          },
+        ],
+      }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 위치랑 오늘 날씨 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is True
+  assert payload["status"] == "partial_success"
+  assert payload["message"] == "일부 질문만 처리했습니다."
+  assert payload["executionSummary"] == {
+    "total": 1,
+    "succeeded": 1,
+    "failed": 0,
+  }
+  assert payload["answer"] == "일부 질문만 처리했습니다."
+  assert payload["fragments"][0]["status"] == "handled"
 
 
 def test_chatbot_query_returns_initialization_failure_reason(monkeypatch):

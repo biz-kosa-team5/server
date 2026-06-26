@@ -1,3 +1,7 @@
+"""
+단순 조회 tool JSON을 위치/거래 fallback 답변 문장으로 변환합니다.
+주소, 좌표, 거래일, 가격, 면적, 층처럼 조회 결과에 있는 값만 사용합니다.
+"""
 from __future__ import annotations
 
 from typing import Any

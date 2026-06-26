@@ -21,6 +21,23 @@ def test_recommendation_extractor_builds_filter_slots():
   assert slots["sort_by"] == "distance_asc"
 
 
+def test_recommendation_extractor_does_not_treat_connector_go_as_high_school():
+  slots = extract_recommendation_slots("강남구에 있는 아파트 3개를 추천해주고 그 이유를 알려줘")
+
+  assert slots == {
+    "district": "강남구",
+    "limit": 3,
+  }
+
+
+def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
+  slots = extract_recommendation_slots("초/중/고 가까운 강남구 아파트 3개 추천해줘")
+
+  assert slots["school_types"] == ["초등학교", "중학교", "고등학교"]
+  assert slots["radius_m"] == 800
+  assert slots["limit"] == 3
+
+
 def test_comparison_extractor_builds_subject_and_metric_slots():
   slots = extract_compare_slots("래미안대치팰리스랑 잠실엘스 가격 비교해줘")
 

@@ -1,8 +1,13 @@
+"""
+LLM을 사용할 수 없을 때 tool JSON만으로 결정적인 한국어 fallback 답변을 만듭니다.
+부분 성공은 성공 fragment를 먼저 요약하고 실패 fragment의 message/reason만 짧게 덧붙입니다.
+"""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from .answer_formatters import (
+from .context import ChatbotAnswerContext
+from .formatters import (
   clean_text,
   collect_result_messages,
   dedupe,
@@ -10,9 +15,6 @@ from .answer_formatters import (
   format_failure_reason,
   format_result_messages,
 )
-
-if TYPE_CHECKING:
-  from .chatbot_service import ChatbotAnswerContext
 
 
 def fallback_answer(context: ChatbotAnswerContext) -> str:

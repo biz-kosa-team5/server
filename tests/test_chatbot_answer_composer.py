@@ -1,8 +1,7 @@
 import asyncio
 import json
 
-from app.chatbot.service.answer_composer import ChatbotAnswerComposer
-from app.chatbot.service.chatbot_service import ChatbotAnswerContext
+from app.chatbot.service.answer import ChatbotAnswerComposer, ChatbotAnswerContext
 
 from chatbot_answer_helpers import (
   RecordingClient,
@@ -16,14 +15,35 @@ def test_chatbot_answer_composer_returns_fake_llm_answer(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
   completions = RecordingCompletions(content="조회 결과를 종합한 답변입니다.")
   composer = ChatbotAnswerComposer(client=RecordingClient(completions))
+  context = success_context(result={
+    "success": True,
+    "handler": "simple_lookup",
+    "message": "단지 위치를 조회했습니다.",
+  })
 
-  answer = asyncio.run(composer.compose(success_context()))
+  answer = asyncio.run(composer.compose(context))
 
   assert answer == "조회 결과를 종합한 답변입니다."
   assert len(completions.calls) == 1
   assert completions.calls[0]["messages"][1]["content"].startswith(
     "아래 JSON 데이터만 근거로 사용자 질문에 답변해줘."
   )
+
+
+def test_chatbot_answer_composer_reuses_single_result_answer_without_llm(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="호출되면 안 됩니다.")
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "answer": "feature 단계에서 만든 추천 답변입니다.",
+    "message": "조건에 맞는 아파트를 조회했습니다.",
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert answer == "feature 단계에서 만든 추천 답변입니다."
+  assert completions.calls == []
 
 
 def test_chatbot_answer_composer_sends_detailed_answer_policy(monkeypatch):

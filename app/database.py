@@ -1,3 +1,7 @@
+"""
+앱 DB 엔진과 세션을 구성하고 CSV import 데이터로 초기 seed를 수행합니다.
+운영 기본값은 db/import를 사용하며, 테스트는 DATA_IMPORT_DIR로 고정 fixture CSV를 주입할 수 있습니다.
+"""
 from __future__ import annotations
 
 import csv
@@ -17,10 +21,12 @@ from .models import Base, Complex, Poi, Region, Trade
 
 
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///:memory:"
+DEFAULT_IMPORT_DIR = Path(__file__).resolve().parents[1] / "db" / "import"
 BATCH_SIZE = 1000
 
 load_environment()
 database_url = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
+import_dir = Path(os.getenv("DATA_IMPORT_DIR", str(DEFAULT_IMPORT_DIR))).expanduser()
 engine = create_engine(
   database_url,
   connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
@@ -149,7 +155,7 @@ def add_csv_objects(session: Session, filename: str, factory: Callable[[dict[str
 
 
 def read_import_csv(filename: str) -> Generator[dict[str, str], None, None]:
-  path = Path(__file__).resolve().parents[1] / "db" / "import" / filename
+  path = import_dir / filename
   with path.open(encoding="utf-8-sig", newline="") as input_file:
     yield from csv.DictReader(input_file)
 

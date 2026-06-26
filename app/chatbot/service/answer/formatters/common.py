@@ -1,3 +1,7 @@
+"""
+도메인 formatter들이 공유하는 안전한 문자열 변환 유틸입니다.
+값이 없거나 타입이 맞지 않는 경우 빈 문자열로 처리해서 fallback 답변이 추측을 섞지 않게 합니다.
+"""
 from __future__ import annotations
 
 from typing import Any

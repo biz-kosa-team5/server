@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.chatbot.service.chatbot_service import ChatbotAnswerContext
+from app.chatbot.service.answer import ChatbotAnswerContext
 
 
 def success_context(
