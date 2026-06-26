@@ -6,6 +6,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from .answer_composer import ChatbotAnswerComposer
 from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
@@ -99,6 +100,42 @@ class TaskExecutionSummary:
 
 
 @dataclass(frozen=True)
+class ChatbotAnswerContext:
+  question: str
+  success: bool
+  status: str
+  message: str
+  fragments: list[dict[str, Any]]
+  result: Any
+  executionSummary: dict[str, int]
+
+  @classmethod
+  def from_response_dict(cls, response: dict[str, Any]) -> ChatbotAnswerContext:
+    fragments = response.get("fragments")
+    execution_summary = response.get("executionSummary")
+    return cls(
+      question=str(response.get("question", "")),
+      success=response.get("success") is True,
+      status=str(response.get("status", "")),
+      message=str(response.get("message", "")),
+      fragments=fragments if isinstance(fragments, list) else [],
+      result=response.get("result"),
+      executionSummary=execution_summary if isinstance(execution_summary, dict) else {},
+    )
+
+  def to_dict(self) -> dict[str, Any]:
+    return {
+      "question": self.question,
+      "success": self.success,
+      "status": self.status,
+      "message": self.message,
+      "fragments": self.fragments,
+      "result": self.result,
+      "executionSummary": self.executionSummary,
+    }
+
+
+@dataclass(frozen=True)
 class ChatbotQueryResponse:
   question: str
   task_results: list[TaskExecutionResult]
@@ -136,6 +173,9 @@ class ChatbotQueryResponse:
       "executionSummary": summary.to_dict(),
     }
 
+  def to_answer_context(self, response_dict: dict[str, Any]) -> ChatbotAnswerContext:
+    return ChatbotAnswerContext.from_response_dict(response_dict)
+
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
@@ -153,10 +193,14 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
       task,
       supervisor_initialization_failed=supervisor_initialization_failed,
     ))
-  return ChatbotQueryResponse(
+  chatbot_response = ChatbotQueryResponse(
     question=question,
     task_results=task_results,
-  ).to_response_dict()
+  )
+  response_dict = chatbot_response.to_response_dict()
+  answer_context = chatbot_response.to_answer_context(response_dict)
+  response_dict["answer"] = await ChatbotAnswerComposer().compose(answer_context)
+  return response_dict
 
 
 async def execute_task(

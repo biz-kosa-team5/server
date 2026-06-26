@@ -1,7 +1,9 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from app.chatbot.service.splitter import split_question
 from app.chatbot.service.chatbot_service import (
+  ChatbotAnswerContext,
   ChatbotQueryResponse,
   ChatbotTask,
   TaskExecutionResult,
@@ -11,6 +13,15 @@ from app.main import app
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def fake_answer_composer(monkeypatch):
+  class FakeChatbotAnswerComposer:
+    async def compose(self, context):
+      return context.message
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", FakeChatbotAnswerComposer)
 
 
 def test_chatbot_splitter_separates_explicit_connectors():
@@ -160,6 +171,39 @@ def test_chatbot_query_response_builds_multiple_task_response_shape():
   }
 
 
+def test_chatbot_answer_context_keeps_existing_response_fields():
+  response = {
+    "success": True,
+    "status": "success",
+    "question": "잠실엘스 위치 알려줘",
+    "fragments": [
+      {
+        "index": 0,
+        "text": "잠실엘스 위치 알려줘",
+        "status": "handled",
+        "result": {
+          "success": True,
+          "handler": "simple_lookup",
+        },
+      },
+    ],
+    "result": {
+      "success": True,
+      "handler": "simple_lookup",
+    },
+    "message": "질문을 처리했습니다.",
+    "executionSummary": {
+      "total": 1,
+      "succeeded": 1,
+      "failed": 0,
+    },
+  }
+
+  context = ChatbotAnswerContext.from_response_dict(response)
+
+  assert context.to_dict() == response
+
+
 def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
   class FakeChatbotSupervisor:
     def __init__(self, _):
@@ -195,6 +239,7 @@ def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
     "succeeded": 0,
     "failed": 1,
   }
+  assert payload["answer"] == "처리할 수 있는 질문이 없습니다."
   assert payload["fragments"][0]["status"] == "not_handled"
   assert "intent" not in payload["fragments"][0]
   assert payload["result"]["reason"] == "no_matching_tool"
@@ -223,6 +268,7 @@ def test_chatbot_query_uses_supervisor_for_single_domain_question(monkeypatch):
 
   assert response.status_code == 200
   assert calls == ["잠실엘스 위치 알려줘"]
+  assert response.json()["answer"] == "질문을 처리했습니다."
   assert response.json()["result"] == {
     "success": True,
     "handler": "simple_lookup",
@@ -262,6 +308,17 @@ def test_chatbot_query_marks_partial_success_across_fragments(monkeypatch):
     "succeeded": 1,
     "failed": 1,
   }
+  assert payload["answer"] == "일부 질문만 처리했습니다."
+  assert payload["result"] == [
+    {
+      "success": True,
+      "handler": "simple_lookup",
+    },
+    {
+      "success": False,
+      "reason": "no_matching_tool",
+    },
+  ]
   assert [fragment["status"] for fragment in payload["fragments"]] == [
     "handled",
     "not_handled",
@@ -283,6 +340,7 @@ def test_chatbot_query_returns_initialization_failure_reason(monkeypatch):
   assert response.status_code == 200
   payload = response.json()
   assert payload["success"] is False
+  assert payload["answer"] == "처리할 수 있는 질문이 없습니다."
   assert payload["fragments"][0]["status"] == "not_handled"
   assert payload["result"]["reason"] == "agent_initialization_failed"
   assert payload["result"]["message"] == "챗봇 실행 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
@@ -306,6 +364,7 @@ def test_chatbot_query_returns_execution_failure_reason(monkeypatch):
   assert response.status_code == 200
   payload = response.json()
   assert payload["success"] is False
+  assert payload["answer"] == "처리할 수 있는 질문이 없습니다."
   assert payload["fragments"][0]["status"] == "not_handled"
   assert payload["result"]["reason"] == "agent_execution_failed"
   assert payload["result"]["message"] == "질문 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요."
