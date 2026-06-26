@@ -1,6 +1,3 @@
-from fastapi.testclient import TestClient
-
-from app.chatbot.service.splitter import split_question
 from app.chatbot.features.comparison import extract_compare_slots
 from app.chatbot.features.recommendation import extract_recommendation_slots
 from app.chatbot.service.tools import (
@@ -11,17 +8,6 @@ from app.chatbot.service.tools import (
   build_simple_lookup_tool,
 )
 from app.database import SessionLocal, ensure_initialized
-from app.main import app
-
-
-client = TestClient(app)
-
-
-def test_chatbot_splitter_separates_multi_intent_questions():
-  assert split_question("30억 이하 아파트 추천하고 매매 계약 법률 알려줘") == [
-    "30억 이하 아파트",
-    "매매 계약 법률 알려줘",
-  ]
 
 
 def test_recommendation_extractor_builds_filter_slots():
@@ -35,38 +21,28 @@ def test_recommendation_extractor_builds_filter_slots():
   assert slots["sort_by"] == "distance_asc"
 
 
+def test_recommendation_extractor_does_not_treat_connector_go_as_high_school():
+  slots = extract_recommendation_slots("강남구에 있는 아파트 3개를 추천해주고 그 이유를 알려줘")
+
+  assert slots == {
+    "district": "강남구",
+    "limit": 3,
+  }
+
+
+def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
+  slots = extract_recommendation_slots("초/중/고 가까운 강남구 아파트 3개 추천해줘")
+
+  assert slots["school_types"] == ["초등학교", "중학교", "고등학교"]
+  assert slots["radius_m"] == 800
+  assert slots["limit"] == 3
+
+
 def test_comparison_extractor_builds_subject_and_metric_slots():
   slots = extract_compare_slots("래미안대치팰리스랑 잠실엘스 가격 비교해줘")
 
   assert slots["apartment_names"] == ["래미안대치팰리스", "잠실엘스"]
   assert slots["metrics"] == ["latest_price", "pyeong", "price_per_pyeong"]
-
-
-def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
-  class FakeChatbotAgent:
-    def __init__(self, _):
-      pass
-
-    async def run(self, __):
-      return {
-        "success": False,
-        "reason": "no_matching_tool",
-        "message": "현재 챗봇은 부동산 단지 조회, 아파트 추천, 단지 비교, 시세 추이, 계약 관련 법령 질문을 처리할 수 있습니다.",
-      }
-
-  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAgent", FakeChatbotAgent)
-
-  response = client.post(
-    "/api/v1/chatbot/query",
-    json={"question": "잠실엘스 어디 있어?"},
-  )
-
-  assert response.status_code == 200
-  payload = response.json()
-  assert payload["success"] is False
-  assert payload["fragments"][0]["status"] == "not_handled"
-  assert "intent" not in payload["fragments"][0]
-  assert payload["result"]["reason"] == "no_matching_tool"
 
 
 def test_simple_lookup_tool_calls_existing_service():

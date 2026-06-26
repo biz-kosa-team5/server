@@ -101,12 +101,9 @@ def extract_school_types(text: str) -> list[str]:
   if re.search(r"초\s*[,/·]?\s*중\s*[,/·]?\s*고", text) or "초중고" in text:
     return ["초등학교", "중학교", "고등학교"]
   aliases = {
-    "초": "초등학교",
     "초등": "초등학교",
     "초등학교": "초등학교",
-    "중": "중학교",
     "중학교": "중학교",
-    "고": "고등학교",
     "고등": "고등학교",
     "고등학교": "고등학교",
     "유치원": "유치원",
@@ -114,6 +111,17 @@ def extract_school_types(text: str) -> list[str]:
   }
   for keyword, school_type in aliases.items():
     if keyword in text and school_type not in school_types:
+      school_types.append(school_type)
+  single_letter_aliases = {
+    "초": "초등학교",
+    "중": "중학교",
+    "고": "고등학교",
+  }
+  for keyword, school_type in single_letter_aliases.items():
+    if (
+      re.search(rf"(?<![가-힣A-Za-z0-9]){keyword}(?![가-힣A-Za-z0-9])", text)
+      and school_type not in school_types
+    ):
       school_types.append(school_type)
   return school_types
 

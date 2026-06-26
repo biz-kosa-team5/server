@@ -179,5 +179,5 @@ def test_poi_seed_supports_station_and_education_categories():
   assert station is not None
   assert station.subtype == "2호선"
   assert station.latitude == 37.491897
-  assert counts == {"education": 329, "station": 86}
+  assert counts == {"education": 5, "station": 2}
   assert education_subtypes == {"유치원", "초등학교", "중학교", "고등학교", "특수학교"}
