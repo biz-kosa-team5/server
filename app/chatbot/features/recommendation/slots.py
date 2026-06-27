@@ -40,6 +40,7 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
   radius = extract_radius_m(text)
   if radius is not None:
     slots["radius_m"] = radius
+    slots["_explicit_radius_m"] = True
 
   price_slots = extract_price_slots(text)
   slots.update(price_slots)
@@ -101,12 +102,9 @@ def extract_school_types(text: str) -> list[str]:
   if re.search(r"초\s*[,/·]?\s*중\s*[,/·]?\s*고", text) or "초중고" in text:
     return ["초등학교", "중학교", "고등학교"]
   aliases = {
-    "초": "초등학교",
     "초등": "초등학교",
     "초등학교": "초등학교",
-    "중": "중학교",
     "중학교": "중학교",
-    "고": "고등학교",
     "고등": "고등학교",
     "고등학교": "고등학교",
     "유치원": "유치원",
@@ -115,6 +113,18 @@ def extract_school_types(text: str) -> list[str]:
   for keyword, school_type in aliases.items():
     if keyword in text and school_type not in school_types:
       school_types.append(school_type)
+  if any(keyword in text for keyword in ("학교", "학군", "교육")):
+    single_letter_aliases = {
+      "초": "초등학교",
+      "중": "중학교",
+      "고": "고등학교",
+    }
+    for keyword, school_type in single_letter_aliases.items():
+      if (
+        re.search(rf"(?<![가-힣A-Za-z0-9]){keyword}(?![가-힣A-Za-z0-9])", text)
+        and school_type not in school_types
+      ):
+        school_types.append(school_type)
   return school_types
 
 
@@ -169,12 +179,12 @@ def extract_infra_preferences(text: str) -> list[str]:
 def extract_sort_by(text: str) -> str | None:
   if is_closest_school_query(text):
     return "school_distance_asc"
+  if any(keyword in text for keyword in ("비싼", "높은 가격", "가격 높은")):
+    return "price_desc"
   if any(keyword in text for keyword in ("가까운", "근처", "거리순")):
     return "distance_asc"
   if any(keyword in text for keyword in ("저렴한", "싼", "낮은 가격", "가격 낮은")):
     return "price_asc"
-  if any(keyword in text for keyword in ("비싼", "높은 가격", "가격 높은")):
-    return "price_desc"
   return None
 
 

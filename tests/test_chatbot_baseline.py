@@ -35,11 +35,38 @@ def test_recommendation_extractor_builds_filter_slots():
   assert slots["sort_by"] == "distance_asc"
 
 
+def test_recommendation_extractor_keeps_district_and_price_words_distinct():
+  cheap_slots = extract_recommendation_slots("서초구 20억 이하 저렴한 아파트 4곳 추천해줘")
+  expensive_slots = extract_recommendation_slots("청담역 주변 비싼 아파트 3개 추천해줘")
+
+  assert cheap_slots["district"] == "서초구"
+  assert cheap_slots["limit"] == 4
+  assert cheap_slots["sort_by"] == "price_asc"
+  assert "school_type" not in cheap_slots
+  assert expensive_slots["station_name"] == "청담역"
+  assert expensive_slots["sort_by"] == "price_desc"
+
+
 def test_comparison_extractor_builds_subject_and_metric_slots():
   slots = extract_compare_slots("래미안대치팰리스랑 잠실엘스 가격 비교해줘")
 
   assert slots["apartment_names"] == ["래미안대치팰리스", "잠실엘스"]
   assert slots["metrics"] == ["latest_price", "pyeong", "price_per_pyeong"]
+
+
+def test_comparison_extractor_cleans_metric_words_from_names():
+  assert extract_compare_slots("반포자이랑 래미안퍼스티지 초등학교 접근성 비교해줘")["apartment_names"] == [
+    "반포자이",
+    "래미안퍼스티지",
+  ]
+  assert extract_compare_slots("아크로리버파크랑 래미안원펜타스 가격이랑 평당가 비교해줘")["apartment_names"] == [
+    "아크로리버파크",
+    "래미안원펜타스",
+  ]
+  assert extract_compare_slots("도곡렉슬이랑 대치현대 어디가 더 대단지야 비교해줘")["apartment_names"] == [
+    "도곡렉슬",
+    "대치현대",
+  ]
 
 
 def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):

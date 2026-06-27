@@ -55,6 +55,11 @@ class RecommendationService:
       return empty_result("recommendation", "poi_not_found", "조건에 맞는 역/교육시설을 찾지 못했습니다.", normalized)
 
     filtered = self._filter_by_poi_groups(session, filtered, poi_groups, normalized)
+    if not filtered and should_expand_default_radius(normalized, poi_groups):
+      normalized = dict(normalized)
+      normalized["radius_m"] = 1500
+      expanded_items = self._filter_by_latest_trade(session, candidates, normalized)
+      filtered = self._filter_by_poi_groups(session, expanded_items, poi_groups, normalized)
     results = self._build_results(session, filtered, normalized)
 
     return {
@@ -115,3 +120,12 @@ def recommend_apartments_by_filters(session: Session, slots: dict[str, Any]) -> 
 def run_recommendation(session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
   """chatbot recommendation tool에서 호출하는 기존 진입점이다."""
   return RecommendationService().run(session, slots, text)
+
+
+def should_expand_default_radius(slots: dict[str, Any], poi_groups: list[list[Any]]) -> bool:
+  """명시 반경이 없는 '근처' 질문은 800m 결과가 없으면 한 번 더 넓게 찾는다."""
+  if not poi_groups:
+    return False
+  if slots.get("_explicit_radius_m") is True:
+    return False
+  return optional_int(slots.get("radius_m")) == 800

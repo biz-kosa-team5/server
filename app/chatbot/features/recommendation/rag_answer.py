@@ -76,6 +76,9 @@ def generate_recommendation_answer(
   criteria: dict[str, Any],
   results: list[dict[str, Any]],
 ) -> str:
+  if os.getenv("CHATBOT_USE_LLM_RAG_ANSWERS") != "1":
+    return fallback_recommendation_answer(criteria, results)
+
   # 기존 service에서는 함수 하나만 호출하면 되도록 얇은 wrapper를 둔다.
   return RecommendationRagAnswerAgent().run(
     question=question,

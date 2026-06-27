@@ -17,7 +17,12 @@ def find_complex_by_name(session: Session, name: str) -> Complex | None:
   normalized = clean_text(name)
   if normalized is None:
     return None
-  return select_complex_by_name(session, normalized)
+  found = select_complex_by_name(session, normalized)
+  if found is not None:
+    return found
+  if normalized.endswith("이") and len(normalized) > 1:
+    return select_complex_by_name(session, normalized[:-1])
+  return None
 
 
 def comparison_item(complex_row: Complex, latest_trade: Trade | None, metrics: list[str]) -> dict[str, Any]:

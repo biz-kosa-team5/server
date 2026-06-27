@@ -27,6 +27,7 @@ CHATBOT_AGENT_SYSTEM_PROMPT = """
 
 class ChatbotAgent:
   def __init__(self, session: Session, model: str | None = None):
+    self.session = session
     self.agent = create_agent(
       model=model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_AGENT_MODEL),
       tools=build_chatbot_tools(session),

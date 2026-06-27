@@ -98,7 +98,7 @@ def criteria_from_slots(slots: dict[str, Any]) -> dict[str, Any]:
   return {
     key: value
     for key, value in slots.items()
-    if value not in (None, "", [])
+    if value not in (None, "", []) and not key.startswith("_")
   }
 
 
