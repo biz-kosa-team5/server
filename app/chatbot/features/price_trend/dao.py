@@ -1,236 +1,408 @@
+"""price_trend DAO 모듈.
+
+policy가 확정한 criteria를 바탕으로 고정 SQL을 실행한다.
+"""
+
 from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Integer, case, cast, func, literal, or_, select
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from app.chatbot.features.price_trend.dto import (
+from .dto import (
     RANK_BY_CHANGE_RATE,
-    RANK_BY_MIN_DEAL_AMOUNT,
     TARGET_COMPLEX,
     TARGET_REGION,
-    TrendAnalysisSpec,
+    TrendCriteria,
     TrendError,
 )
-from app.models import Complex, Region, Trade
-
-
-GANGNAM_3 = ("강남구", "서초구", "송파구")
 
 
 class PriceTrendDao:
-    def __init__(self, session: Session) -> None:
-        self.session = session
+    """price_trend 조회용 DAO."""
 
-    def find_timeseries(self, spec: TrendAnalysisSpec) -> list[dict[str, Any]]:
-        statement = self._timeseries_statement(spec)
-        return [_trend_row(row) for row in self.session.execute(statement).all()]
+    def find_timeseries(
+        self,
+        session: Session,
+        criteria: TrendCriteria,
+    ) -> list[dict[str, Any]]:
+        """시계열 데이터를 조회한다."""
 
-    def find_ranking(self, spec: TrendAnalysisSpec) -> list[dict[str, Any]]:
-        if spec.rank_by == RANK_BY_CHANGE_RATE:
-            rows = self.session.execute(self._change_rate_statement(spec)).all()
-            return _change_rate_rows(rows, direction=str(spec.direction), limit=int(spec.limit or 5))
+        target = self._resolve_target(session, criteria)
 
-        rows = self.session.execute(self._price_ranking_statement(spec)).all()
-        return [_price_rank_row(rank, row, str(spec.rank_by)) for rank, row in enumerate(rows, start=1)]
-
-    def _timeseries_statement(self, spec: TrendAnalysisSpec):
-        period = _period_expr(str(spec.interval))
-        price_per_sqm = _price_per_sqm_expr()
-
-        statement = (
-            select(
-                period.label("period_start"),
-                func.avg(Trade.deal_amount).label("avg_deal_amount"),
-                func.avg(price_per_sqm).label("avg_price_per_sqm"),
-                func.count(Trade.id).label("trade_count"),
-            )
-            .select_from(Trade)
-            .join(Complex, Trade.complex_id == Complex.id)
-        )
-
-        if spec.target_type == TARGET_COMPLEX:
-            complex_row = self._resolve_complex(spec.target_name)
-            statement = statement.where(Complex.id == complex_row.id)
+        interval = criteria["interval"]
+        if interval == "month":
+            period_expr = "date_trunc('month', CAST(t.deal_date AS timestamp))::date"
+        elif interval == "quarter":
+            period_expr = "date_trunc('quarter', CAST(t.deal_date AS timestamp))::date"
+        elif interval == "year":
+            period_expr = "date_trunc('year', CAST(t.deal_date AS timestamp))::date"
         else:
-            region_ids = self._resolve_region_ids(spec.target_name)
-            statement = statement.where(Complex.region_id.in_(region_ids))
-
-        return _apply_filters(statement, spec).group_by(period).order_by(period)
-
-    def _change_rate_statement(self, spec: TrendAnalysisSpec):
-        region_ids = self._resolve_region_ids(spec.target_name)
-        start_cond = Trade.deal_date.between(str(spec.start_window_start), str(spec.start_window_end))
-        end_cond = Trade.deal_date.between(str(spec.end_window_start), str(spec.end_window_end))
-        price_per_sqm = _price_per_sqm_expr()
-
-        start_price = func.avg(case((start_cond, price_per_sqm), else_=None)).label("start_price")
-        end_price = func.avg(case((end_cond, price_per_sqm), else_=None)).label("end_price")
-        start_count = func.count(case((start_cond, Trade.id), else_=None)).label("start_count")
-        end_count = func.count(case((end_cond, Trade.id), else_=None)).label("end_count")
-
-        statement = (
-            select(
-                Complex.id.label("complex_id"),
-                Complex.name.label("complex_name"),
-                Complex.address.label("address"),
-                start_price,
-                end_price,
-                start_count,
-                end_count,
+            raise TrendError(
+                "invalid_condition",
+                "지원하지 않는 시계열 구간입니다.",
             )
-            .join(Trade, Trade.complex_id == Complex.id)
-            .where(Complex.region_id.in_(region_ids))
-            .where(or_(start_cond, end_cond))
-        )
 
-        return (
-            _apply_area_filters(statement, spec)
-            .group_by(Complex.id, Complex.name, Complex.address)
-            .having(start_count >= int(spec.min_trade_count or 1))
-            .having(end_count >= int(spec.min_trade_count or 1))
-            .having(start_price > 0)
-        )
+        params: dict[str, Any] = {
+            "start_date": criteria["start_date"],
+            "end_date": criteria["end_date"],
+            "area_min": criteria.get("area_min"),
+            "area_max": criteria.get("area_max"),
+        }
 
-    def _price_ranking_statement(self, spec: TrendAnalysisSpec):
-        region_ids = self._resolve_region_ids(spec.target_name)
-        metric = func.min(Trade.deal_amount) if spec.rank_by == RANK_BY_MIN_DEAL_AMOUNT else func.max(Trade.deal_amount)
-        label = "min_deal_amount" if spec.rank_by == RANK_BY_MIN_DEAL_AMOUNT else "max_deal_amount"
-        order_metric = metric.asc() if spec.direction == "asc" else metric.desc()
-
-        statement = (
-            select(
-                Complex.id.label("complex_id"),
-                Complex.name.label("complex_name"),
-                Complex.address.label("address"),
-                metric.label(label),
-                func.count(Trade.id).label("trade_count"),
+        if target["target_type"] == TARGET_COMPLEX:
+            target_filter = "c.id = :complex_id"
+            params["complex_id"] = target["complex_id"]
+            statement = text(
+                f"""
+                SELECT
+                    {period_expr} AS period_start,
+                    AVG(t.deal_amount) AS avg_deal_amount,
+                    AVG(t.deal_amount / NULLIF(t.excl_area, 0)) AS avg_price_per_sqm,
+                    COUNT(t.id) AS trade_count
+                FROM trades t
+                JOIN complexes c ON c.id = t.complex_id
+                WHERE {target_filter}
+                  AND CAST(t.deal_date AS date) >= :start_date
+                  AND CAST(t.deal_date AS date) <= :end_date
+                  AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
+                  AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                GROUP BY period_start
+                ORDER BY period_start
+                """
             )
-            .join(Trade, Trade.complex_id == Complex.id)
-            .where(Complex.region_id.in_(region_ids))
+        else:
+            target_filter = "c.region_id IN :region_ids"
+            params["region_ids"] = target["region_ids"]
+            statement = text(
+                f"""
+                SELECT
+                    {period_expr} AS period_start,
+                    AVG(t.deal_amount) AS avg_deal_amount,
+                    AVG(t.deal_amount / NULLIF(t.excl_area, 0)) AS avg_price_per_sqm,
+                    COUNT(t.id) AS trade_count
+                FROM trades t
+                JOIN complexes c ON c.id = t.complex_id
+                WHERE {target_filter}
+                  AND CAST(t.deal_date AS date) >= :start_date
+                  AND CAST(t.deal_date AS date) <= :end_date
+                  AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
+                  AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                GROUP BY period_start
+                ORDER BY period_start
+                """
+            ).bindparams(bindparam("region_ids", expanding=True))
+
+        rows = session.execute(statement, params).mappings().all()
+
+        return [
+            {
+                "period_start": str(row["period_start"]),
+                "avg_deal_amount": round(float(row["avg_deal_amount"]), 2),
+                "avg_price_per_sqm": round(float(row["avg_price_per_sqm"]), 2),
+                "trade_count": int(row["trade_count"]),
+            }
+            for row in rows
+        ]
+
+    def find_ranking(
+        self,
+        session: Session,
+        criteria: TrendCriteria,
+    ) -> list[dict[str, Any]]:
+        """랭킹 데이터를 조회한다."""
+
+        target = self._resolve_target(session, criteria)
+
+        if target["target_type"] != TARGET_REGION:
+            raise TrendError(
+                "invalid_condition",
+                "랭킹 조회는 지역 기준만 지원합니다.",
+            )
+
+        rank_by = criteria["rank_by"]
+        direction = criteria["direction"]
+        limit = criteria["limit"]
+
+        params: dict[str, Any] = {
+            "region_ids": target["region_ids"],
+            "start_date": criteria["start_date"],
+            "end_date": criteria["end_date"],
+            "area_min": criteria.get("area_min"),
+            "area_max": criteria.get("area_max"),
+            "limit": limit,
+        }
+
+        if rank_by == RANK_BY_CHANGE_RATE:
+            if direction == "asc":
+                change_filter = "change_rate < 0"
+                order_clause = "change_rate ASC, complex_id"
+            else:
+                change_filter = "change_rate > 0"
+                order_clause = "change_rate DESC, complex_id"
+
+            statement = text(
+                f"""
+                WITH monthly AS (
+                    SELECT
+                        c.id AS complex_id,
+                        c.name AS complex_name,
+                        c.address AS address,
+                        date_trunc('month', CAST(t.deal_date AS timestamp))::date AS period_start,
+                        AVG(t.deal_amount / NULLIF(t.excl_area, 0)) AS avg_price_per_sqm,
+                        COUNT(t.id) AS trade_count
+                    FROM trades t
+                    JOIN complexes c ON c.id = t.complex_id
+                    WHERE c.region_id IN :region_ids
+                      AND CAST(t.deal_date AS date) >= :start_date
+                      AND CAST(t.deal_date AS date) <= :end_date
+                      AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
+                      AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                    GROUP BY
+                        c.id,
+                        c.name,
+                        c.address,
+                        period_start
+                ),
+                ranked_monthly AS (
+                    SELECT
+                        *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY complex_id
+                            ORDER BY period_start ASC
+                        ) AS start_rank,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY complex_id
+                            ORDER BY period_start DESC
+                        ) AS end_rank
+                    FROM monthly
+                ),
+                paired AS (
+                    SELECT
+                        start_row.complex_id,
+                        start_row.complex_name,
+                        start_row.address,
+                        start_row.period_start AS start_period,
+                        end_row.period_start AS end_period,
+                        start_row.avg_price_per_sqm AS start_price_per_sqm,
+                        end_row.avg_price_per_sqm AS end_price_per_sqm,
+                        start_row.trade_count AS start_trade_count,
+                        end_row.trade_count AS end_trade_count
+                    FROM ranked_monthly start_row
+                    JOIN ranked_monthly end_row
+                      ON end_row.complex_id = start_row.complex_id
+                    WHERE start_row.start_rank = 1
+                      AND end_row.end_rank = 1
+                      AND start_row.period_start < end_row.period_start
+                      AND start_row.avg_price_per_sqm > 0
+                      AND end_row.avg_price_per_sqm IS NOT NULL
+                ),
+                scored AS (
+                    SELECT
+                        complex_id,
+                        complex_name,
+                        address,
+                        start_period,
+                        end_period,
+                        start_price_per_sqm,
+                        end_price_per_sqm,
+                        end_price_per_sqm - start_price_per_sqm AS change_amount,
+                        (
+                            (end_price_per_sqm - start_price_per_sqm)
+                            / NULLIF(start_price_per_sqm, 0)
+                            * 100
+                        ) AS change_rate,
+                        start_trade_count,
+                        end_trade_count
+                    FROM paired
+                ),
+                ordered AS (
+                    SELECT
+                        ROW_NUMBER() OVER (ORDER BY {order_clause}) AS rank,
+                        *
+                    FROM scored
+                    WHERE {change_filter}
+                )
+                SELECT
+                    rank,
+                    complex_id,
+                    complex_name,
+                    address,
+                    start_period,
+                    end_period,
+                    start_price_per_sqm,
+                    end_price_per_sqm,
+                    change_amount,
+                    change_rate,
+                    start_trade_count,
+                    end_trade_count
+                FROM ordered
+                ORDER BY rank
+                LIMIT :limit
+                """
+            ).bindparams(bindparam("region_ids", expanding=True))
+
+            rows = session.execute(statement, params).mappings().all()
+
+            return [
+                {
+                    "rank": int(row["rank"]),
+                    "complex_id": int(row["complex_id"]),
+                    "complex_name": row["complex_name"],
+                    "address": row["address"],
+                    "start_period": str(row["start_period"]),
+                    "end_period": str(row["end_period"]),
+                    "start_price_per_sqm": round(float(row["start_price_per_sqm"]), 2),
+                    "end_price_per_sqm": round(float(row["end_price_per_sqm"]), 2),
+                    "change_amount": round(float(row["change_amount"]), 2),
+                    "change_rate": round(float(row["change_rate"]), 2),
+                    "trade_counts": {
+                        "start": int(row["start_trade_count"]),
+                        "end": int(row["end_trade_count"]),
+                    },
+                }
+                for row in rows
+            ]
+
+    def _resolve_target(
+        self,
+        session: Session,
+        criteria: TrendCriteria,
+    ) -> dict[str, Any]:
+        """criteria의 target 조건을 DB id 조건으로 변환한다."""
+
+        target_type = criteria["target_type"]
+        target_name = criteria["target_name"]
+
+        if target_type == TARGET_COMPLEX:
+            exact_statement = text(
+                """
+                SELECT id, name, trade_name, address
+                FROM complexes
+                WHERE name = :target_name
+                OR trade_name = :target_name
+                ORDER BY
+                    CASE
+                        WHEN name = :target_name THEN 0
+                        WHEN trade_name = :target_name THEN 1
+                        ELSE 2
+                    END,
+                    id
+                """
+            )
+
+            exact_rows = session.execute(
+                exact_statement,
+                {"target_name": target_name},
+            ).mappings().all()
+
+            if len(exact_rows) == 1:
+                return {
+                    "target_type": TARGET_COMPLEX,
+                    "complex_id": exact_rows[0]["id"],
+                    "region_ids": None,
+                }
+
+            if len(exact_rows) > 1:
+                raise TrendError(
+                    "ambiguous_target",
+                    "입력한 이름과 일치하는 아파트 단지가 여러 개 있습니다.",
+                    candidates=[
+                        {
+                            "complex_id": row["id"],
+                            "name": row["name"],
+                            "trade_name": row["trade_name"],
+                            "address": row["address"],
+                        }
+                        for row in exact_rows[:10]
+                    ],
+                )
+
+            partial_statement = text(
+                """
+                SELECT id, name, trade_name, address
+                FROM complexes
+                WHERE name ILIKE '%' || :target_name || '%'
+                OR trade_name ILIKE '%' || :target_name || '%'
+                ORDER BY
+                    CASE
+                        WHEN name ILIKE :target_name || '%' THEN 0
+                        WHEN trade_name ILIKE :target_name || '%' THEN 1
+                        WHEN name ILIKE '%' || :target_name || '%' THEN 2
+                        WHEN trade_name ILIKE '%' || :target_name || '%' THEN 3
+                        ELSE 4
+                    END,
+                    id
+                LIMIT 10
+                """
+            )
+
+            partial_rows = session.execute(
+                partial_statement,
+                {"target_name": target_name},
+            ).mappings().all()
+
+            if len(partial_rows) == 1:
+                return {
+                    "target_type": TARGET_COMPLEX,
+                    "complex_id": partial_rows[0]["id"],
+                    "region_ids": None,
+                }
+
+            if len(partial_rows) > 1:
+                raise TrendError(
+                    "ambiguous_target",
+                    "입력한 이름과 비슷한 아파트 단지가 여러 개 있습니다.",
+                    candidates=[
+                        {
+                            "complex_id": row["id"],
+                            "name": row["name"],
+                            "trade_name": row["trade_name"],
+                            "address": row["address"],
+                        }
+                        for row in partial_rows
+                    ],
+                )
+
+            raise TrendError(
+                "target_not_found",
+                "입력한 이름과 일치하는 아파트 단지를 찾지 못했습니다.",
+            )        
+
+        if target_type == TARGET_REGION:
+            region_names = criteria.get("region_names") or [target_name]
+
+            statement = text(
+                """
+                SELECT id, name
+                FROM regions
+                WHERE name IN :region_names
+                ORDER BY id
+                """
+            ).bindparams(bindparam("region_names", expanding=True))
+
+            rows = session.execute(
+                statement,
+                {"region_names": region_names},
+            ).mappings().all()
+
+            found_names = {row["name"] for row in rows}
+            missing_names = [name for name in region_names if name not in found_names]
+
+            if missing_names:
+                raise TrendError(
+                    "target_not_found",
+                    f"입력한 이름과 일치하는 지역을 찾지 못했습니다: {missing_names[0]}",
+                )
+
+            return {
+                "target_type": TARGET_REGION,
+                "complex_id": None,
+                "region_ids": [row["id"] for row in rows],
+            }
+
+        raise TrendError(
+            "invalid_condition",
+            "지원하지 않는 조회 대상 유형입니다.",
         )
-
-        return (
-            _apply_filters(statement, spec)
-            .group_by(Complex.id, Complex.name, Complex.address)
-            .order_by(order_metric, Complex.id)
-            .limit(int(spec.limit or 5))
-        )
-
-    def _resolve_complex(self, name: str) -> Complex:
-        row = self._find_complex(name)
-        if row is None:
-            raise TrendError("target_not_found", "입력한 이름과 일치하는 아파트 단지를 찾지 못했습니다.")
-        return row
-
-    def _resolve_region_ids(self, name: str) -> list[int]:
-        names = GANGNAM_3 if _normalize_name(name) in {"강남3구", "강남삼구"} else (name,)
-        return [self._resolve_region(region_name).id for region_name in names]
-
-    def _resolve_region(self, name: str) -> Region:
-        row = self._find_region(name)
-        if row is None:
-            raise TrendError("target_not_found", f"입력한 이름과 일치하는 지역을 찾지 못했습니다: {name}")
-        return row
-
-    def _find_complex(self, name: str) -> Complex | None:
-        statement = (
-            select(Complex)
-            .where(or_(Complex.name == name, Complex.trade_name == name))
-            .order_by(Complex.id)
-            .limit(1)
-        )
-        return self.session.scalars(statement).first()
-
-    def _find_region(self, name: str) -> Region | None:
-        statement = select(Region).where(Region.name == name).order_by(Region.id).limit(1)
-        return self.session.scalars(statement).first()
-
-
-def _trend_row(row: Any) -> dict[str, Any]:
-    return {
-        "period_start": str(row.period_start),
-        "avg_deal_amount": round(float(row.avg_deal_amount), 2),
-        "avg_price_per_sqm": round(float(row.avg_price_per_sqm), 2),
-        "trade_count": int(row.trade_count),
-    }
-
-
-def _change_rate_rows(rows: list[Any], *, direction: str, limit: int) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        start = float(row.start_price)
-        end = float(row.end_price)
-        rate = (end - start) / start * 100
-        if (direction == "desc" and rate <= 0) or (direction == "asc" and rate >= 0):
-            continue
-        items.append({
-            "complex_id": int(row.complex_id),
-            "complex_name": row.complex_name,
-            "address": row.address,
-            "start_price_per_sqm": round(start, 2),
-            "end_price_per_sqm": round(end, 2),
-            "change_amount": round(end - start, 2),
-            "change_rate": round(rate, 2),
-            "trade_counts": {"start": int(row.start_count), "end": int(row.end_count)},
-        })
-
-    if direction == "desc":
-        items.sort(key=lambda item: (-item["change_rate"], item["complex_id"]))
-    else:
-        items.sort(key=lambda item: (item["change_rate"], item["complex_id"]))
-    return [{"rank": rank, **item} for rank, item in enumerate(items[:limit], start=1)]
-
-
-def _price_rank_row(rank: int, row: Any, rank_by: str) -> dict[str, Any]:
-    amount_key = "min_deal_amount" if rank_by == RANK_BY_MIN_DEAL_AMOUNT else "max_deal_amount"
-    return {
-        "rank": rank,
-        "complex_id": int(row.complex_id),
-        "complex_name": row.complex_name,
-        "address": row.address,
-        amount_key: int(getattr(row, amount_key)),
-        "trade_counts": {"total": int(row.trade_count)},
-    }
-
-
-def _apply_filters(statement, spec: TrendAnalysisSpec):
-    return _apply_area_filters(
-        statement.where(Trade.deal_date >= spec.start_date).where(Trade.deal_date <= spec.end_date),
-        spec,
-    )
-
-
-def _apply_area_filters(statement, spec: TrendAnalysisSpec):
-    if spec.area_min is not None:
-        statement = statement.where(Trade.excl_area >= spec.area_min)
-    if spec.area_max is not None:
-        statement = statement.where(Trade.excl_area <= spec.area_max)
-    return statement
-
-
-def _period_expr(interval: str):
-    year = func.substr(Trade.deal_date, 1, 4)
-    if interval == "month":
-        return func.substr(Trade.deal_date, 1, 7) + literal("-01")
-    if interval == "quarter":
-        month = cast(func.substr(Trade.deal_date, 6, 2), Integer)
-        quarter_month = case(
-            (month <= 3, literal("01")),
-            (month <= 6, literal("04")),
-            (month <= 9, literal("07")),
-            else_=literal("10"),
-        )
-        return year + literal("-") + quarter_month + literal("-01")
-    if interval == "year":
-        return year + literal("-01-01")
-    raise ValueError(f"지원하지 않는 interval입니다: {interval}")
-
-
-def _price_per_sqm_expr():
-    return Trade.deal_amount / func.nullif(Trade.excl_area, 0)
-
-
-def _normalize_name(value: str) -> str:
-    return "".join(value.lower().split())
