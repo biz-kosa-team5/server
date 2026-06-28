@@ -1,415 +1,284 @@
-"""시세추이 슬롯을 검증하고 DAO 조회 조건으로 정규화한다."""
+"""price_trend 정책 정규화 모듈.
+
+LLM이 추출한 슬롯을 DB 조회 가능한 criteria로 변환한다.
+"""
 
 from __future__ import annotations
 
 import calendar
-import math
 import re
 from datetime import date, timedelta
 from typing import Any
 
-from app.chatbot.features.price_trend.dto import (
-    QUERY_COMPLEX_TREND,
-    QUERY_PRICE_CHANGE_RANKING,
-    QUERY_REGION_TREND,
-    SUPPORTED_TREND_QUERY_TYPES,
+from pydantic import ValidationError
+
+from .dto import (
+    ANALYSIS_RANKING,
+    ANALYSIS_TIMESERIES,
+    RANK_BY_CHANGE_RATE,
+    TARGET_REGION,
     TrendCriteria,
     TrendError,
     TrendSlots,
 )
 
 
-DEFAULT_TREND_PERIOD = "3y"
-DEFAULT_CHANGE_RANKING_PERIOD = "1y"
-DEFAULT_RANKING_LIMIT = 5
-MAX_RANKING_LIMIT = 20
-MIN_CHANGE_WINDOW_TRADE_COUNT = 2
 BASE_DATE = date(2026, 6, 20)
 
-PYEONG_TO_SQM = 3.3058
-ASSUMED_EXCLUSIVE_RATE = 0.75
-AREA_TOLERANCE_SQM = 1.0
-PYEONG_TOLERANCE_SQM = 3.0
+DEFAULT_PERIOD = "1y"
+DEFAULT_INTERVAL = "month"
+DEFAULT_LIMIT = 5
+MAX_LIMIT = 20
 
-PERIOD_PATTERN = re.compile(r"^(?P<amount>[1-9]\d*)(?P<unit>[my])$")
-MAX_PERIOD_MONTHS = 180
-ALLOWED_INTERVALS = {"month", "quarter", "year"}
-ALLOWED_CHANGE_DIRECTIONS = {"up", "down", "absolute"}
+AREA_TOLERANCE = 1.0
+PYEONG_TO_M2 = 3.3058
+EXCLUSIVE_AREA_RATE = 0.75
+PYEONG_AREA_TOLERANCE = 3.0
 
+GANGNAM_3_ALIASES = {"강남3구", "강남삼구"}
 
-def normalize_trend_policy(
-    slots: TrendSlots,
-    *,
-    base_date: date | str = BASE_DATE,
-) -> TrendCriteria:
-    """슬롯을 하나의 불변 조회 조건으로 만든다."""
-
-    if slots.query_type not in SUPPORTED_TREND_QUERY_TYPES:
-        raise TrendError(
-            "invalid_request",
-            "지원하지 않는 시세추이 조회 유형입니다.",
-        )
-
-    normalized_base_date = _parse_base_date(base_date)
-    _validate_slots(slots)
-
-    target = _normalize_target(slots)
-    area = _normalize_area(slots)
-    period = _normalize_period(
-        slots,
-        base_date=normalized_base_date,
-        default_period=(
-            DEFAULT_CHANGE_RANKING_PERIOD
-            if slots.query_type == QUERY_PRICE_CHANGE_RANKING
-            else DEFAULT_TREND_PERIOD
-        ),
-    )
-
-    values: dict[str, Any] = {
-        "query_type": slots.query_type,
-        **target,
-        **area,
-        **period,
-    }
-
-    if slots.query_type in {QUERY_COMPLEX_TREND, QUERY_REGION_TREND}:
-        values["interval"] = normalize_interval(
-            slots.interval,
-            start_date=period["start_date"],
-            end_date=period["end_date"],
-        )
-    else:
-        values.update(
-            _normalize_change_ranking(
-                slots,
-                start_date=period["start_date"],
-                end_date=period["end_date"],
-            )
-        )
-
-    return TrendCriteria(**values)
+PERIOD_PATTERN = re.compile(r"^(?P<amount>[1-9]\d*)(?P<unit>m|y)$")
 
 
-def _validate_slots(slots: TrendSlots) -> None:
-    """슬롯 조합과 숫자값을 검증한다."""
+class PriceTrendPolicy:
+    """LLM 슬롯을 DB 조회 가능한 price_trend criteria로 변환한다."""
 
-    for field_name in ("area", "pyeong"):
-        value = getattr(slots, field_name)
-        if value is not None and (
-            isinstance(value, bool)
-            or not math.isfinite(value)
-            or value <= 0
-        ):
+    def __init__(self, base_date: date = BASE_DATE) -> None:
+        self.base_date = base_date
+
+    # 조회 조건 생성
+    def build_criteria(self, slots: dict[str, Any]) -> TrendCriteria:
+        parsed = self._validate_slots(slots)
+        raw_slots = parsed.model_dump(exclude_none=True)
+
+        start_date, end_date = self._normalize_date_range(raw_slots)
+        area_criteria = self._normalize_area_criteria(raw_slots)
+        
+        target_name = parsed.target_name.strip()        
+        target_key = "".join(target_name.split())
+
+        criteria: TrendCriteria = {
+            "analysis_type": parsed.analysis_type,
+            "target_type": parsed.target_type,
+            "target_name": parsed.target_name,
+            "start_date": start_date,
+            "end_date": end_date,
+            **area_criteria,
+        }
+        
+        if parsed.target_type == TARGET_REGION:
+            if target_key in GANGNAM_3_ALIASES:
+                criteria["region_names"] = ["강남구", "서초구", "송파구"]
+            else:
+                criteria["region_names"] = [target_name]
+
+        if parsed.original_question:
+            criteria["original_question"] = parsed.original_question
+            
+        if parsed.analysis_type == ANALYSIS_TIMESERIES:
+            criteria["interval"] = parsed.interval or DEFAULT_INTERVAL
+
+        if parsed.analysis_type == ANALYSIS_RANKING:
+            criteria["rank_by"] = parsed.rank_by or RANK_BY_CHANGE_RATE
+            criteria["direction"] = parsed.direction or "desc"
+            criteria["limit"] = self._normalize_limit(parsed.limit)
+
+        return criteria
+
+    # 형식 체크
+    def _validate_slots(self, slots: dict[str, Any]) -> TrendSlots:
+        try:
+            return TrendSlots.model_validate(slots)
+        except ValidationError:
             raise TrendError(
                 "invalid_request",
-                f"{field_name}은 0보다 큰 유한 숫자여야 합니다.",
+                "시세추이 슬롯 형식이 올바르지 않습니다.",
             )
+            
+    # ----------------------------
+    # 기간 보정
+    # ----------------------------
+    def _normalize_date_range(self, slots: dict[str, Any]) -> tuple[date, date]:
+        start: date | None = slots.get("start_date")
+        end: date | None = slots.get("end_date")
+        period: str | None = slots.get("period")
 
-    if slots.limit is not None and slots.limit <= 0:
-        raise TrendError("invalid_request", "조회 개수는 1 이상이어야 합니다.")
+        # 1. start_date + end_date가 모두 있으면 명시 날짜를 우선한다.
+        if start is not None and end is not None:
+            return self._validate_date_range(start, end)
 
-    if slots.area is not None and slots.pyeong is not None:
-        raise TrendError(
-            "invalid_request",
-            "전용면적과 평형은 함께 사용할 수 없습니다.",
-        )
+        # 2. start_date + period면 start_date부터 period만큼 조회한다.
+        if start is not None and period:
+            end = self._end_date_from_start_and_period(start, period)
+            return self._validate_date_range(start, end)
 
-    if slots.period is not None and (
-        slots.start_date is not None or slots.end_date is not None
-    ):
-        raise TrendError(
-            "invalid_request",
-            "period는 start_date 또는 end_date와 함께 사용할 수 없습니다.",
-        )
+        # 3. end_date + period면 end_date 기준으로 period만큼 과거를 조회한다.
+        if end is not None and period:
+            start = self._start_date_from_end_and_period(end, period)
+            return self._validate_date_range(start, end)
 
-    if slots.query_type == QUERY_COMPLEX_TREND:
-        _reject_present(
-            slots,
-            ("region_name", "region_names", "change_direction", "limit"),
-        )
+        # 4. start_date만 있으면 base_date까지 조회한다.
+        if start is not None:
+            return self._validate_date_range(start, self.base_date)
 
-        if slots.area is None and slots.pyeong is None:
+        # 5. end_date만 있으면 기본 기간만큼 과거를 조회한다.
+        if end is not None:
+            start = self._start_date_from_end_and_period(end, DEFAULT_PERIOD)
+            return self._validate_date_range(start, end)
+
+        # 6. 날짜가 없으면 period 또는 기본 period를 base_date 기준으로 조회한다.
+        return self._date_range_from_period(period or DEFAULT_PERIOD)
+
+    def _date_range_from_period(self, period: str) -> tuple[date, date]:
+        start = self._start_date_from_end_and_period(self.base_date, period)
+        return start, self.base_date
+
+    def _end_date_from_start_and_period(self, start: date, period: str) -> date:
+        months = self._period_to_months(period)
+        end = self._add_months(start, months) - timedelta(days=1)
+        return min(end, self.base_date)
+
+    def _start_date_from_end_and_period(self, end: date, period: str) -> date:
+        end = min(end, self.base_date)
+        months = self._period_to_months(period)
+        return self._add_months(end, -months) + timedelta(days=1)
+
+    def _period_to_months(self, period: str) -> int:
+        matched = PERIOD_PATTERN.match(period)
+        if matched is None:
             raise TrendError(
-                "missing_area",
-                "특정 단지 시세추이는 전용면적 또는 평형을 지정해야 합니다.",
+                "invalid_period_condition",
+                "지원하지 않는 기간 조건입니다.",
             )
 
-    elif slots.query_type == QUERY_REGION_TREND:
-        _reject_present(
-            slots,
-            ("complex_name", "change_direction", "limit"),
-        )
-    elif slots.query_type == QUERY_PRICE_CHANGE_RANKING:
-        _reject_present(slots, ("complex_name", "interval"))
+        amount = int(matched.group("amount"))
+        unit = matched.group("unit")
 
+        return amount if unit == "m" else amount * 12
 
-def _reject_present(slots: TrendSlots, names: tuple[str, ...]) -> None:
-    """허용하지 않는 슬롯이 들어왔는지 확인한다."""
+    def _validate_date_range(self, start: date, end: date) -> tuple[date, date]:
+        if end > self.base_date:
+            end = self.base_date
 
-    present = [name for name in names if getattr(slots, name) is not None]
-    if present:
-        raise TrendError(
-            "invalid_request",
-            f"현재 조회 유형에서는 사용할 수 없는 슬롯입니다: {', '.join(present)}",
-        )
-
-
-def _normalize_target(slots: TrendSlots) -> dict[str, Any]:
-    """단지명 또는 지역명을 Criteria에 들어갈 형태로 정규화한다."""
-
-    complex_name = _clean_name(slots.complex_name)
-    region_names = _collect_region_names(slots.region_name, slots.region_names)
-
-    if slots.query_type == QUERY_COMPLEX_TREND:
-        if complex_name is None:
-            raise TrendError("invalid_request", "단지 시세추이에는 단지명이 필요합니다.")
-        if region_names:
-            raise TrendError("invalid_request", "단지명과 지역명을 함께 사용할 수 없습니다.")
-        return {"complex_name": complex_name}
-
-    if complex_name is not None:
-        raise TrendError("invalid_request", "지역 조회에는 단지명을 사용할 수 없습니다.")
-    if not region_names:
-        raise TrendError("invalid_request", "지역명이 필요합니다.")
-    return {"region_names": tuple(region_names)}
-
-
-def _collect_region_names(
-    region_name: str | None,
-    region_names: list[str] | None,
-) -> list[str]:
-    """단일 지역명과 복수 지역명을 하나의 목록으로 정리한다."""
-
-    if region_name is not None and region_names is not None:
-        raise TrendError(
-            "invalid_request",
-            "region_name과 region_names는 함께 사용할 수 없습니다.",
-        )
-
-    values = [region_name] if region_name is not None else (region_names or [])
-    normalized: list[str] = []
-
-    for value in values:
-        name = _clean_name(value)
-        if name is None:
-            raise TrendError("invalid_request", "빈 지역명을 사용할 수 없습니다.")
-        if name not in normalized:
-            normalized.append(name)
-
-    return normalized
-
-
-def _clean_name(value: str | None) -> str | None:
-    """이름 슬롯의 앞뒤 공백과 연속 공백을 정리한다."""
-
-    if value is None:
-        return None
-    normalized = " ".join(value.split())
-    return normalized or None
-
-
-def _normalize_area(slots: TrendSlots) -> dict[str, float]:
-    """전용면적 또는 평형을 DAO에서 쓸 면적 범위로 바꾼다."""
-
-    if slots.area is not None:
-        return {
-            "area_min": round(slots.area - AREA_TOLERANCE_SQM, 2),
-            "area_max": round(slots.area + AREA_TOLERANCE_SQM, 2),
-        }
-
-    if slots.pyeong is not None:
-        estimated = slots.pyeong * PYEONG_TO_SQM * ASSUMED_EXCLUSIVE_RATE
-        return {
-            "area_min": round(estimated - PYEONG_TOLERANCE_SQM, 2),
-            "area_max": round(estimated + PYEONG_TOLERANCE_SQM, 2),
-        }
-
-    return {}
-
-
-def _normalize_period(
-    slots: TrendSlots,
-    *,
-    base_date: date,
-    default_period: str,
-) -> dict[str, str]:
-    """기간 슬롯을 시작일과 종료일로 정규화한다."""
-
-    start = _parse_optional_date("start_date", slots.start_date)
-    end = _parse_optional_date("end_date", slots.end_date)
-
-    if start is not None and start > base_date:
-        raise TrendError("invalid_request", "조회 시작일이 데이터 기준일보다 미래입니다.")
-    if end is not None and end > base_date:
-        end = base_date
-    if start is not None and end is not None and start > end:
-        raise TrendError("invalid_request", "조회 시작일은 종료일보다 늦을 수 없습니다.")
-
-    if slots.period is not None:
-        start = subtract_calendar_period(base_date, slots.period)
-        end = base_date
-    elif start is None and end is None:
-        start = subtract_calendar_period(base_date, default_period)
-        end = base_date
-    elif start is None:
-        assert end is not None
-        start = subtract_calendar_period(end, default_period)
-    elif end is None:
-        end = base_date
-
-    assert start is not None and end is not None
-    return {"start_date": start.isoformat(), "end_date": end.isoformat()}
-
-
-def normalize_interval(
-    interval: str | None,
-    *,
-    start_date: str,
-    end_date: str,
-) -> str:
-    """집계 간격을 검증하거나 조회 기간에 맞춰 자동 선택한다."""
-
-    if interval is not None:
-        if interval not in ALLOWED_INTERVALS:
+        if start > end:
             raise TrendError(
-                "invalid_request",
-                "interval은 month, quarter, year 중 하나여야 합니다.",
+                "invalid_period_condition",
+                "조회 시작일은 종료일보다 늦을 수 없습니다.",
             )
-        return interval
 
-    start = date.fromisoformat(start_date)
-    end = date.fromisoformat(end_date)
+        return start, end
 
-    if end <= add_calendar_months(start, 24):
-        return "month"
-    if end <= add_calendar_months(start, 60):
-        return "quarter"
-    return "year"
+    def _add_months(self, value: date, months: int) -> date:
+        month_index = value.month - 1 + months
+        year = value.year + month_index // 12
+        month = month_index % 12 + 1
+        day = min(value.day, calendar.monthrange(year, month)[1])
 
-
-def _normalize_change_ranking(
-    slots: TrendSlots,
-    *,
-    start_date: str,
-    end_date: str,
-) -> dict[str, Any]:
-    """가격 변화율 순위 조건을 정리한다."""
-
-    direction = slots.change_direction or "up"
-    if direction not in ALLOWED_CHANGE_DIRECTIONS:
-        raise TrendError(
-            "invalid_request",
-            "change_direction은 up, down, absolute 중 하나여야 합니다.",
+        return date(year, month, day)
+    
+    # ----------------------------
+    # 면적 보정
+    # ----------------------------
+    def _normalize_area_criteria(self, slots: dict[str, Any]) -> TrendCriteria:
+        has_area = any(
+            slots.get(key) is not None
+            for key in ("area", "area_min", "area_max")
+        )
+        has_pyeong = any(
+            slots.get(key) is not None
+            for key in ("pyeong", "pyeong_min", "pyeong_max")
         )
 
-    limit = min(slots.limit or DEFAULT_RANKING_LIMIT, MAX_RANKING_LIMIT)
+        if has_area and has_pyeong:
+            raise TrendError(
+                "invalid_condition",
+                "면적㎡ 조건과 평형 조건은 동시에 사용할 수 없습니다.",
+            )
 
-    return {
-        "change_direction": direction,
-        "limit": limit,
-        "min_trade_count": MIN_CHANGE_WINDOW_TRADE_COUNT,
-        **build_change_windows(start_date, end_date),
-    }
+        if has_area:
+            return self._area_criteria_from_area(slots)
 
+        if has_pyeong:
+            return self._area_criteria_from_pyeong(slots)
 
-def build_change_windows(start_date: str, end_date: str) -> dict[str, str]:
-    """가격 변화율 비교용 시작 구간과 종료 구간을 만든다."""
+        return {}
+    
+    # 면적 조건 보정
+    def _area_criteria_from_area(self, slots: dict[str, Any]) -> TrendCriteria:
+        area = slots.get("area")
+        area_min = slots.get("area_min")
+        area_max = slots.get("area_max")
 
-    start = date.fromisoformat(start_date)
-    end = date.fromisoformat(end_date)
+        if area is not None:
+            center = float(area)
+            return {
+                "area_min": max(0.0, center - AREA_TOLERANCE),
+                "area_max": center + AREA_TOLERANCE,
+            }
 
-    if end <= add_calendar_months(start, 6):
-        months = 1
-    elif end <= add_calendar_months(start, 18):
-        months = 3
-    elif end <= add_calendar_months(start, 36):
-        months = 6
-    else:
-        months = 12
+        if area_min is not None and area_max is not None and float(area_min) > float(area_max):
+            raise TrendError(
+                "invalid_condition",
+                "면적 최소값은 최대값보다 클 수 없습니다.",
+            )
 
-    start_window_end = min(add_calendar_months(start, months) - timedelta(days=1), end)
-    end_window_start = max(subtract_calendar_months(end, months) + timedelta(days=1), start)
+        criteria: TrendCriteria = {}
 
-    if start_window_end >= end_window_start:
-        raise TrendError(
-            "invalid_request",
-            "가격 변화율 비교에는 시작 구간과 종료 구간이 겹치지 않는 더 긴 기간이 필요합니다.",
-        )
+        if area_min is not None:
+            criteria["area_min"] = float(area_min)
 
-    return {
-        "start_window_start": start.isoformat(),
-        "start_window_end": start_window_end.isoformat(),
-        "end_window_start": end_window_start.isoformat(),
-        "end_window_end": end.isoformat(),
-    }
+        if area_max is not None:
+            criteria["area_max"] = float(area_max)
 
+        return criteria
+    
+    # 평 조건 보정
+    def _area_criteria_from_pyeong(self, slots: dict[str, Any]) -> TrendCriteria:
+        pyeong = slots.get("pyeong")
+        pyeong_min = slots.get("pyeong_min")
+        pyeong_max = slots.get("pyeong_max")
 
-def parse_period(period: str) -> int:
-    """period 문자열을 개월 수로 변환한다."""
+        if pyeong is not None:
+            center = float(pyeong) * PYEONG_TO_M2 * EXCLUSIVE_AREA_RATE
+            return {
+                "area_min": max(0.0, center - PYEONG_AREA_TOLERANCE),
+                "area_max": center + PYEONG_AREA_TOLERANCE,
+            }
 
-    matched = PERIOD_PATTERN.fullmatch(period)
-    if matched is None:
-        raise TrendError(
-            "invalid_request",
-            "period는 양의 정수 뒤에 m 또는 y를 붙여 입력해야 합니다.",
-        )
+        if pyeong_min is not None:
+            pyeong_min = float(pyeong_min)
 
-    amount = int(matched.group("amount"))
-    months = amount if matched.group("unit") == "m" else amount * 12
+        if pyeong_max is not None:
+            pyeong_max = float(pyeong_max)
 
-    if months > MAX_PERIOD_MONTHS:
-        raise TrendError(
-            "unsupported_request",
-            f"조회 기간은 최대 {MAX_PERIOD_MONTHS}개월까지 지원합니다.",
-        )
+        if pyeong_min is not None and pyeong_max is not None and pyeong_min > pyeong_max:
+            raise TrendError(
+                "invalid_condition",
+                "평형 최소값은 최대값보다 클 수 없습니다.",
+            )
 
-    return months
+        criteria: TrendCriteria = {}
 
+        if pyeong_min is not None:
+            criteria["area_min"] = pyeong_min * PYEONG_TO_M2 * EXCLUSIVE_AREA_RATE
 
-def subtract_calendar_period(value: date, period: str) -> date:
-    """기준일에서 period만큼 달력 월 기준으로 뺀다."""
+        if pyeong_max is not None:
+            criteria["area_max"] = pyeong_max * PYEONG_TO_M2 * EXCLUSIVE_AREA_RATE
 
-    return subtract_calendar_months(value, parse_period(period))
+        return criteria
+    
+    
+    # ----------------------------
+    # 랭킹 조건 보정
+    # ----------------------------
+    def _normalize_limit(self, value: int | None) -> int:
+        if value is None:
+            return DEFAULT_LIMIT
 
+        if value <= 0:
+            raise TrendError(
+                "invalid_condition",
+                "limit은 1 이상이어야 합니다.",
+            )
 
-def add_calendar_months(value: date, months: int) -> date:
-    """월말을 보정하면서 달력 월을 더한다."""
-
-    total_months = value.year * 12 + value.month - 1 + months
-    year, zero_based_month = divmod(total_months, 12)
-    month = zero_based_month + 1
-    day = min(value.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def subtract_calendar_months(value: date, months: int) -> date:
-    """월말을 보정하면서 달력 월을 뺀다."""
-
-    return add_calendar_months(value, -months)
-
-
-def _parse_optional_date(field_name: str, value: str | None) -> date | None:
-    """선택 날짜 문자열을 date로 변환한다."""
-
-    if value is None:
-        return None
-
-    try:
-        return date.fromisoformat(value)
-    except ValueError as error:
-        raise TrendError(
-            "invalid_request",
-            f"{field_name}은 YYYY-MM-DD 형식이어야 합니다.",
-        ) from error
-
-
-def _parse_base_date(value: date | str) -> date:
-    """기준일을 date로 변환한다."""
-
-    if isinstance(value, date):
-        return value
-
-    try:
-        return date.fromisoformat(value)
-    except ValueError as error:
-        raise ValueError("base_date는 date 또는 YYYY-MM-DD 문자열이어야 합니다.") from error
+        return min(value, MAX_LIMIT)
