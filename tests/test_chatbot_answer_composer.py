@@ -130,14 +130,33 @@ def test_chatbot_answer_composer_falls_back_when_llm_returns_empty(monkeypatch):
   assert answer == "시세 추이 결과 메시지입니다."
 
 
-def test_chatbot_answer_composer_falls_back_without_api_key(monkeypatch):
+def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):
   monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-  completions = RecordingCompletions(content="호출되면 안 됩니다.")
+  completions = RecordingCompletions(content="주입된 LLM client가 만든 답변입니다.")
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
 
+  assert answer == "주입된 LLM client가 만든 답변입니다."
+  assert len(completions.calls) == 1
+
+
+def test_chatbot_answer_composer_falls_back_without_api_key_or_client(monkeypatch):
+  monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+  answer = asyncio.run(ChatbotAnswerComposer().compose(success_context()))
+
   assert answer == "잠실엘스 조회 결과입니다."
-  assert completions.calls == []
+
+
+def test_resolve_openai_api_key_loads_environment(monkeypatch):
+  monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+  def fake_load_environment():
+    monkeypatch.setenv("OPENAI_API_KEY", "loaded-key")
+
+  monkeypatch.setattr(composer_module, "load_environment", fake_load_environment)
+
+  assert composer_module.resolve_openai_api_key() == "loaded-key"
 
 
 def test_chatbot_answer_composer_normalizes_openai_model_prefix(monkeypatch):

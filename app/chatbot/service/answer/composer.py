@@ -1,6 +1,6 @@
 """
 수집된 fragment/tool JSON을 근거로 최상위 answer 문자열을 생성합니다.
-전체 실패, API 키 없음, LLM 예외, 빈 응답에서는 도메인 fallback으로 내려가며 새 부동산 사실은 만들지 않습니다.
+전체 실패, LLM 호출 불가/예외, 빈 응답에서는 도메인 fallback으로 내려가며 새 부동산 사실은 만들지 않습니다.
 동기 OpenAI SDK 호출은 이벤트 루프를 막지 않도록 별도 thread에서 실행합니다.
 """
 from __future__ import annotations
@@ -13,6 +13,8 @@ import time
 from typing import Any
 
 from openai import OpenAI
+
+from app.config import load_environment
 
 from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
@@ -30,22 +32,25 @@ class ChatbotAnswerComposer:
     self,
     model: str | None = None,
     client: Any | None = None,
+    api_key: str | None = None,
   ):
     self.model = normalize_openai_model(
       model or os.getenv("OPENAI_CHAT_MODEL") or DEFAULT_ANSWER_MODEL,
     )
     self._client = client
+    self._api_key = api_key
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
     if context.success is False:
       return fallback_answer(context)
-    if not os.getenv("OPENAI_API_KEY"):
-      return fallback_answer(context)
     if answer_llm_temporarily_disabled():
       return fallback_answer(context)
 
+    client = self._client or openai_client(self._api_key)
+    if client is None:
+      return fallback_answer(context)
+
     try:
-      client = self._client or OpenAI(api_key=os.environ["OPENAI_API_KEY"])
       response = await asyncio.to_thread(
         client.chat.completions.create,
         model=self.model,
@@ -73,6 +78,21 @@ class ChatbotAnswerComposer:
 
     answer = extract_response_content(response)
     return answer or fallback_answer(context)
+
+
+def openai_client(api_key: str | None = None) -> OpenAI | None:
+  resolved_key = resolve_openai_api_key(api_key)
+  if not resolved_key:
+    return None
+  return OpenAI(api_key=resolved_key)
+
+
+def resolve_openai_api_key(api_key: str | None = None) -> str | None:
+  if api_key and api_key.strip():
+    return api_key.strip()
+  load_environment()
+  resolved_key = os.getenv("OPENAI_API_KEY", "").strip()
+  return resolved_key or None
 
 
 def normalize_openai_model(model: str) -> str:
