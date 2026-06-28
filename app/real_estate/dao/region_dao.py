@@ -1,18 +1,25 @@
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from app.models import Region
 
 
-def regions_in_bounds(session: Session, bounds: dict[str, float]) -> list[Region]:
-  return list(session.scalars(
+def regions_in_bounds(
+  session: Session,
+  bounds: dict[str, float],
+  region_type: str | None = None,
+) -> list[Region]:
+  query: Select[tuple[Region]] = (
     select(Region)
     .where(Region.center_lat.between(bounds["swLat"], bounds["neLat"]))
     .where(Region.center_lng.between(bounds["swLng"], bounds["neLng"]))
-    .order_by(Region.name)
-  ).all())
+  )
+  if region_type is not None:
+    query = query.where(Region.type == region_type)
+
+  return list(session.scalars(query.order_by(Region.name)).all())
 
 
 def root_regions(session: Session) -> list[Region]:

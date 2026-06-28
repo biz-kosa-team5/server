@@ -18,3 +18,40 @@ WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
 COPY pois (category, name, subtype, latitude, longitude)
 FROM '/import/pois.csv'
 WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+TRUNCATE TABLE law_documents, daily_legal_term_mappings, raw_api_responses RESTART IDENTITY;
+
+COPY daily_legal_term_mappings (
+  id, daily_term, legal_term, relation_type, domain, priority, raw_data, created_at, updated_at
+)
+FROM '/import/daily_legal_term_mappings.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+COPY raw_api_responses (
+  id, source_type, target, query, request_url, response_json, status, error_message, collected_at
+)
+FROM '/import/raw_api_responses.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+COPY law_documents (
+  id, parent_document_id, law_id, mst, law_name, law_type, ministry,
+  article_no, article_title, paragraph_no, doc_type, content, metadata,
+  source_url, effective_date, parse_status, parse_error, embedding,
+  embedding_model, embedding_status, embedding_error, embedding_content_hash,
+  embedded_at, collected_at, updated_at
+)
+FROM '/import/law_documents.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+SELECT setval(pg_get_serial_sequence('daily_legal_term_mappings', 'id'), COALESCE(MAX(id), 1), true)
+FROM daily_legal_term_mappings;
+
+SELECT setval(pg_get_serial_sequence('raw_api_responses', 'id'), COALESCE(MAX(id), 1), true)
+FROM raw_api_responses;
+
+SELECT setval(pg_get_serial_sequence('law_documents', 'id'), COALESCE(MAX(id), 1), true)
+FROM law_documents;
+
+ANALYZE daily_legal_term_mappings;
+ANALYZE raw_api_responses;
+ANALYZE law_documents;

@@ -9,6 +9,7 @@ dependencies = [
   "langchain-openai>=0.2",
   "openai>=1.50",
   "pgvector>=0.3",
+  "python-dotenv>=1.0",
   "psycopg[binary]>=3.2",
   "sqlalchemy>=2.0",
   "tiktoken>=0.8",

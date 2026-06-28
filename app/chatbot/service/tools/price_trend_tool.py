@@ -14,10 +14,9 @@ def build_price_trend_tool(session: Session):
   @tool
   def analyze_price_trend(
     query: str,
-    query_type: str | None = None,
-    complex_name: str | None = None,
-    region_name: str | None = None,
-    region_names: list[str] | None = None,
+    analysis_type: str,
+    target_type: str,
+    target_name: str,
     area: float | None = None,
     area_min: float | None = None,
     area_max: float | None = None,
@@ -28,56 +27,105 @@ def build_price_trend_tool(session: Session):
     start_date: str | None = None,
     end_date: str | None = None,
     interval: str | None = None,
-    change_direction: str | None = None,
-    rank_order: str | None = None,
+    rank_by: str | None = None,
+    direction: str | None = None,
     limit: int | None = None,
   ) -> dict[str, Any]:
     """
-    아파트 또는 지역의 실거래가 추이, 가격 순위, 상승률 순위 질문을 처리합니다.
+    단지/지역의 시세추이와 지역 내 상승률/하락률 순위를 조회합니다.
 
-    Args:
-      query: 사용자가 입력한 가격 추이 질문입니다. 예: "최근 많이 오른 아파트 알려줘"
-      query_type: 조회 유형입니다. complex_trend, region_trend, price_change_ranking, price_ranking 중 하나입니다.
-      complex_name: 조회 대상 아파트 단지명입니다.
-      region_name: 조회 대상 단일 지역명입니다.
-      region_names: 함께 조회할 복수 지역명입니다.
-      area: 사용자가 지정한 단일 전용면적(㎡)입니다.
-      area_min: 전용면적 하한(㎡)입니다.
-      area_max: 전용면적 상한(㎡)입니다.
-      pyeong: 사용자가 지정한 단일 평형입니다.
-      pyeong_min: 평형 범위 하한입니다.
-      pyeong_max: 평형 범위 상한입니다.
-      period: 상대 조회 기간입니다. 예: 6m, 3y
-      start_date: 조회 시작일입니다. YYYY-MM-DD 형식입니다.
-      end_date: 조회 종료일입니다. YYYY-MM-DD 형식입니다.
-      interval: 시계열 집계 간격입니다. month, quarter, year 중 하나입니다.
-      change_direction: 가격 변화율 순위 방향입니다. up 또는 down입니다.
-      rank_order: 실거래가 순위 정렬 방향입니다. highest 또는 lowest입니다.
-      limit: 반환할 최대 순위 개수입니다.
+    이 tool의 담당 범위:
+    1. 단일 단지 시세추이
+    2. 단일 지역 시세추이
+    3. 강남 3구 시세추이
+    4. 지역 내 상승률/하락률 아파트 순위
 
-    Returns:
-      dict: price_trend service가 반환한 구조화된 JSON 결과입니다.
+    반드시 이 tool을 쓰는 질문:
+    - "은마아파트 시세추이", "반포자이 가격 흐름", "잠실엘스 최근 1년 시세추이"
+    - "은마 월별 시세추이", "은마 분기별 시세추이", "은마 연도별 시세추이"
+    - "강남구 시세추이", "서초구 최근 1년 시세 흐름", "송파구 연도별 시세추이"
+    - "강남 3구 시세추이"
+    - "강남구에서 많이 오른 아파트 TOP 5", "서초구 하락률 높은 아파트 5곳"
+
+    query 규칙:
+    - query에는 사용자의 원문 질문을 최대한 그대로 넣습니다.
+    - 월별, 분기별, 연도별, 최근 1년, 최근 6개월, 면적, TOP N, 상승률, 하락률 같은 조건어를 제거하지 마세요.
+    - 여러 지역을 각각 나눠 호출하더라도 조건어는 각 query와 슬롯에 반드시 유지하세요.
+      예: "송파구, 강남구 연도별 시세추이"는
+      "송파구 연도별 시세추이", "강남구 연도별 시세추이"처럼 처리합니다.
+
+    target 규칙:
+    - target_type은 단지면 "complex", 지역이면 "region"입니다.
+    - target_name에는 순수한 대상명만 넣습니다.
+    - target_name에 "시세추이", "TOP 5", "아파트", "가장 비싼", "가장 싼" 같은 조건어를 붙이지 마세요.
+    - 예: "은마 연도별 시세추이" -> target_type="complex", target_name="은마"
+    - "강남 3구"는 target_type="region", target_name="강남3구"입니다.
+
+    시세추이 슬롯:
+    - 시세추이/시세 흐름/가격 흐름/기간별 흐름: analysis_type="timeseries"
+    - 사용자가 월별/분기별/연도별을 말하면 반드시 interval에 반영합니다.
+    - "월별"은 interval="month"
+    - "분기별"은 interval="quarter"
+    - "연도별", "연간", "년도별"은 interval="year"
+    - 사용자가 집계 간격을 말하지 않으면 interval은 생략합니다.
+
+    지역 상승률/하락률 순위 슬롯
+    - 지역 + 많이 오른/상승률 높은 아파트: analysis_type="ranking", rank_by="change_rate", direction="desc"
+    - 지역 + 많이 내린/하락률 높은 아파트: analysis_type="ranking", rank_by="change_rate", direction="asc"
+    - "TOP 5", "5곳", "5개"는 limit=5입니다.
+    - "TOP 10", "10곳", "10개"는 limit=10입니다.
+    - 개수가 없으면 limit은 생략합니다.
+
+    simple_lookup으로 보내야 하는 질문:
+    - "은마 최근 실거래가", "은마 거래내역", "은마 위치", "은마 주소"는 단순조회입니다.
+    - "은마 최고가", "반포자이 최고가", "잠실엘스 최저가"처럼 특정 단지의 최고가/최저가 1건 조회는 simple_lookup입니다.
+
+    기간/면적:
+    - "최근 1년"은 period="1y", "최근 6개월"은 period="6m"
+    - "2025년"처럼 특정 연도는 start_date="2025-01-01", end_date="2025-12-31"입니다.
+    - "34평"은 pyeong=34, "30평대"는 pyeong_min=30, pyeong_max=39입니다.
+    - "84㎡"는 area=84입니다.
     """
-    slots = extract_price_trend_slots(query)
-    slots.update(compact_none({
-      "query_type": query_type,
-      "complex_name": complex_name,
-      "region_name": region_name,
-      "region_names": region_names,
-      "area": area,
-      "area_min": area_min,
-      "area_max": area_max,
-      "pyeong": pyeong,
-      "pyeong_min": pyeong_min,
-      "pyeong_max": pyeong_max,
-      "period": period,
-      "start_date": start_date,
-      "end_date": end_date,
-      "interval": interval,
-      "change_direction": change_direction,
-      "rank_order": rank_order,
-      "limit": limit,
-    }))
-    return run_price_trend(session, slots, query)
+    slots = _merge_slots(
+      extract_price_trend_slots(query),
+      compact_none({
+        "analysis_type": analysis_type,
+        "target_type": target_type,
+        "target_name": _target_name(target_type, target_name),
+        "area": area,
+        "area_min": area_min,
+        "area_max": area_max,
+        "pyeong": pyeong,
+        "pyeong_min": pyeong_min,
+        "pyeong_max": pyeong_max,
+        "period": period,
+        "start_date": start_date,
+        "end_date": end_date,
+        "interval": interval,
+        "rank_by": rank_by,
+        "direction": direction,
+        "limit": limit,
+      }),
+    )
+    return run_price_trend(session, slots)
 
   return analyze_price_trend
+
+
+def _merge_slots(regex_slots: dict[str, Any], llm_slots: dict[str, Any]) -> dict[str, Any]:
+  slots = dict(regex_slots)
+
+  if "period" in regex_slots or "start_date" in regex_slots or "end_date" in regex_slots:
+    llm_slots.pop("period", None)
+    llm_slots.pop("start_date", None)
+    llm_slots.pop("end_date", None)
+
+  slots.update(llm_slots)
+  return slots
+
+
+def _target_name(target_type: str, target_name: str) -> str:
+  name = " ".join(target_name.split())
+  if target_type == "complex" and name.endswith("아파트"):
+    return name[: -len("아파트")]
+  return name

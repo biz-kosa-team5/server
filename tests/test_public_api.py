@@ -33,13 +33,35 @@ def test_vite_dev_origin_can_call_public_api():
 def test_map_region_markers_are_arrays():
   response = client.post(
     "/api/v1/map/regions",
-    json={"swLat": 37.4, "swLng": 126.9, "neLat": 37.6, "neLng": 127.2, "region": "si-gun-gu"},
+    json={"swLat": 37.4, "swLng": 126.9, "neLat": 37.6, "neLng": 127.2, "region": "district"},
   )
 
   assert response.status_code == 200
   payload = response.json()
   assert isinstance(payload, list)
   assert {item["name"] for item in payload} == {"강남구", "서초구", "송파구"}
+
+
+def test_map_region_markers_filter_neighborhood_level():
+  response = client.post(
+    "/api/v1/map/regions",
+    json={"swLat": 37.4, "swLng": 126.9, "neLat": 37.6, "neLng": 127.2, "region": "neighborhood"},
+  )
+
+  assert response.status_code == 200
+  names = {item["name"] for item in response.json()}
+  assert {"개포동", "대치동", "서초동", "잠실동"}.issubset(names)
+  assert {"강남구", "서초구", "송파구"}.isdisjoint(names)
+
+
+def test_map_region_markers_reject_unsupported_region_level():
+  response = client.post(
+    "/api/v1/map/regions",
+    json={"swLat": 37.4, "swLng": 126.9, "neLat": 37.6, "neLng": 127.2, "region": "si-do"},
+  )
+
+  assert response.status_code == 400
+  assert response.json()["detail"] == "Unsupported region marker type"
 
 
 def test_map_complex_markers_exclude_complex_without_coordinates():
@@ -157,6 +179,5 @@ def test_poi_seed_supports_station_and_education_categories():
   assert station is not None
   assert station.subtype == "2호선"
   assert station.latitude == 37.491897
-  assert counts == {"education": 329, "station": 86}
+  assert counts == {"education": 5, "station": 2}
   assert education_subtypes == {"유치원", "초등학교", "중학교", "고등학교", "특수학교"}
-

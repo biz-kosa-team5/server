@@ -4,11 +4,8 @@ import re
 from typing import Any
 
 from .dto import (
-  LocationData,
-  SimpleLookupQueryType,
-  SimpleLookupResult,
-  SimpleLookupSlots,
-  TradeData,
+  QUERY_LOCATION,
+  QUERY_TRADE,
 )
 
 
@@ -40,15 +37,20 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
     unit = "y" if period_match.group(2) == "년" else "m"
     slots["period"] = f"{period_match.group(1)}{unit}"
 
+  if "최고가" in text or "가장 비싼" in text or "제일 비싼" in text:
+    slots["price_order"] = "highest"
+  if "최저가" in text or "가장 싼" in text or "제일 싸" in text:
+    slots["price_order"] = "lowest"
+  if any(token in text for token in ("가장 오래된", "제일 오래된", "최초", "처음")):
+    slots["sort_order"] = "oldest"
+
   return slots
 
 
 def infer_query_type(text: str) -> str:
   if any(token in text for token in ("어디", "위치", "주소", "좌표")):
-    return SimpleLookupQueryType.LOCATION.value
-  if "최고가" in text or "가장 비싼" in text:
-    return SimpleLookupQueryType.RECORD_HIGH.value
-  return SimpleLookupQueryType.TRADE_HISTORY.value
+    return QUERY_LOCATION
+  return QUERY_TRADE
 
 
 def extract_complex_name(text: str) -> str | None:
@@ -65,10 +67,5 @@ def extract_complex_name(text: str) -> str | None:
 
 
 __all__ = [
-  "LocationData",
-  "SimpleLookupQueryType",
-  "SimpleLookupResult",
-  "SimpleLookupSlots",
-  "TradeData",
   "extract_simple_lookup_slots",
 ]

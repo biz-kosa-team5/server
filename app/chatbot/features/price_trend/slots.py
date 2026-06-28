@@ -1,98 +1,56 @@
+"""시세추이 슬롯 추출 호환 모듈."""
+
 from __future__ import annotations
 
 import re
+from datetime import date, timedelta
 from typing import Any
 
-from .dto import (
-  PriceChangeRankingItem,
-  PriceRankingItem,
-  TrendPoint,
-  TrendQueryType,
-  TrendResult,
-  TrendSlots,
+
+START_YEAR_DURATION_PATTERN = re.compile(
+    r"(?P<year>\d{4})\s*년\s*(?:부터|이후)\s*"
+    r"(?P<amount>[1-9]\d*)\s*(?P<unit>개월|달|년|연)\s*(?:간|동안)?"
+)
+RELATIVE_PERIOD_PATTERN = re.compile(
+    r"(?:최근|지난)\s*(?P<amount>[1-9]\d*)\s*(?P<unit>개월|달|년|연)"
 )
 
 
-DEFAULT_REGION_NAMES = ["강남구", "서초구", "송파구"]
-
-
 def extract_price_trend_slots(question: str) -> dict[str, Any]:
-  text = question.strip()
-  query_type = infer_query_type(text)
-  slots: dict[str, Any] = {
-    "original_question": text,
-    "query_type": query_type,
-  }
+    """LLM 슬롯 누락에 대비해 안전한 상대 기간 표현만 보정한다."""
 
-  if query_type == TrendQueryType.COMPLEX_TREND.value:
-    complex_name = extract_complex_name(text)
-    if complex_name is not None:
-      slots["complex_name"] = complex_name
-  else:
-    region_names = extract_region_names(text)
-    if len(region_names) == 1:
-      slots["region_name"] = region_names[0]
-    else:
-      slots["region_names"] = region_names
+    normalized = question.strip()
+    slots: dict[str, Any] = {"original_question": normalized}
 
-  if query_type == TrendQueryType.PRICE_CHANGE_RANKING.value:
-    slots["change_direction"] = "down" if any(token in text for token in ("하락", "내린", "떨어진")) else "up"
+    duration_matched = START_YEAR_DURATION_PATTERN.search(normalized)
+    if duration_matched is not None:
+        start = date(int(duration_matched.group("year")), 1, 1)
+        amount = int(duration_matched.group("amount"))
+        unit = duration_matched.group("unit")
+        end = (
+            date(start.year + amount, 1, 1) - timedelta(days=1)
+            if unit in {"년", "연"}
+            else _add_months(start, amount) - timedelta(days=1)
+        )
+        slots["start_date"] = start.isoformat()
+        slots["end_date"] = end.isoformat()
+        return slots
 
-  if query_type == TrendQueryType.PRICE_RANKING.value:
-    slots["rank_order"] = "lowest" if any(token in text for token in ("최저", "싼", "저렴")) else "highest"
+    matched = RELATIVE_PERIOD_PATTERN.search(normalized)
+    if matched is not None:
+        amount = matched.group("amount")
+        unit = matched.group("unit")
+        slots["period"] = f"{amount}{'y' if unit in {'년', '연'} else 'm'}"
 
-  pyeong_match = re.search(r"(\d+(?:\.\d+)?)\s*평", text)
-  if pyeong_match is not None:
-    slots["pyeong"] = float(pyeong_match.group(1))
-
-  period_match = re.search(r"최근\s*(\d+)\s*(개월|달|년)", text)
-  if period_match is not None:
-    unit = "y" if period_match.group(2) == "년" else "m"
-    slots["period"] = f"{period_match.group(1)}{unit}"
-
-  limit_match = re.search(r"(\d+)\s*(?:개|곳|위)", text)
-  if limit_match is not None:
-    slots["limit"] = int(limit_match.group(1))
-
-  return slots
+    return slots
 
 
-def infer_query_type(text: str) -> str:
-  if any(token in text for token in ("많이 오른", "상승", "오른", "하락", "내린", "떨어진")):
-    return TrendQueryType.PRICE_CHANGE_RANKING.value
-  if any(token in text for token in ("최고가", "최저가", "비싼", "저렴", "싼 곳")):
-    return TrendQueryType.PRICE_RANKING.value
-  if any(region in text for region in DEFAULT_REGION_NAMES) or "강남 3구" in text:
-    return TrendQueryType.REGION_TREND.value
-  return TrendQueryType.COMPLEX_TREND.value
-
-
-def extract_region_names(text: str) -> list[str]:
-  if "강남 3구" in text or "강남3구" in text:
-    return DEFAULT_REGION_NAMES
-  regions = [region for region in DEFAULT_REGION_NAMES if region in text]
-  return regions or DEFAULT_REGION_NAMES
-
-
-def extract_complex_name(text: str) -> str | None:
-  cleaned = text
-  cleaned = re.sub(r"\d+(?:\.\d+)?\s*(?:평|개|곳|위)", " ", cleaned)
-  cleaned = re.sub(r"최근\s*\d+\s*(?:개월|달|년)", " ", cleaned)
-  cleaned = re.sub(
-    r"(시세\s*추이|시세|추이|가격|얼마|변화|흐름|거래|알려줘|보여줘|궁금해|\?)",
-    " ",
-    cleaned,
-  )
-  cleaned = re.sub(r"\s+", " ", cleaned).strip()
-  return cleaned or None
+def _add_months(value: date, months: int) -> date:
+    year = value.year + (value.month - 1 + months) // 12
+    month = (value.month - 1 + months) % 12 + 1
+    return date(year, month, 1)
 
 
 __all__ = [
-  "PriceChangeRankingItem",
-  "PriceRankingItem",
-  "TrendPoint",
-  "TrendQueryType",
-  "TrendResult",
-  "TrendSlots",
-  "extract_price_trend_slots",
+    "extract_price_trend_slots",
 ]

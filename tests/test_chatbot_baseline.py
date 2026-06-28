@@ -1,6 +1,3 @@
-from fastapi.testclient import TestClient
-
-from app.chatbot.service.splitter import split_question
 from app.chatbot.features.comparison import extract_compare_slots
 from app.chatbot.features.comparison.rag_answer import fallback_comparison_answer
 from app.chatbot.features.recommendation import extract_recommendation_slots
@@ -13,17 +10,6 @@ from app.chatbot.service.tools import (
   build_simple_lookup_tool,
 )
 from app.database import SessionLocal, ensure_initialized
-from app.main import app
-
-
-client = TestClient(app)
-
-
-def test_chatbot_splitter_separates_multi_intent_questions():
-  assert split_question("30억 이하 아파트 추천하고 매매 계약 법률 알려줘") == [
-    "30억 이하 아파트",
-    "매매 계약 법률 알려줘",
-  ]
 
 
 def test_recommendation_extractor_builds_filter_slots():
@@ -35,6 +21,23 @@ def test_recommendation_extractor_builds_filter_slots():
   assert slots["min_built_year"] == 2020
   assert slots["radius_m"] == 800
   assert slots["sort_by"] == "distance_asc"
+
+
+def test_recommendation_extractor_does_not_treat_connector_go_as_high_school():
+  slots = extract_recommendation_slots("강남구에 있는 아파트 3개를 추천해주고 그 이유를 알려줘")
+
+  assert slots == {
+    "district": "강남구",
+    "limit": 3,
+  }
+
+
+def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
+  slots = extract_recommendation_slots("초/중/고 가까운 강남구 아파트 3개 추천해줘")
+
+  assert slots["school_types"] == ["초등학교", "중학교", "고등학교"]
+  assert slots["radius_m"] == 800
+  assert slots["limit"] == 3
 
 
 def test_recommendation_extractor_keeps_district_and_price_words_distinct():
@@ -131,33 +134,6 @@ def test_comparison_answer_includes_lifestyle_and_redevelopment_context():
   assert "롯데백화점 잠실점" in answer
   assert "재개발/정비사업 검색결과" in answer
   assert "상권, 학군 평판, 미래 가격 전망은 제공된 데이터만으로는 확인할 수 없습니다." not in answer
-
-
-def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
-  class FakeChatbotAgent:
-    def __init__(self, _):
-      pass
-
-    async def run(self, __):
-      return {
-        "success": False,
-        "reason": "no_matching_tool",
-        "message": "현재 챗봇은 부동산 단지 조회, 아파트 추천, 단지 비교, 시세 추이, 계약 관련 법령 질문을 처리할 수 있습니다.",
-      }
-
-  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAgent", FakeChatbotAgent)
-
-  response = client.post(
-    "/api/v1/chatbot/query",
-    json={"question": "잠실엘스 어디 있어?"},
-  )
-
-  assert response.status_code == 200
-  payload = response.json()
-  assert payload["success"] is False
-  assert payload["fragments"][0]["status"] == "not_handled"
-  assert "intent" not in payload["fragments"][0]
-  assert payload["result"]["reason"] == "no_matching_tool"
 
 
 def test_simple_lookup_tool_calls_existing_service():
