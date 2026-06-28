@@ -67,7 +67,7 @@ class Trade(Base):
 class Poi(Base):
   __tablename__ = "pois"
   __table_args__ = (
-    CheckConstraint("category IN ('station', 'education')", name="ck_pois_category"),
+    CheckConstraint("category IN ('station', 'education', 'commercial', 'medical')", name="ck_pois_category"),
     Index("idx_pois_category_subtype", "category", "subtype"),
     Index("idx_pois_name", "name"),
     Index("idx_pois_location", "latitude", "longitude"),

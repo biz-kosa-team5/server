@@ -31,6 +31,16 @@ class PoiDistanceService:
     # 위도/경도 좌표를 직접 받아 가장 가까운 POI를 찾는다.
     return _nearest_poi_for_coordinates(latitude, longitude, pois)
 
+  def pois_within_radius_for_coordinates(
+    self,
+    latitude: float,
+    longitude: float,
+    pois: list[Poi],
+    max_distance_m: int,
+  ) -> list[dict[str, Any]]:
+    # 반경 안의 POI를 가까운 순서로 반환한다.
+    return _pois_within_radius_for_coordinates(latitude, longitude, pois, max_distance_m)
+
 
 # FastAPI Depends에서 PoiDistanceService를 주입받을 수 있게 하는 타입 별칭이다.
 PoiDistanceServiceDep = Annotated[PoiDistanceService, Depends(PoiDistanceService)]
@@ -74,6 +84,32 @@ def nearest_poi_for_coordinates(latitude: float, longitude: float, pois: list[Po
   return PoiDistanceService().nearest_poi_for_coordinates(latitude, longitude, pois)
 
 
+def pois_within_radius_for_complex(
+  complex_row: Complex,
+  pois: list[Poi],
+  max_distance_m: int,
+) -> list[dict[str, Any]]:
+  # 기존 public 함수명 유지용 wrapper다.
+  if complex_row.latitude is None or complex_row.longitude is None:
+    return []
+  return pois_within_radius_for_coordinates(
+    complex_row.latitude,
+    complex_row.longitude,
+    pois,
+    max_distance_m,
+  )
+
+
+def pois_within_radius_for_coordinates(
+  latitude: float,
+  longitude: float,
+  pois: list[Poi],
+  max_distance_m: int,
+) -> list[dict[str, Any]]:
+  # 기존 public 함수명 유지용 wrapper다.
+  return PoiDistanceService().pois_within_radius_for_coordinates(latitude, longitude, pois, max_distance_m)
+
+
 def _nearest_poi_for_coordinates(latitude: float, longitude: float, pois: list[Poi]) -> dict[str, Any] | None:
   nearest = None
   for poi in pois:
@@ -91,6 +127,29 @@ def _nearest_poi_for_coordinates(latitude: float, longitude: float, pois: list[P
     if nearest is None or item["distanceM"] < nearest["distanceM"]:
       nearest = item
   return nearest
+
+
+def _pois_within_radius_for_coordinates(
+  latitude: float,
+  longitude: float,
+  pois: list[Poi],
+  max_distance_m: int,
+) -> list[dict[str, Any]]:
+  matches = []
+  for poi in pois:
+    distance = round(calculate_distance_m(latitude, longitude, poi.latitude, poi.longitude), 2)
+    if distance > max_distance_m:
+      continue
+    matches.append({
+      "id": poi.id,
+      "category": poi.category,
+      "name": poi.name,
+      "subtype": poi.subtype,
+      "latitude": poi.latitude,
+      "longitude": poi.longitude,
+      "distanceM": distance,
+    })
+  return sorted(matches, key=lambda item: item["distanceM"])
 
 
 def calculate_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

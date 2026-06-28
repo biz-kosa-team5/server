@@ -7,6 +7,7 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.recommendation.rag_answer import generate_recommendation_answer
+from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
 from app.real_estate.dao import all_complexes_ordered, latest_trade_for_complex
 from app.real_estate.support import clean_text, criteria_from_slots, empty_result, normalize_slots, optional_int
 
@@ -29,6 +30,8 @@ class RecommendationService:
 
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
     """추천 후보 조회 결과에 RAG 답변을 붙여 챗봇 tool 응답을 만든다."""
+    slots = dict(slots)
+    slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
     result = self.recommend_apartments_by_filters(session, slots)
     result["answer"] = generate_recommendation_answer(
       question=text,
@@ -106,7 +109,10 @@ class RecommendationService:
     enriched = sort_query_results(enriched, clean_text(slots.get("sort_by")))
     requested_limit = optional_int(slots.get("limit"))
     limit = min(max(requested_limit or RECOMMENDATION_RESULT_LIMIT, 1), RECOMMENDATION_RESULT_LIMIT)
-    return enriched[:limit]
+    limited = enriched[:limit]
+    if slots.get("_include_redevelopment_context") is not True:
+      return limited
+    return attach_redevelopment_context(limited)
 
 
 RecommendationServiceDep = Annotated[RecommendationService, Depends(RecommendationService)]
@@ -129,3 +135,15 @@ def should_expand_default_radius(slots: dict[str, Any], poi_groups: list[list[An
   if slots.get("_explicit_radius_m") is True:
     return False
   return optional_int(slots.get("radius_m")) == 800
+
+
+def attach_redevelopment_context(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  enriched = []
+  for item in items:
+    copied = dict(item)
+    copied["redevelopmentInfo"] = search_redevelopment_context(
+      str(item.get("complexName") or ""),
+      item.get("address"),
+    )
+    enriched.append(copied)
+  return enriched

@@ -2,7 +2,9 @@ from fastapi.testclient import TestClient
 
 from app.chatbot.service.splitter import split_question
 from app.chatbot.features.comparison import extract_compare_slots
+from app.chatbot.features.comparison.rag_answer import fallback_comparison_answer
 from app.chatbot.features.recommendation import extract_recommendation_slots
+from app.chatbot.features.recommendation.rag_answer import fallback_recommendation_answer
 from app.chatbot.service.tools import (
   build_comparison_tool,
   build_legal_contract_tool,
@@ -67,6 +69,68 @@ def test_comparison_extractor_cleans_metric_words_from_names():
     "도곡렉슬",
     "대치현대",
   ]
+  assert extract_compare_slots("잠실엘스랑 리센츠 상권 학군 미래 가격 전망 비교해줘")["apartment_names"] == [
+    "잠실엘스",
+    "리센츠",
+  ]
+  assert extract_compare_slots("잠실엘스랑 리센츠 재개발 전망 비교해줘")["apartment_names"] == [
+    "잠실엘스",
+    "리센츠",
+  ]
+
+
+def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
+  answer = fallback_recommendation_answer(
+    {"district": "송파구"},
+    [{
+      "complexName": "잠실엘스",
+      "latestDealAmountText": "25.0억원",
+      "unitCnt": 5678,
+      "useDate": "2008-09-01",
+      "infrastructure": {
+        "nearbyLifestyle": [
+          {"name": "롯데백화점 잠실점", "subtype": "백화점", "distanceM": 620},
+          {"name": "서울아산병원", "subtype": "병원", "distanceM": 780},
+        ],
+      },
+      "redevelopmentInfo": [{"title": "잠실 일대 정비사업 관련 기사", "url": "https://example.com"}],
+    }],
+  )
+
+  assert "800m 생활편의" in answer
+  assert "롯데백화점 잠실점" in answer
+  assert "재개발/정비사업 검색결과" in answer
+  assert "상권이나 학군 평판처럼 데이터에 없는" not in answer
+
+
+def test_comparison_answer_includes_lifestyle_and_redevelopment_context():
+  answer = fallback_comparison_answer(
+    {"apartment_names": ["잠실엘스", "리센츠"]},
+    [
+      {
+        "complexName": "잠실엘스",
+        "latestDealAmountText": "25.0억원",
+        "unitCnt": 5678,
+        "builtYear": 2008,
+        "nearbyLifestyle": [{"name": "롯데백화점 잠실점", "subtype": "백화점", "distanceM": 620}],
+        "redevelopmentInfo": [{"title": "잠실 일대 정비사업 관련 기사", "url": "https://example.com"}],
+      },
+      {
+        "complexName": "리센츠",
+        "latestDealAmountText": "24.0억원",
+        "unitCnt": 5563,
+        "builtYear": 2008,
+        "nearbyLifestyle": [{"name": "서울아산병원", "subtype": "병원", "distanceM": 780}],
+        "redevelopmentInfo": [],
+      },
+    ],
+    [],
+  )
+
+  assert "800m 생활편의" in answer
+  assert "롯데백화점 잠실점" in answer
+  assert "재개발/정비사업 검색결과" in answer
+  assert "상권, 학군 평판, 미래 가격 전망은 제공된 데이터만으로는 확인할 수 없습니다." not in answer
 
 
 def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):

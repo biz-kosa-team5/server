@@ -16,18 +16,20 @@ RECOMMENDATION_SYSTEM_PROMPT = """
 
 반드시 지켜야 할 원칙:
 1. 제공된 criteria와 results 데이터만 근거로 답변한다.
-2. 데이터에 없는 학군 평판, 상권 수준, 교통 혼잡도, 호재, 미래 가격 전망은 추측하지 않는다.
+2. 데이터에 없는 학군 평판, 교통 혼잡도, 미래 가격 전망은 추측하지 않는다.
 3. 주변 인프라는 results 안의 matchedPois, infrastructure.nearestStation,
-   infrastructure.nearestEducation 정보만 사용한다.
-4. 가격은 latestDealAmountText가 있으면 그대로 사용한다.
+   infrastructure.nearestEducation, infrastructure.nearbyLifestyle 정보만 사용한다.
+   생활편의는 800m 이내 백화점, 대형마트, 병원 POI만 근거로 설명한다.
+4. 재개발/재건축/정비사업은 redevelopmentInfo의 웹검색 제목, 요약, URL만 근거로 소개한다.
+5. 가격은 latestDealAmountText가 있으면 그대로 사용한다.
    latestDealAmount만 있으면 단위는 반드시 "만원"으로 해석한다.
    예: 330000은 330,000만원 = 33억원, 400000은 40억원이다.
-5. 추천 이유는 사용자의 조건과 직접 연결해서 설명한다.
-6. 후보가 여러 개면 가장 적합한 후보 1~3개를 우선순위로 제시하고, 왜 그렇게 판단했는지 말한다.
-7. 조건에 맞는 후보가 없으면 없는 이유를 criteria와 results 기준으로 설명하고, 조건 완화 방향을 제안한다.
-8. 모르는 내용은 "제공된 데이터만으로는 확인할 수 없습니다"라고 말한다.
-9. 답변은 한국어로 작성하고, 과장된 투자 조언이나 확정적 표현은 피한다.
-10. 마지막에는 "근거 데이터"를 짧게 요약한다.
+6. 추천 이유는 사용자의 조건과 직접 연결해서 설명한다.
+7. 후보가 여러 개면 가장 적합한 후보 1~3개를 우선순위로 제시하고, 왜 그렇게 판단했는지 말한다.
+8. 조건에 맞는 후보가 없으면 없는 이유를 criteria와 results 기준으로 설명하고, 조건 완화 방향을 제안한다.
+9. 모르는 내용은 "제공된 데이터만으로는 확인할 수 없습니다"라고 말한다.
+10. 답변은 한국어로 작성하고, 과장된 투자 조언이나 확정적 표현은 피한다.
+11. 마지막에는 "근거 데이터"를 짧게 요약한다.
 
 좋은 답변 형식:
 - 한 줄 결론
@@ -138,6 +140,8 @@ def compact_recommendation_results(results: list[dict[str, Any]]) -> list[dict[s
       "nearestEducation": infrastructure.get("nearestEducation"),
       "nearestEducationByType": infrastructure.get("nearestEducationByType"),
       "educationDistanceTotalM": infrastructure.get("educationDistanceTotalM"),
+      "nearbyLifestyle": infrastructure.get("nearbyLifestyle", []),
+      "redevelopmentInfo": item.get("redevelopmentInfo", []),
       "notes": infrastructure.get("notes", []),
     })
   return compacted
@@ -159,18 +163,27 @@ def fallback_recommendation_answer(
     price = item.get("latestDealAmountText") or format_price(item.get("latestDealAmount"))
     station = format_poi(item.get("infrastructure", {}).get("nearestStation"))
     education = format_poi(item.get("infrastructure", {}).get("nearestEducation"))
+    lifestyle = format_poi_list(item.get("infrastructure", {}).get("nearbyLifestyle", []))
+    redevelopment = format_search_results(item.get("redevelopmentInfo", []))
     reasons = [f"최근 거래가 {price}"]
     if station:
       reasons.append(f"가까운 역 {station}")
     if education:
       reasons.append(f"가까운 교육시설 {education}")
+    if lifestyle:
+      reasons.append(f"800m 생활편의 {lifestyle}")
+    if redevelopment:
+      reasons.append(f"재개발/정비사업 검색결과 {redevelopment}")
     if item.get("unitCnt") is not None:
       reasons.append(f"{item['unitCnt']}세대")
     if item.get("useDate"):
       reasons.append(f"사용승인일 {item['useDate']}")
     lines.append(f"{index}. {name}: " + ", ".join(reasons))
 
-  lines.append("제공된 데이터만으로 작성한 요약이며, 상권이나 학군 평판처럼 데이터에 없는 내용은 판단하지 않았습니다.")
+  if has_search_results(results):
+    lines.append("학군은 평판이 아니라 가까운 교육시설 거리 기준이며, 미래 가격은 예측하지 않고 웹검색된 재개발/정비사업 공개 정보만 참고로 제시했습니다.")
+  else:
+    lines.append("학군은 평판이 아니라 가까운 교육시설 거리 기준이며, 생활편의는 800m 이내 DB POI 기준으로만 제시했습니다.")
   return "\n".join(lines)
 
 
@@ -191,3 +204,40 @@ def format_poi(value: Any) -> str | None:
   if name is None or distance is None:
     return None
   return f"{name}({round(float(distance))}m)"
+
+
+def format_poi_list(values: Any) -> str | None:
+  if not isinstance(values, list) or not values:
+    return None
+  formatted = [format_lifestyle_poi(value) for value in values[:4]]
+  formatted = [value for value in formatted if value]
+  return ", ".join(formatted) if formatted else None
+
+
+def format_lifestyle_poi(value: Any) -> str | None:
+  if not isinstance(value, dict):
+    return None
+  name = value.get("name")
+  distance = value.get("distanceM")
+  subtype = value.get("subtype")
+  if name is None or distance is None:
+    return None
+  label = f"{name}({round(float(distance))}m"
+  if subtype:
+    label += f", {subtype}"
+  return f"{label})"
+
+
+def format_search_results(values: Any) -> str | None:
+  if not isinstance(values, list) or not values:
+    return None
+  titles = [
+    str(value.get("title")).strip()
+    for value in values[:2]
+    if isinstance(value, dict) and value.get("title")
+  ]
+  return " / ".join(titles) if titles else None
+
+
+def has_search_results(results: list[dict[str, Any]]) -> bool:
+  return any(item.get("redevelopmentInfo") for item in results)

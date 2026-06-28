@@ -32,6 +32,9 @@ def comparison_item(complex_row: Complex, latest_trade: Trade | None, metrics: l
     "complexId": complex_row.id,
     "complexName": complex_row.name,
     "parcelId": complex_row.parcel_id,
+    "address": complex_row.address,
+    "latitude": complex_row.latitude,
+    "longitude": complex_row.longitude,
   }
   if "latest_price" in metrics:
     item["latestDealAmount"] = latest_deal_amount

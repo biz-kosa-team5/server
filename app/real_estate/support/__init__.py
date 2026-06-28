@@ -22,6 +22,8 @@ from .poi import (
   nearest_poi_for_complex,
   nearest_poi_for_coordinates,
   normalize_station_name,
+  pois_within_radius_for_complex,
+  pois_within_radius_for_coordinates,
 )
 
 __all__ = [
@@ -48,5 +50,7 @@ __all__ = [
   "number_between",
   "optional_float",
   "optional_int",
+  "pois_within_radius_for_complex",
+  "pois_within_radius_for_coordinates",
   "trade_item",
 ]
