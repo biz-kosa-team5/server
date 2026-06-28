@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class ChatbotQueryRequest(BaseModel):
@@ -13,3 +15,16 @@ class ChatbotQueryRequest(BaseModel):
     if not question:
       raise ValueError("질문을 입력해 주세요.")
     return question
+
+
+class ChatbotQueryResponse(BaseModel):
+  model_config = ConfigDict(extra="allow")
+
+  success: bool
+  status: str
+  question: str
+  fragments: list[dict[str, Any]]
+  result: Any
+  message: str
+  executionSummary: dict[str, Any]
+  answer: str

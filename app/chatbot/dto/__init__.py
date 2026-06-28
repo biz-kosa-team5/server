@@ -1,3 +1,3 @@
-from .chatbot_dto import ChatbotQueryRequest
+from .chatbot_dto import ChatbotQueryRequest, ChatbotQueryResponse
 
-__all__ = ["ChatbotQueryRequest"]
+__all__ = ["ChatbotQueryRequest", "ChatbotQueryResponse"]

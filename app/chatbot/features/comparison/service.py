@@ -7,7 +7,6 @@ from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
-from app.chatbot.features.comparison.rag_answer import generate_comparison_answer
 from app.real_estate.dao import latest_trade_for_complex, pois_by_category
 from app.real_estate.support import (
   clean_text,
@@ -28,17 +27,10 @@ class ComparisonService:
     self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
-    """비교 데이터에 RAG 답변을 붙여 챗봇 tool 응답을 만든다."""
+    """비교 데이터 observation을 챗봇 tool 응답으로 만든다."""
     slots = dict(slots)
     slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
-    result = self.compare_apartments_by_metrics(session, slots)
-    result["answer"] = generate_comparison_answer(
-      question=text,
-      criteria=result.get("criteria", {}),
-      results=result.get("results", []),
-      missing_apartment_names=result.get("missingApartmentNames", []),
-    )
-    return result
+    return self.compare_apartments_by_metrics(session, slots)
 
   def compare_apartments_by_metrics(self, session: Session, slots: dict[str, Any]) -> dict[str, Any]:
     """아파트명 목록과 비교 항목에 맞춰 비교 결과를 만든다."""

@@ -9,15 +9,20 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import Any
 
 from openai import OpenAI
 
-from .context import ChatbotAnswerContext, build_llm_context
+from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
+from .observations import build_answer_observations
 from .prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
+_ANSWER_LLM_DISABLED_UNTIL = 0.0
 
 
 class ChatbotAnswerComposer:
@@ -33,10 +38,10 @@ class ChatbotAnswerComposer:
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
     if context.success is False:
-      return context.message or fallback_answer(context)
-    if direct_answer := direct_single_result_answer(context):
-      return direct_answer
+      return fallback_answer(context)
     if not os.getenv("OPENAI_API_KEY"):
+      return fallback_answer(context)
+    if answer_llm_temporarily_disabled():
       return fallback_answer(context)
 
     try:
@@ -54,13 +59,15 @@ class ChatbotAnswerComposer:
             "role": "user",
             "content": (
               "아래 JSON 데이터만 근거로 사용자 질문에 답변해줘.\n"
-              "rawResponse는 원본 응답이고, successfulFragments와 failedFragments는 답변 조립을 위한 정리본이야.\n"
-              f"{json.dumps(build_llm_context(context), ensure_ascii=False, indent=2, default=str)}"
+              "rawResponse는 nested answer를 제거하고 축약한 응답이고, successfulObservations와 failedObservations는 답변 조립을 위한 정리본이야.\n"
+              f"{json.dumps(build_answer_observations(context), ensure_ascii=False, indent=2, default=str)}"
             ),
           },
         ],
       )
-    except Exception:
+    except Exception as exc:
+      if should_cooldown_answer_llm(exc):
+        disable_answer_llm_temporarily()
       logger.exception("Failed to compose chatbot answer")
       return fallback_answer(context)
 
@@ -75,13 +82,34 @@ def normalize_openai_model(model: str) -> str:
   return model or DEFAULT_ANSWER_MODEL
 
 
-def direct_single_result_answer(context: ChatbotAnswerContext) -> str:
-  if context.status != "success" or not isinstance(context.result, dict):
-    return ""
-  answer = context.result.get("answer")
-  if not isinstance(answer, str):
-    return ""
-  return answer.strip()
+def answer_llm_temporarily_disabled() -> bool:
+  return time.monotonic() < _ANSWER_LLM_DISABLED_UNTIL
+
+
+def disable_answer_llm_temporarily() -> None:
+  global _ANSWER_LLM_DISABLED_UNTIL
+  _ANSWER_LLM_DISABLED_UNTIL = time.monotonic() + answer_llm_failure_cooldown_seconds()
+
+
+def answer_llm_failure_cooldown_seconds() -> float:
+  value = os.getenv("CHATBOT_ANSWER_LLM_FAILURE_COOLDOWN_SECONDS")
+  if value is None:
+    return DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS
+  try:
+    cooldown = float(value)
+  except ValueError:
+    return DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS
+  return max(0.0, cooldown)
+
+
+def should_cooldown_answer_llm(exc: Exception) -> bool:
+  status_code = getattr(exc, "status_code", None)
+  if status_code == 429:
+    return True
+  error_code = getattr(exc, "code", None)
+  if error_code == "insufficient_quota":
+    return True
+  return exc.__class__.__name__ == "RateLimitError"
 
 
 def extract_response_content(response: Any) -> str:
