@@ -23,6 +23,7 @@ def test_chatbot_query_trims_question_before_service(monkeypatch):
     captured["payload"] = payload
     return {
       "success": False,
+      "status": "failed",
       "question": payload["question"],
       "fragments": [],
       "result": {
@@ -30,6 +31,12 @@ def test_chatbot_query_trims_question_before_service(monkeypatch):
         "reason": "no_matching_tool",
       },
       "message": "처리할 수 있는 질문이 없습니다.",
+      "executionSummary": {
+        "total": 0,
+        "succeeded": 0,
+        "failed": 0,
+      },
+      "answer": "처리할 수 있는 질문이 없습니다.",
     }
 
   monkeypatch.setattr(
@@ -45,3 +52,4 @@ def test_chatbot_query_trims_question_before_service(monkeypatch):
   assert response.status_code == 200
   assert captured["payload"]["question"] == "잠실엘스 어디 있어?"
   assert response.json()["question"] == "잠실엘스 어디 있어?"
+  assert response.json()["answer"] == "처리할 수 있는 질문이 없습니다."

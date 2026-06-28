@@ -15,7 +15,9 @@ from app.chatbot.features.price_trend import (
     TrendService,
     TrendSlots,
     extract_price_trend_slots,
+    run_price_trend,
 )
+from app.database import SessionLocal, ensure_initialized
 
 
 def slots(**overrides: Any) -> dict[str, Any]:
@@ -110,6 +112,40 @@ def test_period_extractor_keeps_original_question():
     assert result["original_question"] == "Eunma recent price trend"
 
 
+def test_period_extractor_infers_timeseries_target_from_korean_query():
+    result = extract_price_trend_slots("잠실엘스 최근 1년 시세추이")
+
+    assert result == {
+        "original_question": "잠실엘스 최근 1년 시세추이",
+        "period": "1y",
+        "analysis_type": ANALYSIS_TIMESERIES,
+        "target_type": TARGET_COMPLEX,
+        "target_name": "잠실엘스",
+    }
+
+
+def test_period_extractor_infers_ranking_target_from_korean_query():
+    result = extract_price_trend_slots("강남구에서 많이 오른 아파트 TOP 5")
+
+    assert result == {
+        "original_question": "강남구에서 많이 오른 아파트 TOP 5",
+        "analysis_type": ANALYSIS_RANKING,
+        "target_type": TARGET_REGION,
+        "target_name": "강남구",
+        "rank_by": "change_rate",
+        "direction": "desc",
+        "limit": 5,
+    }
+
+
+def test_period_extractor_does_not_treat_gangnam_three_as_ranking_limit():
+    result = extract_price_trend_slots("강남 3구에서 많이 오른 아파트")
+
+    assert result["analysis_type"] == ANALYSIS_RANKING
+    assert result["target_name"] == "강남3구"
+    assert "limit" not in result
+
+
 def test_service_returns_timeseries_observation():
     dao = FakeTrendDao(
         timeseries_rows=[
@@ -197,3 +233,40 @@ def test_validation_error_response():
     assert result["handler"] == "price_trend"
     assert result["success"] is False
     assert result["reason"] == "invalid_request"
+
+
+def test_price_trend_timeseries_runs_against_sqlite_fixture():
+    ensure_initialized()
+
+    with SessionLocal() as session:
+        result = run_price_trend(session, {
+            "analysis_type": ANALYSIS_TIMESERIES,
+            "target_type": TARGET_COMPLEX,
+            "target_name": "잠실엘스",
+            "period": "1y",
+        })
+
+    assert result["handler"] == "price_trend"
+    assert result["success"] is True
+    assert result["observation_type"] == ANALYSIS_TIMESERIES
+    assert result["criteria"]["target_name"] == "잠실엘스"
+    assert result["row_count"] >= 1
+
+
+def test_price_trend_ranking_runs_against_sqlite_fixture():
+    ensure_initialized()
+
+    with SessionLocal() as session:
+        result = run_price_trend(session, {
+            "analysis_type": ANALYSIS_RANKING,
+            "target_type": TARGET_REGION,
+            "target_name": "강남구",
+            "period": "1y",
+            "rank_by": "change_rate",
+            "direction": "desc",
+            "limit": 5,
+        })
+
+    assert result["handler"] == "price_trend"
+    assert result["observation_type"] == ANALYSIS_RANKING
+    assert result["criteria"]["target_name"] == "강남구"

@@ -18,6 +18,7 @@ from app.chatbot.features.simple_lookup.dto import (
 from app.chatbot.features.simple_lookup.policy import SimpleLookupPolicy
 from app.chatbot.features.simple_lookup.service import SimpleLookupService, run_simple_lookup
 from app.chatbot.features.simple_lookup.slots import extract_simple_lookup_slots
+from app.database import SessionLocal, ensure_initialized
 from app.models import Complex, Region, Trade
 
 
@@ -261,3 +262,30 @@ def test_h1_recent_period_number_is_not_used_as_limit():
 
     assert slots["period"] == "6m"
     assert "limit" not in slots
+
+
+def test_extract_simple_lookup_slots_uses_recent_count_as_limit():
+    slots = extract_simple_lookup_slots("래미안대치팰리스 최근 5건 보여줘")
+
+    assert slots["query_type"] == QUERY_TRADE_HISTORY
+    assert slots["limit"] == 5
+
+
+def test_run_simple_lookup_period_filter_works_on_sqlite_fixture():
+    ensure_initialized()
+
+    with SessionLocal() as session:
+        result = run_simple_lookup(
+            session,
+            {
+                "query_type": QUERY_TRADE_HISTORY,
+                "target_name": "래미안대치팰리스",
+                "period": "1y",
+            },
+            "래미안대치팰리스 최근 1년 거래 내역 보여줘",
+        )
+
+    assert result["handler"] == "simple_lookup"
+    assert result["success"] is True
+    assert result["criteria"]["target_name"] == "래미안대치팰리스"
+    assert result["data"]

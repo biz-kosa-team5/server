@@ -13,6 +13,9 @@ from app.chatbot.features.simple_lookup.dto import (
   SimpleLookupObservation,
 )
 from app.chatbot.service.answer.formatters.price_trend import format_price_trend_result
+from app.chatbot.service.answer.formatters.recommendation import format_recommendation_result
+from app.chatbot.service.answer.formatters.comparison import format_comparison_result
+from app.chatbot.service.answer.formatters.legal_contract import format_legal_contract_result
 from app.chatbot.service.answer.formatters.result import format_result_messages
 from app.chatbot.service.answer.formatters.simple_lookup import format_simple_lookup_result
 
@@ -91,6 +94,26 @@ def test_price_trend_formatter_uses_timeseries_observation_rows():
   )
 
 
+def test_price_trend_formatter_includes_timeseries_target_name():
+  result = TrendSuccessObservation(
+    observation_type=ANALYSIS_TIMESERIES,
+    criteria={"target_name": "잠실엘스"},
+    row_count=2,
+    rows=[
+      {
+        "period_start": "2025-01-01",
+        "avg_deal_amount": 100000,
+      },
+      {
+        "period_start": "2025-12-01",
+        "avg_deal_amount": 120000,
+      },
+    ],
+  ).model_dump(mode="json")
+
+  assert format_price_trend_result(result).startswith("잠실엘스 시세추이를 조회했습니다.")
+
+
 def test_price_trend_formatter_uses_price_per_sqm_timeseries_unit():
   result = TrendSuccessObservation(
     observation_type=ANALYSIS_TIMESERIES,
@@ -140,8 +163,25 @@ def test_price_trend_formatter_uses_ranking_observation_rows():
   )
 
 
-def test_result_formatter_prefers_feature_answer_for_answered_domains():
-  assert format_result_messages({
+def test_price_trend_formatter_includes_ranking_target_name():
+  result = TrendSuccessObservation(
+    observation_type=ANALYSIS_RANKING,
+    criteria={"target_name": "강남구"},
+    row_count=1,
+    rows=[
+      {
+        "rank": 1,
+        "complex_name": "잠실엘스",
+        "change_rate": 20,
+      },
+    ],
+  ).model_dump(mode="json")
+
+  assert format_price_trend_result(result) == "강남구 가격 변화율 순위는 잠실엘스 20.00%입니다."
+
+
+def test_result_formatter_routes_recommendation_without_feature_answer():
+  messages = format_result_messages({
     "success": True,
     "handler": "recommendation",
     "answer": "feature 단계에서 만든 추천 답변입니다.",
@@ -151,4 +191,131 @@ def test_result_formatter_prefers_feature_answer_for_answered_domains():
         "latestDealAmount": 435000,
       },
     ],
-  }) == ["feature 단계에서 만든 추천 답변입니다."]
+  })
+
+  assert messages[0].startswith("조회된 데이터 기준")
+  assert "래미안대치팰리스" in messages[0]
+  assert "feature 단계" not in messages[0]
+
+
+def test_recommendation_formatter_includes_lifestyle_and_redevelopment_context():
+  answer = format_recommendation_result({
+    "handler": "recommendation",
+    "success": True,
+    "criteria": {"district": "송파구"},
+    "results": [{
+      "complexName": "잠실엘스",
+      "latestDealAmountText": "25.0억원",
+      "unitCnt": 5678,
+      "useDate": "2008-09-01",
+      "infrastructure": {
+        "nearbyLifestyle": [
+          {"name": "롯데백화점 잠실점", "subtype": "백화점", "distanceM": 620},
+          {"name": "서울아산병원", "subtype": "병원", "distanceM": 780},
+        ],
+      },
+      "redevelopmentInfo": [{"title": "잠실 일대 정비사업 관련 기사", "url": "https://example.com"}],
+    }],
+  })
+
+  assert "800m 생활편의" in answer
+  assert "롯데백화점 잠실점" in answer
+  assert "재개발/정비사업 검색결과" in answer
+  assert "상권이나 학군 평판처럼 데이터에 없는" not in answer
+
+
+def test_comparison_formatter_includes_lifestyle_and_redevelopment_context():
+  answer = format_comparison_result({
+    "handler": "comparison",
+    "success": True,
+    "criteria": {"apartment_names": ["잠실엘스", "리센츠"]},
+    "results": [
+      {
+        "complexName": "잠실엘스",
+        "latestDealAmountText": "25.0억원",
+        "unitCnt": 5678,
+        "builtYear": 2008,
+        "nearbyLifestyle": [{"name": "롯데백화점 잠실점", "subtype": "백화점", "distanceM": 620}],
+        "redevelopmentInfo": [{"title": "잠실 일대 정비사업 관련 기사", "url": "https://example.com"}],
+      },
+      {
+        "complexName": "리센츠",
+        "latestDealAmountText": "24.0억원",
+        "unitCnt": 5563,
+        "builtYear": 2008,
+        "nearbyLifestyle": [{"name": "서울아산병원", "subtype": "병원", "distanceM": 780}],
+        "redevelopmentInfo": [],
+      },
+    ],
+    "missingApartmentNames": [],
+  })
+
+  assert "800m 생활편의" in answer
+  assert "롯데백화점 잠실점" in answer
+  assert "재개발/정비사업 검색결과" in answer
+  assert "상권, 학군 평판, 미래 가격 전망은 제공된 데이터만으로는 확인할 수 없습니다." not in answer
+
+
+def test_comparison_formatter_keeps_available_results_with_missing_names():
+  answer = format_comparison_result({
+    "handler": "comparison",
+    "success": False,
+    "criteria": {"apartment_names": ["잠실엘스", "리센츠", "없는단지"]},
+    "results": [
+      {
+        "complexName": "잠실엘스",
+        "latestDealAmountText": "25.0억원",
+      },
+      {
+        "complexName": "리센츠",
+        "latestDealAmountText": "24.0억원",
+      },
+    ],
+    "missingApartmentNames": ["없는단지"],
+    "message": "일부 아파트를 찾지 못했습니다.",
+  })
+
+  assert "일부 아파트를 찾지 못했습니다: 없는단지" in answer
+  assert "잠실엘스" in answer
+  assert "리센츠" in answer
+
+
+def test_comparison_formatter_avoids_duplicate_missing_message_when_too_few_results():
+  answer = format_comparison_result({
+    "handler": "comparison",
+    "success": False,
+    "criteria": {"apartment_names": ["잠실엘스", "없는단지"]},
+    "results": [{"complexName": "잠실엘스"}],
+    "missingApartmentNames": ["없는단지"],
+    "message": "일부 아파트를 찾지 못했습니다.",
+  })
+
+  assert answer.count("일부 아파트를 찾지 못했습니다") == 1
+  assert "비교할 아파트 데이터가 부족합니다" in answer
+
+
+def test_legal_contract_formatter_uses_sources_without_internal_fields():
+  answer = format_legal_contract_result({
+    "handler": "legal_contract",
+    "success": True,
+    "question": "계약금을 돌려받을 수 있나요",
+    "sources": [
+      {
+        "documentId": 1,
+        "lawName": "민법",
+        "articleNo": "565",
+        "articleTitle": "해약금",
+        "paragraphNo": "1",
+        "content": "당사자 일방이 이행에 착수할 때까지 교부자는 이를 포기하고 수령자는 그 배액을 상환하여 매매계약을 해제할 수 있다.",
+        "score": 0.9,
+        "sourceUrl": "https://example.com",
+      },
+    ],
+    "summary": "관련 근거 조문은 민법 제565조입니다.",
+  })
+
+  assert "민법 제565조(해약금) 1항" in answer
+  assert "매매계약을 해제할 수 있다" in answer
+  assert "documentId" not in answer
+  assert "0.9" not in answer
+  assert "https://example.com" not in answer
