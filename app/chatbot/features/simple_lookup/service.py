@@ -1,96 +1,119 @@
+"""simple_lookup 서비스 계층."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.simple_lookup.dao import SimpleLookupDao
 from app.chatbot.features.simple_lookup.dto import (
+    LocationData,
+    LookupItemData,
+    QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
-    QUERY_TRADE,
+    QUERY_REGION_PRICE_RANKING,
+    QUERY_TRADE_HISTORY,
+    RegionRankingData,
     SimpleLookupCriteria,
     SimpleLookupError,
-    SimpleLookupResult,
+    SimpleLookupFailure,
+    SimpleLookupObservation,
+    SimpleLookupResponse,
     SimpleLookupSlots,
+    TradeData,
 )
-from app.chatbot.features.simple_lookup.policy import normalize_simple_lookup_policy
-
-
-@dataclass(frozen=True)
-class _LookupAction:
-    fetch: Callable[[SimpleLookupCriteria], list[dict[str, Any]]]
-    success_message: str
+from app.chatbot.features.simple_lookup.policy import SimpleLookupPolicy
 
 
 class SimpleLookupService:
-    def __init__(self, dao: SimpleLookupDao) -> None:
-        self.dao = dao
+    # 단순조회 실행 서비스
 
-    def handle(self, slots: SimpleLookupSlots) -> SimpleLookupResult:
+    def __init__(
+        self,
+        dao: SimpleLookupDao,
+        policy: SimpleLookupPolicy | None = None,
+    ) -> None:
+        self.dao = dao
+        self.policy = policy or SimpleLookupPolicy()
+
+    def handle(self, slots: SimpleLookupSlots) -> SimpleLookupResponse:
+        # 슬롯 -> criteria -> DAO 조회 -> 응답 DTO 변환
+
         criteria: SimpleLookupCriteria | None = None
 
         try:
-            criteria = normalize_simple_lookup_policy(slots)
-            action = self._resolve_action(criteria.query_type)
-            data = action.fetch(criteria)
-            success_message = self._success_message(action, criteria)
+            criteria = self.policy.build_criteria(slots)
+            data = self._fetch_data(criteria)
 
-            return SimpleLookupResult.ok(
+            return SimpleLookupObservation(
                 query_type=criteria.query_type,
-                criteria=criteria,
+                criteria=criteria.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                ),
                 data=data,
-                message=success_message,
             )
+
         except SimpleLookupError as error:
-            return SimpleLookupResult.fail(
+            return SimpleLookupFailure(
                 query_type=slots.query_type,
+                criteria=criteria.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                )
+                if criteria
+                else {},
                 reason=error.reason,
                 message=error.message,
-                criteria=criteria,
                 candidates=error.candidates,
             )
 
-    def _resolve_action(self, query_type: str) -> _LookupAction:
-        actions = {
-            QUERY_LOCATION: _LookupAction(
-                fetch=self.dao.find_location,
-                success_message="단지 위치를 조회했습니다.",
-            ),
-            QUERY_TRADE: _LookupAction(
-                fetch=self.dao.find_trades,
-                success_message="실거래 내역을 조회했습니다.",
-            ),
-        }
+    # query_type별 DAO 호출 및 응답 데이터 변환
+    def _fetch_data(self, criteria: SimpleLookupCriteria) -> list[LookupItemData]:
+        if criteria.query_type == QUERY_LOCATION:
+            complex_obj = self.dao.find_location(criteria)
+            return [LocationData.from_complex(complex_obj)]
 
-        action = actions.get(query_type)
-        if action is None:
-            raise SimpleLookupError(
-                "invalid_request",
-                "지원하지 않는 조회 유형입니다.",
-            )
-        return action
+        if criteria.query_type == QUERY_TRADE_HISTORY:
+            complex_obj, trades = self.dao.find_trade_history(criteria)
+            return [TradeData.from_trade(trade, complex_obj) for trade in trades]
 
-    @staticmethod
-    def _success_message(
-        action: _LookupAction,
-        criteria: SimpleLookupCriteria,
-    ) -> str:
-        if criteria.query_type == QUERY_TRADE and criteria.price_order is not None:
-            return "조회 조건 내 최고가/최저가 거래를 조회했습니다."
-        return action.success_message
+        if criteria.query_type == QUERY_COMPLEX_PRICE_RECORD:
+            complex_obj, trades = self.dao.find_complex_price_record(criteria)
+            return [TradeData.from_trade(trade, complex_obj) for trade in trades]
+
+        if criteria.query_type == QUERY_REGION_PRICE_RANKING:
+            rows = self.dao.find_region_price_ranking(criteria)
+            return [RegionRankingData.from_row(row) for row in rows]
+
+        raise SimpleLookupError(
+            "invalid_request",
+            "지원하지 않는 단순조회 유형입니다.",
+        )
 
 
-def run_simple_lookup(session: Session, slots: dict[str, Any], _: str = "") -> dict[str, Any]:
+# 단순조회 핸들러 진입점
+def run_simple_lookup(
+    session: Session,
+    slots: dict[str, Any],
+    _: str = "",
+) -> dict[str, Any]:
+
     try:
         request = SimpleLookupSlots(**slots)
+
     except ValidationError:
-        return SimpleLookupResult.fail(
+        return SimpleLookupFailure(
             query_type=slots.get("query_type"),
             reason="invalid_request",
             message="단순 조회 요청 슬롯 형식이 올바르지 않습니다.",
         ).model_dump(mode="json")
 
-    result = SimpleLookupService(SimpleLookupDao(session)).handle(request)
+    service = SimpleLookupService(
+        dao=SimpleLookupDao(session),
+    )
+    result = service.handle(request)
+
     return result.model_dump(mode="json")
