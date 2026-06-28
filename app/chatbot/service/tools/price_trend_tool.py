@@ -14,9 +14,9 @@ def build_price_trend_tool(session: Session):
   @tool
   def analyze_price_trend(
     query: str,
-    analysis_type: str,
-    target_type: str,
-    target_name: str,
+    analysis_type: str | None = None,
+    target_type: str | None = None,
+    target_name: str | None = None,
     area: float | None = None,
     area_min: float | None = None,
     area_max: float | None = None,
@@ -124,7 +124,9 @@ def _merge_slots(regex_slots: dict[str, Any], llm_slots: dict[str, Any]) -> dict
   return slots
 
 
-def _target_name(target_type: str, target_name: str) -> str:
+def _target_name(target_type: str | None, target_name: str | None) -> str | None:
+  if target_name is None:
+    return None
   name = " ".join(target_name.split())
   if target_type == "complex" and name.endswith("아파트"):
     return name[: -len("아파트")]

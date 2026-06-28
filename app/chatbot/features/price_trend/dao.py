@@ -22,6 +22,114 @@ from .dto import (
 class PriceTrendDao:
     """price_trend 조회용 DAO."""
 
+    def _dialect_name(self, session: Session) -> str:
+        bind = session.get_bind()
+        return bind.dialect.name if bind is not None else ""
+
+    def _period_expression(self, interval: str, dialect_name: str) -> str:
+        if dialect_name == "sqlite":
+            if interval == "month":
+                return "substr(t.deal_date, 1, 7) || '-01'"
+            if interval == "quarter":
+                return (
+                    "strftime('%Y', t.deal_date) || '-' || "
+                    "printf('%02d', (CAST(((CAST(strftime('%m', t.deal_date) AS INTEGER) - 1) / 3) AS INTEGER) * 3 + 1)) "
+                    "|| '-01'"
+                )
+            if interval == "year":
+                return "strftime('%Y', t.deal_date) || '-01-01'"
+
+        if interval == "month":
+            return "date_trunc('month', CAST(t.deal_date AS timestamp))::date"
+        if interval == "quarter":
+            return "date_trunc('quarter', CAST(t.deal_date AS timestamp))::date"
+        if interval == "year":
+            return "date_trunc('year', CAST(t.deal_date AS timestamp))::date"
+
+        raise TrendError(
+            "invalid_condition",
+            "지원하지 않는 시계열 구간입니다.",
+        )
+
+    def _monthly_expression(self, dialect_name: str) -> str:
+        if dialect_name == "sqlite":
+            return "substr(t.deal_date, 1, 7) || '-01'"
+        return "date_trunc('month', CAST(t.deal_date AS timestamp))::date"
+
+    def _date_area_filter(self, dialect_name: str) -> str:
+        if dialect_name == "sqlite":
+            return """
+                  AND t.deal_date >= :start_date
+                  AND t.deal_date <= :end_date
+                  AND (:area_min IS NULL OR t.excl_area >= :area_min)
+                  AND (:area_max IS NULL OR t.excl_area <= :area_max)
+            """
+
+        return """
+                  AND CAST(t.deal_date AS date) >= :start_date
+                  AND CAST(t.deal_date AS date) <= :end_date
+                  AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
+                  AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+        """
+
+    def _criteria_params(
+        self,
+        criteria: TrendCriteria,
+        dialect_name: str,
+    ) -> dict[str, Any]:
+        start_date: Any = criteria["start_date"]
+        end_date: Any = criteria["end_date"]
+        if dialect_name == "sqlite":
+            start_date = str(start_date)
+            end_date = str(end_date)
+
+        return {
+            "start_date": start_date,
+            "end_date": end_date,
+            "area_min": criteria.get("area_min"),
+            "area_max": criteria.get("area_max"),
+        }
+
+    def _partial_complex_statement(self, dialect_name: str):
+        if dialect_name == "sqlite":
+            return text(
+                """
+                SELECT id, name, trade_name, address
+                FROM complexes
+                WHERE lower(name) LIKE '%' || lower(:target_name) || '%'
+                OR lower(coalesce(trade_name, '')) LIKE '%' || lower(:target_name) || '%'
+                ORDER BY
+                    CASE
+                        WHEN lower(name) LIKE lower(:target_name) || '%' THEN 0
+                        WHEN lower(coalesce(trade_name, '')) LIKE lower(:target_name) || '%' THEN 1
+                        WHEN lower(name) LIKE '%' || lower(:target_name) || '%' THEN 2
+                        WHEN lower(coalesce(trade_name, '')) LIKE '%' || lower(:target_name) || '%' THEN 3
+                        ELSE 4
+                    END,
+                    id
+                LIMIT 10
+                """
+            )
+
+        return text(
+            """
+            SELECT id, name, trade_name, address
+            FROM complexes
+            WHERE name ILIKE '%' || :target_name || '%'
+            OR trade_name ILIKE '%' || :target_name || '%'
+            ORDER BY
+                CASE
+                    WHEN name ILIKE :target_name || '%' THEN 0
+                    WHEN trade_name ILIKE :target_name || '%' THEN 1
+                    WHEN name ILIKE '%' || :target_name || '%' THEN 2
+                    WHEN trade_name ILIKE '%' || :target_name || '%' THEN 3
+                    ELSE 4
+                END,
+                id
+            LIMIT 10
+            """
+        )
+
     def find_timeseries(
         self,
         session: Session,
@@ -31,25 +139,10 @@ class PriceTrendDao:
 
         target = self._resolve_target(session, criteria)
 
-        interval = criteria["interval"]
-        if interval == "month":
-            period_expr = "date_trunc('month', CAST(t.deal_date AS timestamp))::date"
-        elif interval == "quarter":
-            period_expr = "date_trunc('quarter', CAST(t.deal_date AS timestamp))::date"
-        elif interval == "year":
-            period_expr = "date_trunc('year', CAST(t.deal_date AS timestamp))::date"
-        else:
-            raise TrendError(
-                "invalid_condition",
-                "지원하지 않는 시계열 구간입니다.",
-            )
-
-        params: dict[str, Any] = {
-            "start_date": criteria["start_date"],
-            "end_date": criteria["end_date"],
-            "area_min": criteria.get("area_min"),
-            "area_max": criteria.get("area_max"),
-        }
+        dialect_name = self._dialect_name(session)
+        period_expr = self._period_expression(criteria["interval"], dialect_name)
+        date_area_filter = self._date_area_filter(dialect_name)
+        params: dict[str, Any] = self._criteria_params(criteria, dialect_name)
 
         if target["target_type"] == TARGET_COMPLEX:
             target_filter = "c.id = :complex_id"
@@ -64,10 +157,7 @@ class PriceTrendDao:
                 FROM trades t
                 JOIN complexes c ON c.id = t.complex_id
                 WHERE {target_filter}
-                  AND CAST(t.deal_date AS date) >= :start_date
-                  AND CAST(t.deal_date AS date) <= :end_date
-                  AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
-                  AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                {date_area_filter}
                 GROUP BY period_start
                 ORDER BY period_start
                 """
@@ -85,10 +175,7 @@ class PriceTrendDao:
                 FROM trades t
                 JOIN complexes c ON c.id = t.complex_id
                 WHERE {target_filter}
-                  AND CAST(t.deal_date AS date) >= :start_date
-                  AND CAST(t.deal_date AS date) <= :end_date
-                  AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
-                  AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                {date_area_filter}
                 GROUP BY period_start
                 ORDER BY period_start
                 """
@@ -124,15 +211,15 @@ class PriceTrendDao:
         rank_by = criteria["rank_by"]
         direction = criteria["direction"]
         limit = criteria["limit"]
+        dialect_name = self._dialect_name(session)
+        month_expr = self._monthly_expression(dialect_name)
+        date_area_filter = self._date_area_filter(dialect_name)
 
         params: dict[str, Any] = {
             "region_ids": target["region_ids"],
-            "start_date": criteria["start_date"],
-            "end_date": criteria["end_date"],
-            "area_min": criteria.get("area_min"),
-            "area_max": criteria.get("area_max"),
             "limit": limit,
         }
+        params.update(self._criteria_params(criteria, dialect_name))
 
         if rank_by == RANK_BY_CHANGE_RATE:
             if direction == "asc":
@@ -149,16 +236,13 @@ class PriceTrendDao:
                         c.id AS complex_id,
                         c.name AS complex_name,
                         c.address AS address,
-                        date_trunc('month', CAST(t.deal_date AS timestamp))::date AS period_start,
+                        {month_expr} AS period_start,
                         AVG(t.deal_amount / NULLIF(t.excl_area, 0)) AS avg_price_per_sqm,
                         COUNT(t.id) AS trade_count
                     FROM trades t
                     JOIN complexes c ON c.id = t.complex_id
                     WHERE c.region_id IN :region_ids
-                      AND CAST(t.deal_date AS date) >= :start_date
-                      AND CAST(t.deal_date AS date) <= :end_date
-                      AND (CAST(:area_min AS numeric) IS NULL OR t.excl_area >= CAST(:area_min AS numeric))
-                      AND (CAST(:area_max AS numeric) IS NULL OR t.excl_area <= CAST(:area_max AS numeric))
+                    {date_area_filter}
                     GROUP BY
                         c.id,
                         c.name,
@@ -274,6 +358,7 @@ class PriceTrendDao:
 
         target_type = criteria["target_type"]
         target_name = criteria["target_name"]
+        dialect_name = self._dialect_name(session)
 
         if target_type == TARGET_COMPLEX:
             exact_statement = text(
@@ -319,24 +404,7 @@ class PriceTrendDao:
                     ],
                 )
 
-            partial_statement = text(
-                """
-                SELECT id, name, trade_name, address
-                FROM complexes
-                WHERE name ILIKE '%' || :target_name || '%'
-                OR trade_name ILIKE '%' || :target_name || '%'
-                ORDER BY
-                    CASE
-                        WHEN name ILIKE :target_name || '%' THEN 0
-                        WHEN trade_name ILIKE :target_name || '%' THEN 1
-                        WHEN name ILIKE '%' || :target_name || '%' THEN 2
-                        WHEN trade_name ILIKE '%' || :target_name || '%' THEN 3
-                        ELSE 4
-                    END,
-                    id
-                LIMIT 10
-                """
-            )
+            partial_statement = self._partial_complex_statement(dialect_name)
 
             partial_rows = session.execute(
                 partial_statement,

@@ -20,6 +20,20 @@ class SimpleLookupDao:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _dialect_name(self) -> str:
+        bind = self.session.get_bind()
+        return bind.dialect.name if bind is not None else ""
+
+    def _deal_date_order_expression(self) -> Any:
+        if self._dialect_name() == "sqlite":
+            return Trade.deal_date
+        return cast(Trade.deal_date, Date)
+
+    def _date_param(self, value: Any) -> Any:
+        if self._dialect_name() == "sqlite" and value is not None:
+            return str(value)
+        return value
+
     # 단지 위치 조회: Complex entity 반환
     def find_location(
         self,
@@ -49,7 +63,7 @@ class SimpleLookupDao:
         stmt = select(Trade).where(Trade.complex_id == complex_obj.id)
         stmt = self._apply_trade_filters(stmt, criteria)
 
-        deal_date = cast(Trade.deal_date, Date)
+        deal_date = self._deal_date_order_expression()
 
         if criteria.sort_order == SORT_OLDEST:
             stmt = stmt.order_by(deal_date.asc())
@@ -83,7 +97,7 @@ class SimpleLookupDao:
             else Trade.deal_amount.desc()
         )
 
-        deal_date = cast(Trade.deal_date, Date)
+        deal_date = self._deal_date_order_expression()
 
         if criteria.sort_order == SORT_OLDEST:
             date_order = deal_date.asc()
@@ -123,12 +137,20 @@ class SimpleLookupDao:
         }
 
         if criteria.start_date is not None:
-            filters.append("AND t.deal_date::date >= :start_date")
-            params["start_date"] = criteria.start_date
+            filters.append(
+                "AND t.deal_date >= :start_date"
+                if self._dialect_name() == "sqlite"
+                else "AND t.deal_date::date >= :start_date"
+            )
+            params["start_date"] = self._date_param(criteria.start_date)
 
         if criteria.end_date is not None:
-            filters.append("AND t.deal_date::date <= :end_date")
-            params["end_date"] = criteria.end_date
+            filters.append(
+                "AND t.deal_date <= :end_date"
+                if self._dialect_name() == "sqlite"
+                else "AND t.deal_date::date <= :end_date"
+            )
+            params["end_date"] = self._date_param(criteria.end_date)
 
         if criteria.area_min is not None:
             filters.append("AND t.excl_area >= :area_min")
@@ -276,13 +298,13 @@ class SimpleLookupDao:
         stmt: Any,
         criteria: SimpleLookupCriteria,
     ) -> Any:
-        deal_date = cast(Trade.deal_date, Date)
+        deal_date = self._deal_date_order_expression()
 
         if criteria.start_date is not None:
-            stmt = stmt.where(deal_date >= criteria.start_date)
+            stmt = stmt.where(deal_date >= self._date_param(criteria.start_date))
 
         if criteria.end_date is not None:
-            stmt = stmt.where(deal_date <= criteria.end_date)
+            stmt = stmt.where(deal_date <= self._date_param(criteria.end_date))
 
         if criteria.area_min is not None:
             stmt = stmt.where(Trade.excl_area >= criteria.area_min)
