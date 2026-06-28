@@ -11,9 +11,19 @@ from app.real_estate.dao import (
   pois_by_category,
   station_pois,
 )
-from app.real_estate.support import clean_text, nearest_poi_for_coordinates, normalize_station_name
+from app.real_estate.support import (
+  clean_text,
+  nearest_poi_for_coordinates,
+  normalize_station_name,
+  pois_within_radius_for_coordinates,
+)
 
 from .filters import requested_infra, requested_school_types
+
+
+LIFESTYLE_RADIUS_M = 800
+LIFESTYLE_CATEGORIES = ("commercial", "medical")
+LIFESTYLE_LIMIT = 6
 
 
 def find_poi_groups(
@@ -51,7 +61,20 @@ def find_poi_groups(
       return None
     groups.append(education_matches)
 
+  if "commercial" in infra_preferences:
+    lifestyle_matches = lifestyle_pois(session)
+    if not lifestyle_matches:
+      return None
+    groups.append(lifestyle_matches)
+
   return groups
+
+
+def lifestyle_pois(session: Session) -> list[Poi]:
+  pois = []
+  for category in LIFESTYLE_CATEGORIES:
+    pois.extend(pois_by_category(session, category))
+  return pois
 
 
 def filter_items_by_poi_distance_query(
@@ -98,6 +121,7 @@ def enrich_infrastructure(session: Session, item: dict[str, Any], slots: dict[st
     "nearestEducation": education,
     "nearestEducationByType": education_by_type,
     "educationDistanceTotalM": education_distance_total(education_by_type),
+    "nearbyLifestyle": nearby_lifestyle_pois_for_item(session, item),
     "requestedPreferences": sorted(requested_infra(slots)),
     "notes": infrastructure_notes(slots),
   }
@@ -133,6 +157,24 @@ def nearest_education_by_type(
   }
 
 
+def nearby_lifestyle_pois_for_item(
+  session: Session,
+  item: dict[str, Any],
+  max_distance_m: int = LIFESTYLE_RADIUS_M,
+) -> list[dict[str, Any]]:
+  latitude = item.get("latitude")
+  longitude = item.get("longitude")
+  if latitude is None or longitude is None:
+    return []
+
+  return pois_within_radius_for_coordinates(
+    float(latitude),
+    float(longitude),
+    lifestyle_pois(session),
+    max_distance_m,
+  )[:LIFESTYLE_LIMIT]
+
+
 def education_distance_total(education_by_type: dict[str, Any]) -> float | None:
   if not education_by_type:
     return None
@@ -145,7 +187,4 @@ def education_distance_total(education_by_type: dict[str, Any]) -> float | None:
 
 
 def infrastructure_notes(slots: dict[str, Any]) -> list[str]:
-  notes = []
-  if "commercial" in requested_infra(slots):
-    notes.append("상권/생활편의 POI 데이터는 현재 DB에 없어 역과 교육시설 데이터만 근거로 답변합니다.")
-  return notes
+  return []

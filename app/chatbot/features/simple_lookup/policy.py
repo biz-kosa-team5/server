@@ -51,7 +51,7 @@ class SimpleLookupPolicy:
         if slots.query_type == QUERY_LOCATION:
             return SimpleLookupCriteria(
                 query_type=slots.query_type,
-                target_name=target_name,                
+                target_name=target_name,
             )
 
         start_date, end_date = self._normalize_date_range(slots)

@@ -53,8 +53,8 @@ class PriceTrendPolicy:
 
         start_date, end_date = self._normalize_date_range(raw_slots)
         area_criteria = self._normalize_area_criteria(raw_slots)
-        
-        target_name = parsed.target_name.strip()        
+
+        target_name = parsed.target_name.strip()
         target_key = "".join(target_name.split())
 
         criteria: TrendCriteria = {
@@ -65,7 +65,7 @@ class PriceTrendPolicy:
             "end_date": end_date,
             **area_criteria,
         }
-        
+
         if parsed.target_type == TARGET_REGION:
             if target_key in GANGNAM_3_ALIASES:
                 criteria["region_names"] = ["강남구", "서초구", "송파구"]
@@ -74,7 +74,7 @@ class PriceTrendPolicy:
 
         if parsed.original_question:
             criteria["original_question"] = parsed.original_question
-            
+
         if parsed.analysis_type == ANALYSIS_TIMESERIES:
             criteria["interval"] = parsed.interval or DEFAULT_INTERVAL
 
@@ -94,7 +94,7 @@ class PriceTrendPolicy:
                 "invalid_request",
                 "시세추이 슬롯 형식이 올바르지 않습니다.",
             )
-            
+
     # ----------------------------
     # 기간 보정
     # ----------------------------
@@ -175,7 +175,7 @@ class PriceTrendPolicy:
         day = min(value.day, calendar.monthrange(year, month)[1])
 
         return date(year, month, day)
-    
+
     # ----------------------------
     # 면적 보정
     # ----------------------------
@@ -202,7 +202,7 @@ class PriceTrendPolicy:
             return self._area_criteria_from_pyeong(slots)
 
         return {}
-    
+
     # 면적 조건 보정
     def _area_criteria_from_area(self, slots: dict[str, Any]) -> TrendCriteria:
         area = slots.get("area")
@@ -231,7 +231,7 @@ class PriceTrendPolicy:
             criteria["area_max"] = float(area_max)
 
         return criteria
-    
+
     # 평 조건 보정
     def _area_criteria_from_pyeong(self, slots: dict[str, Any]) -> TrendCriteria:
         pyeong = slots.get("pyeong")
@@ -266,8 +266,8 @@ class PriceTrendPolicy:
             criteria["area_max"] = pyeong_max * PYEONG_TO_M2 * EXCLUSIVE_AREA_RATE
 
         return criteria
-    
-    
+
+
     # ----------------------------
     # 랭킹 조건 보정
     # ----------------------------

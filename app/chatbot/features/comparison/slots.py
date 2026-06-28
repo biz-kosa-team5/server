@@ -42,7 +42,7 @@ def extract_compare_slots(question: str) -> dict[str, Any]:
 
 
 def extract_apartment_names(text: str) -> list[str]:
-  match = re.search(r"(.+?)(?:랑|와|과|하고|이랑)\s*(.+)", text)
+  match = re.search(r"(.+?)(?:랑|와|과|하고)\s*(.+)", text)
   if match is None:
     return []
   first = clean_apartment_name(match.group(1))
@@ -53,11 +53,14 @@ def extract_apartment_names(text: str) -> list[str]:
 def clean_apartment_name(value: str) -> str:
   text = value.strip()
   text = re.sub(
-    r"(가격|시세|세대수|신축|준공|교통|역세권|학군|학교|교육|상권|인프라|비교|비교해줘|알려줘|해줘|줘|랑|이랑|와|과|하고|어디가\s*더\s*좋아|\?)",
+    r"(가격|시세|거래가|평당가|세대수|대단지|신축|준공|연식|교통|역세권|역\s*접근성|접근성|학군|학교|교육|초등학교|초등|중학교|중등|고등학교|고등|상권|생활편의|편의시설|인프라|미래\s*가격\s*전망|가격\s*전망|미래|전망|재개발|재건축|정비사업|호재|비교|비교해줘|알려줘|해줘|줘|이랑|랑|와|과|하고|어디가\s*더\s*좋아|어디가\s*더|가까운지|야|\?)",
     "",
     text,
   )
-  return text.strip()
+  text = text.strip()
+  if text.endswith("이") and not text.endswith("자이"):
+    return text[:-1].strip()
+  return text
 
 
 def extract_school_type(text: str) -> str | None:

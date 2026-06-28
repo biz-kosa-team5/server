@@ -16,7 +16,7 @@ from app.chatbot.features.simple_lookup.dto import (
     SimpleLookupSlots,
 )
 from app.chatbot.features.simple_lookup.policy import SimpleLookupPolicy
-from app.chatbot.features.simple_lookup.service import SimpleLookupService
+from app.chatbot.features.simple_lookup.service import SimpleLookupService, run_simple_lookup
 from app.chatbot.features.simple_lookup.slots import extract_simple_lookup_slots
 from app.models import Complex, Region, Trade
 
@@ -231,6 +231,29 @@ def test_h1_year_duration_slot_maps_to_explicit_date_range():
 
     assert slots["start_date"] == "2010-01-01"
     assert slots["end_date"] == "2014-12-31"
+
+
+def test_run_simple_lookup_returns_same_result_shape_for_validation_errors():
+    result = run_simple_lookup(
+        object(),
+        {"query_type": QUERY_LOCATION},
+    )
+
+    assert result["handler"] == "simple_lookup"
+    assert result["success"] is False
+    assert result["query_type"] == QUERY_LOCATION
+    assert result["reason"] == "invalid_request"
+    assert result["criteria"] == {}
+    assert result["candidates"] == []
+    assert set(result) == {
+        "handler",
+        "success",
+        "query_type",
+        "criteria",
+        "reason",
+        "message",
+        "candidates",
+    }
 
 
 def test_h1_recent_period_number_is_not_used_as_limit():

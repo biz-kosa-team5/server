@@ -10,11 +10,17 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.chatbot.features.comparison.service import run_comparison
+from app.chatbot.features.comparison.slots import extract_compare_slots
+from app.chatbot.features.recommendation.service import run_recommendation
+from app.chatbot.features.recommendation.slots import extract_recommendation_slots
+
 from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
 from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
   agent_initialization_failed_result,
+  suggest_specialist_agents,
 )
 from .splitter import split_question
 
@@ -164,6 +170,7 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   task_results = []
   for task in ChatbotTask.from_question(question):
     task_results.append(await execute_task(
+      session,
       supervisor,
       task,
       supervisor_initialization_failed=supervisor_initialization_failed,
@@ -179,22 +186,47 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
 
 
 async def execute_task(
+  session: Session,
   supervisor: ChatbotSupervisor | None,
   task: ChatbotTask,
   *,
   supervisor_initialization_failed: bool = False,
 ) -> TaskExecutionResult:
   try:
-    if supervisor is None:
-      result = (
-        agent_initialization_failed_result()
-        if supervisor_initialization_failed
-        else agent_execution_failed_result()
-      )
-    else:
-      result = await supervisor.run(task.text)
+    result = direct_feature_result(session, task.text)
+    if result is None:
+      if supervisor is None:
+        result = (
+          agent_initialization_failed_result()
+          if supervisor_initialization_failed
+          else agent_execution_failed_result()
+        )
+      else:
+        result = await supervisor.run(task.text)
   except Exception:
     logger.exception("Failed to run chatbot supervisor for task %s", task.index)
     result = agent_execution_failed_result()
 
   return TaskExecutionResult(task=task, result=result)
+
+
+def direct_feature_result(session: Session, text: str) -> dict[str, Any] | None:
+  """Route obvious single-domain recommendation/comparison questions without an LLM tool hop."""
+  hinted_agents = suggest_specialist_agents(text)
+  if hinted_agents == ["comparison_agent"] and is_comparison_question(text):
+    slots = extract_compare_slots(text)
+    if len(slots.get("apartment_names", [])) >= 2:
+      return run_comparison(session, slots, text)
+
+  if hinted_agents == ["recommendation_agent"] and is_recommendation_question(text):
+    return run_recommendation(session, extract_recommendation_slots(text), text)
+
+  return None
+
+
+def is_comparison_question(text: str) -> bool:
+  return any(keyword in text for keyword in ("비교", "둘 중", "어디가 더", "차이", " vs ", "VS"))
+
+
+def is_recommendation_question(text: str) -> bool:
+  return any(keyword in text for keyword in ("추천", "권해", "골라", "조건에 맞는"))

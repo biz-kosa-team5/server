@@ -18,10 +18,13 @@ from .common import (
 
 def format_price_trend_result(result: dict[str, Any]) -> str:
   summary = dict_value(result.get("summary"))
-  data = [dict_value(item) for item in list_value(result.get("data"))]
-  query_type = clean_text(result.get("query_type"))
+  data = [
+    dict_value(item)
+    for item in (list_value(result.get("data")) or list_value(result.get("rows")))
+  ]
+  query_type = clean_text(result.get("query_type") or result.get("observation_type"))
 
-  if query_type == "price_change_ranking" and data:
+  if query_type in {"price_change_ranking", "ranking"} and data:
     items = []
     for item in data[:3]:
       name = clean_text(item.get("complex_name"))
@@ -57,11 +60,27 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
     last = data[-1]
     first_period = clean_text(first.get("period_start"))
     last_period = clean_text(last.get("period_start"))
-    first_amount = format_price(first.get("avg_deal_amount"))
-    last_amount = format_price(last.get("avg_deal_amount"))
+    metric_key, unit = timeseries_metric(first, last)
+    first_amount = format_timeseries_value(first.get(metric_key), unit)
+    last_amount = format_timeseries_value(last.get(metric_key), unit)
     if first_period and last_period and first_amount and last_amount:
-      return f"시세추이를 조회했습니다. {first_period} 평균 {first_amount}에서 {last_period} 평균 {last_amount}로 확인됩니다."
+      return (
+        f"시세추이를 조회했습니다. {first_period} 평균 {first_amount}에서 "
+        f"{last_period} 평균 {last_amount}{summary_change_particle(unit)} 확인됩니다."
+      )
   return clean_text(result.get("message"))
+
+
+def timeseries_metric(first: dict[str, Any], last: dict[str, Any]) -> tuple[str, str]:
+  if first.get("avg_deal_amount") is not None or last.get("avg_deal_amount") is not None:
+    return "avg_deal_amount", "만원"
+  return "avg_price_per_sqm", "만원/㎡"
+
+
+def format_timeseries_value(value: Any, unit: str) -> str:
+  if unit == "만원":
+    return format_price(value)
+  return format_metric_value(value, unit)
 
 
 def summary_value_unit(primary_metric: str) -> str:

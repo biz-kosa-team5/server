@@ -368,7 +368,7 @@ class PriceTrendDao:
             raise TrendError(
                 "target_not_found",
                 "입력한 이름과 일치하는 아파트 단지를 찾지 못했습니다.",
-            )        
+            )
 
         if target_type == TARGET_REGION:
             region_names = criteria.get("region_names") or [target_name]

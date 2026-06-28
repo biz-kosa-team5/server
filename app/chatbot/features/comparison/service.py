@@ -6,9 +6,16 @@ from typing import Annotated, Any
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
 from app.chatbot.features.comparison.rag_answer import generate_comparison_answer
 from app.real_estate.dao import latest_trade_for_complex, pois_by_category
-from app.real_estate.support import clean_text, empty_result, nearest_poi_for_complex, normalize_slots
+from app.real_estate.support import (
+  clean_text,
+  empty_result,
+  nearest_poi_for_complex,
+  normalize_slots,
+  pois_within_radius_for_complex,
+)
 
 from .formatting import comparison_item, find_complex_by_name
 from .metrics import DEFAULT_METRICS, infrastructure_notes, normalize_metrics, requested_infra
@@ -22,6 +29,8 @@ class ComparisonService:
 
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
     """비교 데이터에 RAG 답변을 붙여 챗봇 tool 응답을 만든다."""
+    slots = dict(slots)
+    slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
     result = self.compare_apartments_by_metrics(session, slots)
     result["answer"] = generate_comparison_answer(
       question=text,
@@ -84,6 +93,11 @@ class ComparisonService:
       item = comparison_item(complex_row, latest_trade_for_complex(session, complex_row.id), metrics)
       self._attach_infrastructure(session, item, complex_row, metrics, slots)
       item["infrastructureNotes"] = infrastructure_notes(infra_preferences)
+      item["redevelopmentInfo"] = (
+        search_redevelopment_context(complex_row.name, complex_row.address)
+        if slots.get("_include_redevelopment_context") is True
+        else []
+      )
       rows.append(item)
     return rows, missing
 
@@ -111,6 +125,7 @@ class ComparisonService:
           name=clean_text(slots.get("school_name")),
         ),
       )
+    item["nearbyLifestyle"] = nearby_lifestyle_pois(session, complex_row)
 
 
 ComparisonServiceDep = Annotated[ComparisonService, Depends(ComparisonService)]
@@ -124,3 +139,10 @@ def compare_apartments_by_metrics(session: Session, slots: dict[str, Any]) -> di
 def run_comparison(session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
   """chatbot comparison tool에서 호출하는 기존 진입점이다."""
   return ComparisonService().run(session, slots, text)
+
+
+def nearby_lifestyle_pois(session: Session, complex_row: Any, max_distance_m: int = 800) -> list[dict[str, Any]]:
+  pois = []
+  for category in ("commercial", "medical"):
+    pois.extend(pois_by_category(session, category))
+  return pois_within_radius_for_complex(complex_row, pois, max_distance_m)[:6]

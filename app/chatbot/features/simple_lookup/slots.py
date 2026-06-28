@@ -18,7 +18,7 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
         "original_question": text,
         "query_type": query_type,
     }
-    
+
     if query_type == QUERY_LOCATION:
         target_name = _extract_location_target_name(text)
         if target_name is not None:
@@ -32,12 +32,12 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
     else:
         period = _extract_period(text)
         if period is not None:
-            slots["period"] = period   
-    
+            slots["period"] = period
+
     period = _extract_period(text)
     if period is not None:
         slots["period"] = period
-    
+
     area = _extract_area(text)
     if area is not None:
         slots["area"] = area

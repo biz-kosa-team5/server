@@ -45,9 +45,7 @@ def requested_infra(slots: dict[str, Any]) -> set[str]:
 
 def infrastructure_notes(infra_preferences: set[str]) -> list[str]:
   """현재 DB로 설명할 수 없는 인프라 조건을 사용자에게 알려준다."""
-  if "commercial" not in infra_preferences:
-    return []
-  return ["상권/생활편의 POI 데이터는 현재 DB에 없어 역과 교육시설 데이터만 근거로 비교합니다."]
+  return []
 
 
 def dedupe(values: list[str]) -> list[str]:

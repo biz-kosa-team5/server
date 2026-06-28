@@ -50,7 +50,7 @@ class SimpleLookupDao:
         stmt = self._apply_trade_filters(stmt, criteria)
 
         deal_date = cast(Trade.deal_date, Date)
-        
+
         if criteria.sort_order == SORT_OLDEST:
             stmt = stmt.order_by(deal_date.asc())
         else:
@@ -84,7 +84,7 @@ class SimpleLookupDao:
         )
 
         deal_date = cast(Trade.deal_date, Date)
-        
+
         if criteria.sort_order == SORT_OLDEST:
             date_order = deal_date.asc()
         else:
@@ -196,7 +196,7 @@ class SimpleLookupDao:
             for column, exact in search_steps:
                 # DB 단지명 공백 제거 후 비교
                 compact_column = func.replace(column, " ", "")
-                
+
                 if exact:
                     stmt = select(Complex).where(
                         compact_column == target
@@ -277,7 +277,7 @@ class SimpleLookupDao:
         criteria: SimpleLookupCriteria,
     ) -> Any:
         deal_date = cast(Trade.deal_date, Date)
-        
+
         if criteria.start_date is not None:
             stmt = stmt.where(deal_date >= criteria.start_date)
 

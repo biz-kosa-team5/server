@@ -142,11 +142,11 @@ def build_simple_lookup_tool(session: Session):
 
         Args:
             query: 사용자가 입력한 단순 조회 질문입니다.
-            query_type: 
+            query_type:
                 필수 인자 입니다.
                 조회 유형입니다.
                 location, trade_history, complex_price_record, region_price_ranking 중 하나입니다.
-            target_name: 
+            target_name:
                 필수 인자 입니다.
                 조회 대상 이름입니다.
                 단지 조회에서는 아파트 단지명입니다.

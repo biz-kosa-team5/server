@@ -114,11 +114,11 @@ def build_price_trend_tool(session: Session):
 
 def _merge_slots(regex_slots: dict[str, Any], llm_slots: dict[str, Any]) -> dict[str, Any]:
   slots = dict(regex_slots)
-  
+
   if "period" in regex_slots or "start_date" in regex_slots or "end_date" in regex_slots:
     llm_slots.pop("period", None)
     llm_slots.pop("start_date", None)
-    llm_slots.pop("end_date", None) 
+    llm_slots.pop("end_date", None)
 
   slots.update(llm_slots)
   return slots
