@@ -9,9 +9,8 @@ from app.chatbot.features.price_trend.dto import (
 )
 from app.chatbot.features.simple_lookup.dto import (
   QUERY_LOCATION,
-  QUERY_TRADE,
-  SimpleLookupCriteria,
-  SimpleLookupResult,
+  QUERY_TRADE_HISTORY,
+  SimpleLookupObservation,
 )
 from app.chatbot.service.answer.formatters.price_trend import format_price_trend_result
 from app.chatbot.service.answer.formatters.result import format_result_messages
@@ -19,14 +18,15 @@ from app.chatbot.service.answer.formatters.simple_lookup import format_simple_lo
 
 
 def test_simple_lookup_formatter_uses_location_dto_shape():
-  result = SimpleLookupResult.ok(
+  result = SimpleLookupObservation(
     query_type=QUERY_LOCATION,
-    criteria=SimpleLookupCriteria(
-      query_type=QUERY_LOCATION,
-      complex_name="잠실엘스",
-    ),
+    criteria={
+      "query_type": QUERY_LOCATION,
+      "target_name": "잠실엘스",
+    },
     data=[
       {
+        "complex_id": 1,
         "complex_name": "잠실엘스",
         "address": "서울 송파구 잠실동",
         "latitude": 37.5,
@@ -42,22 +42,23 @@ def test_simple_lookup_formatter_uses_location_dto_shape():
 
 
 def test_simple_lookup_formatter_uses_trade_dto_shape():
-  result = SimpleLookupResult.ok(
-    query_type=QUERY_TRADE,
-    criteria=SimpleLookupCriteria(
-      query_type=QUERY_TRADE,
-      complex_name="잠실엘스",
-    ),
+  result = SimpleLookupObservation(
+    query_type=QUERY_TRADE_HISTORY,
+    criteria={
+      "query_type": QUERY_TRADE_HISTORY,
+      "target_name": "잠실엘스",
+    },
     data=[
       {
+        "complex_id": 1,
         "complex_name": "잠실엘스",
+        "trade_id": 1,
         "deal_date": "2026-01-20",
         "deal_amount": 435000,
-        "exclusive_area": 84.97,
+        "excl_area": 84.97,
         "floor": 15,
       },
     ],
-    message="실거래 내역을 조회했습니다.",
   ).model_dump(mode="json")
 
   assert format_simple_lookup_result(result) == (

@@ -26,7 +26,7 @@ def format_simple_lookup_result(result: dict[str, Any]) -> str:
   query_type = clean_text(result.get("query_type"))
   if query_type == "location":
     return format_location_result(result, dict_value(data[0]))
-  if query_type == "trade":
+  if query_type in {"trade", "trade_history", "complex_price_record"}:
     return format_trade_result(result, data)
   return clean_text(result.get("message"))
 
@@ -35,7 +35,7 @@ def format_location_result(result: dict[str, Any], item: dict[str, Any]) -> str:
   name = first_non_empty([
     clean_text(item.get("complex_name")),
     clean_text(item.get("trade_name")),
-    clean_text(result.get("criteria", {}).get("complex_name")) if isinstance(result.get("criteria"), dict) else "",
+    criteria_name(result),
   ])
   address = clean_text(item.get("address"))
   latitude = item.get("latitude")
@@ -56,7 +56,7 @@ def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:
   rows = [dict_value(item) for item in data[:3]]
   name = first_non_empty([
     clean_text(rows[0].get("complex_name")) if rows else "",
-    clean_text(result.get("criteria", {}).get("complex_name")) if isinstance(result.get("criteria"), dict) else "",
+    criteria_name(result),
   ])
   trade_summaries = [
     format_trade_row(row)
@@ -73,7 +73,7 @@ def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:
 def format_trade_row(row: dict[str, Any]) -> str:
   date = clean_text(row.get("deal_date"))
   amount = format_price(row.get("deal_amount"))
-  area = format_labeled_value("전용", row.get("exclusive_area"), suffix="㎡")
+  area = format_labeled_value("전용", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
   floor = format_floor(row.get("floor"))
   details = compact_parts([amount, area, floor])
   if date and details:
@@ -81,3 +81,13 @@ def format_trade_row(row: dict[str, Any]) -> str:
   if details:
     return " ".join(details)
   return date
+
+
+def criteria_name(result: dict[str, Any]) -> str:
+  criteria = result.get("criteria")
+  if not isinstance(criteria, dict):
+    return ""
+  return first_non_empty([
+    clean_text(criteria.get("complex_name")),
+    clean_text(criteria.get("target_name")),
+  ])

@@ -4,68 +4,164 @@ import re
 from typing import Any
 
 from .dto import (
-  QUERY_LOCATION,
-  QUERY_TRADE,
+    QUERY_COMPLEX_PRICE_RECORD,
+    QUERY_LOCATION,
+    QUERY_REGION_PRICE_RANKING,
+    QUERY_TRADE_HISTORY,
 )
 
 
 def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
-  text = question.strip()
-  slots: dict[str, Any] = {
-    "original_question": text,
-    "query_type": infer_query_type(text),
-  }
+    text = question.strip()
+    query_type = infer_query_type(text)
+    slots: dict[str, Any] = {
+        "original_question": text,
+        "query_type": query_type,
+    }
 
-  complex_name = extract_complex_name(text)
-  if complex_name is not None:
-    slots["complex_name"] = complex_name
+    if query_type == QUERY_LOCATION:
+        target_name = _extract_location_target_name(text)
+        if target_name is not None:
+            slots["target_name"] = target_name
 
-  pyeong_match = re.search(r"(\d+(?:\.\d+)?)\s*평", text)
-  if pyeong_match is not None:
-    slots["pyeong"] = float(pyeong_match.group(1))
+    date_range = _extract_year_duration_range(text)
+    if date_range is not None:
+        start_date, end_date = date_range
+        slots["start_date"] = start_date
+        slots["end_date"] = end_date
+    else:
+        period = _extract_period(text)
+        if period is not None:
+            slots["period"] = period
 
-  area_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:m2|㎡|제곱미터)", text, re.IGNORECASE)
-  if area_match is not None:
-    slots["area"] = float(area_match.group(1))
+    period = _extract_period(text)
+    if period is not None:
+        slots["period"] = period
 
-  limit_match = re.search(r"(\d+)\s*건", text)
-  if limit_match is not None:
-    slots["limit"] = int(limit_match.group(1))
+    area = _extract_area(text)
+    if area is not None:
+        slots["area"] = area
 
-  period_match = re.search(r"최근\s*(\d+)\s*(개월|달|년)", text)
-  if period_match is not None:
-    unit = "y" if period_match.group(2) == "년" else "m"
-    slots["period"] = f"{period_match.group(1)}{unit}"
+    pyeong = _extract_pyeong(text)
+    if pyeong is not None:
+        slots["pyeong"] = pyeong
 
-  if "최고가" in text or "가장 비싼" in text or "제일 비싼" in text:
-    slots["price_order"] = "highest"
-  if "최저가" in text or "가장 싼" in text or "제일 싸" in text:
-    slots["price_order"] = "lowest"
-  if any(token in text for token in ("가장 오래된", "제일 오래된", "최초", "처음")):
-    slots["sort_order"] = "oldest"
+    price_order = _extract_price_order(text)
+    if price_order is not None:
+        slots["price_order"] = price_order
 
-  return slots
+    sort_order = _extract_sort_order(text)
+    if sort_order is not None:
+        slots["sort_order"] = sort_order
+
+    return slots
 
 
 def infer_query_type(text: str) -> str:
-  if any(token in text for token in ("어디", "위치", "주소", "좌표")):
-    return QUERY_LOCATION
-  return QUERY_TRADE
+    if any(token in text for token in ("어디", "위치", "주소", "좌표")):
+        return QUERY_LOCATION
+
+    if _has_price_record_expression(text):
+        if _looks_like_region_ranking(text):
+            return QUERY_REGION_PRICE_RANKING
+
+        return QUERY_COMPLEX_PRICE_RECORD
+
+    return QUERY_TRADE_HISTORY
+
+def _extract_location_target_name(text: str) -> str | None:
+    matched = re.search(
+        r"(?P<target>.+?)\s*(?:어디|위치|주소|좌표)",
+        text,
+    )
+    if matched is None:
+        return None
+
+    target = matched.group("target").strip()
+    if not target:
+        return None
+
+    return target
+
+def _extract_year_duration_range(text: str) -> tuple[str, str] | None:
+    matched = re.search(
+        r"(?P<start_year>(?:19|20)\d{2})\s*년\s*부터\s*(?P<years>\d+)\s*년\s*간",
+        text,
+    )
+    if matched is None:
+        return None
+
+    start_year = int(matched.group("start_year"))
+    years = int(matched.group("years"))
+
+    end_year = start_year + years - 1
+
+    return (
+        f"{start_year}-01-01",
+        f"{end_year}-12-31",
+    )
 
 
-def extract_complex_name(text: str) -> str | None:
-  cleaned = text
-  cleaned = re.sub(r"\d+(?:\.\d+)?\s*(?:평|m2|㎡|제곱미터|건)", " ", cleaned, flags=re.IGNORECASE)
-  cleaned = re.sub(r"최근\s*\d+\s*(?:개월|달|년)", " ", cleaned)
-  cleaned = re.sub(
-    r"(어디\s*(?:있어|야)?|위치|주소|좌표|실거래(?:가|내역)?|거래(?:내역)?|최고가|가장\s*비싼|조회|알려줘|보여줘|궁금해|시세|가격|\?)",
-    " ",
-    cleaned,
-  )
-  cleaned = re.sub(r"\s+", " ", cleaned).strip()
-  return cleaned or None
+def _extract_period(text: str) -> str | None:
+    matched = re.search(
+        r"(?:최근|지난)\s*(?P<value>\d+)\s*(?P<unit>개월|달|년)",
+        text,
+    )
+    if matched is None:
+        return None
+
+    unit = "y" if matched.group("unit") == "년" else "m"
+    return f"{matched.group('value')}{unit}"
+
+def _extract_area(text: str) -> float | None:
+    matched = re.search(
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:m2|㎡|제곱미터)",
+        text,
+        re.IGNORECASE,
+    )
+    if matched is None:
+        return None
+
+    return float(matched.group("value"))
 
 
-__all__ = [
-  "extract_simple_lookup_slots",
-]
+def _extract_pyeong(text: str) -> float | None:
+    matched = re.search(r"(?P<value>\d+(?:\.\d+)?)\s*(?:평|평형)", text)
+    if matched is None:
+        return None
+
+    return float(matched.group("value"))
+
+
+def _extract_price_order(text: str) -> str | None:
+    if any(token in text for token in ("최고가", "가장 비싼", "제일 비싼")):
+        return "highest"
+
+    if any(token in text for token in ("최저가", "가장 싼", "제일 싼", "제일 싸")):
+        return "lowest"
+
+    return None
+
+
+def _extract_sort_order(text: str) -> str | None:
+    if any(token in text for token in ("가장 오래된", "제일 오래된", "최초", "처음")):
+        return "oldest"
+
+    return None
+
+
+def _has_price_record_expression(text: str) -> bool:
+    return _extract_price_order(text) is not None
+
+
+def _looks_like_region_ranking(text: str) -> bool:
+    has_region = any(
+        region in text
+        for region in ("강남구", "서초구", "송파구", "강남", "서초", "송파")
+    )
+    has_ranking_word = any(
+        token in text
+        for token in ("TOP", "Top", "top", "순위", "랭킹", "아파트", "단지")
+    )
+
+    return has_region and has_ranking_word

@@ -1,206 +1,293 @@
+"""simple_lookup DAO."""
+
 from __future__ import annotations
 
-import re
-from typing import Any
+from typing import Any, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text, Date, cast
 from sqlalchemy.orm import Session
+from app.models import Complex, Region, Trade
 
 from app.chatbot.features.simple_lookup.dto import (
+    PRICE_LOWEST,
+    SORT_OLDEST,
     SimpleLookupCriteria,
     SimpleLookupError,
 )
-from app.models import Complex, Trade
 
-# 단순조회에서 단지 확정과 실제 DB 조회를 담당하는 DAO
+
 class SimpleLookupDao:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    # 단지명을 확정한 뒤 주소와 좌표 정보를 반환
-    def find_location(self, criteria: SimpleLookupCriteria) -> list[dict[str, Any]]:
-        complex_ = self._resolve_complex(criteria.complex_name)
+    # 단지 위치 조회: Complex entity 반환
+    def find_location(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> Complex:
+        complex_obj = self._resolve_complex(criteria.target_name)
 
         if (
-            complex_.address is None
-            and complex_.latitude is None
-            and complex_.longitude is None
+            complex_obj.address is None
+            and complex_obj.latitude is None
+            and complex_obj.longitude is None
         ):
             raise SimpleLookupError(
                 "no_result",
                 "해당 단지의 위치 정보가 없습니다.",
             )
 
-        return [{
-            "complex_id": complex_.id,
-            "complex_name": complex_.name,
-            "trade_name": complex_.trade_name,
-            "address": complex_.address,
-            "latitude": complex_.latitude,
-            "longitude": complex_.longitude,
-        }]
+        return complex_obj
 
-    # 단지 확정 후 조건에 맞는 실거래 내역을 조회
-    def find_trades(
+    # 단지 실거래 내역 조회: Complex entity + Trade entity 목록 반환
+    def find_trade_history(
         self,
         criteria: SimpleLookupCriteria,
-    ) -> list[dict[str, Any]]:
-        complex_ = self._resolve_complex(criteria.complex_name)
+    ) -> tuple[Complex, list[Trade]]:
+        complex_obj = self._resolve_complex(criteria.target_name)
 
-        stmt = select(Trade).where(Trade.complex_id == complex_.id)
+        stmt = select(Trade).where(Trade.complex_id == complex_obj.id)
         stmt = self._apply_trade_filters(stmt, criteria)
 
-        date_order = criteria.sort_order or "latest"
-        if criteria.price_order == "highest":
-            amount_direction = Trade.deal_amount.desc()
-        elif criteria.price_order == "lowest":
-            amount_direction = Trade.deal_amount.asc()
-        else:
-            amount_direction = None
+        deal_date = cast(Trade.deal_date, Date)
 
-        if date_order == "oldest":
-            date_directions = (Trade.deal_date.asc(), Trade.id.asc())
+        if criteria.sort_order == SORT_OLDEST:
+            stmt = stmt.order_by(deal_date.asc())
         else:
-            date_directions = (Trade.deal_date.desc(), Trade.id.desc())
+            stmt = stmt.order_by(deal_date.desc())
 
-        if amount_direction is not None:
-            stmt = stmt.order_by(amount_direction, *date_directions)
-        else:
-            stmt = stmt.order_by(*date_directions)
         stmt = stmt.limit(criteria.limit)
+        trades = list(self.session.scalars(stmt).all())
 
-        rows = self.session.scalars(stmt).all()
+        if not trades:
+            raise SimpleLookupError(
+                "no_result",
+                "조건에 맞는 실거래 내역이 없습니다.",
+            )
+
+        return complex_obj, trades
+
+    # 단지 최고가/최저가 조회: Complex entity + Trade entity 목록 반환
+    def find_complex_price_record(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> tuple[Complex, list[Trade]]:
+        complex_obj = self._resolve_complex(criteria.target_name)
+
+        stmt = select(Trade).where(Trade.complex_id == complex_obj.id)
+        stmt = self._apply_trade_filters(stmt, criteria)
+
+        amount_order = (
+            Trade.deal_amount.asc()
+            if criteria.price_order == PRICE_LOWEST
+            else Trade.deal_amount.desc()
+        )
+
+        deal_date = cast(Trade.deal_date, Date)
+
+        if criteria.sort_order == SORT_OLDEST:
+            date_order = deal_date.asc()
+        else:
+            date_order = deal_date.desc()
+
+        stmt = (
+            stmt
+            .order_by(amount_order, date_order)
+            .limit(criteria.limit)
+        )
+
+        trades = list(self.session.scalars(stmt).all())
+
+        if not trades:
+            raise SimpleLookupError(
+                "no_result",
+                "조건에 맞는 단지 최고가/최저가 거래가 없습니다.",
+            )
+
+        return complex_obj, trades
+
+    # 지역 최고가/최저가 랭킹 조회: raw SQL row 목록 반환
+    def find_region_price_ranking(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> list[Mapping[str, Any]]:
+        region_obj = self._resolve_region(criteria.target_name)
+
+        amount_order = "ASC" if criteria.price_order == PRICE_LOWEST else "DESC"
+
+        filters: list[str] = []
+        params: dict[str, Any] = {
+            "region_id": region_obj.id,
+            "region_name": region_obj.name,
+            "limit": criteria.limit,
+        }
+
+        if criteria.start_date is not None:
+            filters.append("AND t.deal_date::date >= :start_date")
+            params["start_date"] = criteria.start_date
+
+        if criteria.end_date is not None:
+            filters.append("AND t.deal_date::date <= :end_date")
+            params["end_date"] = criteria.end_date
+
+        if criteria.area_min is not None:
+            filters.append("AND t.excl_area >= :area_min")
+            params["area_min"] = criteria.area_min
+
+        if criteria.area_max is not None:
+            filters.append("AND t.excl_area <= :area_max")
+            params["area_max"] = criteria.area_max
+
+        filter_sql = "\n".join(filters)
+
+        stmt = text(
+            f"""
+            SELECT
+                ROW_NUMBER() OVER (
+                    ORDER BY
+                        t.deal_amount {amount_order}
+                ) AS rank,
+                :region_name AS region_name,
+                c.id AS complex_id,
+                c.name AS complex_name,
+                c.trade_name AS trade_name,
+                c.address AS address,
+                t.id AS trade_id,
+                t.deal_date AS deal_date,
+                t.deal_amount AS deal_amount,
+                t.excl_area AS excl_area,
+                t.floor AS floor,
+                t.apt_dong AS apt_dong
+            FROM trades t
+            JOIN complexes c
+                ON c.id = t.complex_id
+            WHERE c.region_id = :region_id
+            {filter_sql}
+            ORDER BY
+                t.deal_amount {amount_order}
+            LIMIT :limit
+            """
+        )
+
+        rows = list(
+            self.session.execute(stmt, params)
+            .mappings()
+            .all()
+        )
 
         if not rows:
             raise SimpleLookupError(
                 "no_result",
-                "조건에 맞는 실거래 내역을 찾지 못했습니다.",
+                "조건에 맞는 지역 최고가/최저가 거래가 없습니다.",
             )
 
-        return [self._to_trade_dict(row, complex_) for row in rows]
+        return rows
 
-    # 이전 이름과의 호환을 위한 래퍼
-    def find_trade_history(
-        self,
-        criteria: SimpleLookupCriteria,
-    ) -> list[dict[str, Any]]:
-        return self.find_trades(criteria)
+    # 단지명 확정: name 정확 → trade_name 정확 → name 부분 → trade_name 부분
+    def _resolve_complex(self, target_name: str) -> Complex:
+        search_steps = [
+            (Complex.name, True),
+            (Complex.trade_name, True),
+            (Complex.name, False),
+            (Complex.trade_name, False),
+        ]
 
-    # 이전 이름과의 호환을 위한 래퍼
-    def find_record_price(
-        self,
-        criteria: SimpleLookupCriteria,
-    ) -> list[dict[str, Any]]:
-        return self.find_trades(criteria)
+        for target in self._complex_name_variants(target_name):
+            for column, exact in search_steps:
+                # DB 단지명 공백 제거 후 비교
+                compact_column = func.replace(column, " ", "")
 
-    # name/trade_name 기준으로 정확 일치 우선, 이후 부분 일치로 단지 확정
-    def _resolve_complex(self, complex_name: str) -> Complex:
-        for name, allow_partial in _complex_name_variants(complex_name):
-            pattern = f"%{name}%"
-            search_steps = [
-                Complex.name == name,
-                Complex.trade_name == name,
-            ]
-            if allow_partial:
-                search_steps.extend([
-                    Complex.name.ilike(pattern),
-                    Complex.trade_name.ilike(pattern),
-                ])
+                if exact:
+                    stmt = select(Complex).where(
+                        compact_column == target
+                    )
+                else:
+                    stmt = select(Complex).where(
+                        compact_column.like(f"%{target}%")
+                    )
 
-            for condition in search_steps:
-                candidates = self._find_complexes(condition)
+                stmt = (
+                    stmt
+                    .order_by(Complex.name.asc())
+                    .limit(20)
+                )
 
-                if len(candidates) == 1:
-                    return candidates[0]
-                if len(candidates) > 1:
-                    raise self._ambiguous_error(candidates)
+                rows = list(self.session.scalars(stmt).all())
+
+                if len(rows) == 1:
+                    return rows[0]
+
+                if len(rows) > 1:
+                    raise SimpleLookupError(
+                        "ambiguous_target",
+                        "여러 단지가 검색되었습니다. 더 구체적으로 입력해주세요.",
+                        candidates=[
+                            {
+                                "complex_id": row.id,
+                                "complex_name": row.name,
+                                "trade_name": row.trade_name,
+                                "address": row.address,
+                            }
+                            for row in rows
+                        ],
+                    )
 
         raise SimpleLookupError(
             "target_not_found",
-            "일치하는 아파트 단지를 찾지 못했습니다.",
+            "조회 대상 단지를 찾을 수 없습니다.",
         )
 
-    # 전달받은 검색 조건으로 complexes 테이블에서 단지 후보 조회
-    def _find_complexes(self, condition: Any) -> list[Complex]:
-        stmt = (
-            select(Complex)
-            .where(condition)
-            .order_by(Complex.name, Complex.id)
-        )
-        return list(self.session.scalars(stmt).all())
+    # 지역명 확정: 구 단위 지역명 부분 일치 조회
+    def _resolve_region(self, target_name: str) -> Region:
+        target = "".join(target_name.split())
 
-    # Criteria에 포함된 면적 조건과 기간 조건을 Trade 조회 쿼리에 적용
-    def _apply_trade_filters(self, stmt, criteria: SimpleLookupCriteria):
+        region = self.session.scalars(
+            select(Region)
+            .where(
+                Region.name.like(f"%{target}%"),
+                Region.type == "district",
+            )
+            .limit(1)
+        ).first()
+
+        if region is None:
+            raise SimpleLookupError(
+                "target_not_found",
+                "조회 대상 지역을 찾을 수 없습니다.",
+            )
+
+        return region
+
+    # 단지명 검색 후보 생성: 공백 제거 + 끝의 "아파트" 제거
+    def _complex_name_variants(self, target_name: str) -> list[str]:
+        target = "".join(target_name.split())
+        variants = [target]
+
+        if target.endswith("아파트"):
+            stripped = target.removesuffix("아파트")
+            if stripped:
+                variants.append(stripped)
+
+        return list(dict.fromkeys(variants))
+
+    # 기간/면적 필터를 Trade select statement에 적용
+    def _apply_trade_filters(
+        self,
+        stmt: Any,
+        criteria: SimpleLookupCriteria,
+    ) -> Any:
+        deal_date = cast(Trade.deal_date, Date)
+
+        if criteria.start_date is not None:
+            stmt = stmt.where(deal_date >= criteria.start_date)
+
+        if criteria.end_date is not None:
+            stmt = stmt.where(deal_date <= criteria.end_date)
+
         if criteria.area_min is not None:
             stmt = stmt.where(Trade.excl_area >= criteria.area_min)
+
         if criteria.area_max is not None:
             stmt = stmt.where(Trade.excl_area <= criteria.area_max)
-        if criteria.start_date is not None:
-            stmt = stmt.where(Trade.deal_date >= criteria.start_date.isoformat())
-        if criteria.end_date is not None:
-            stmt = stmt.where(Trade.deal_date <= criteria.end_date.isoformat())
+
         return stmt
-
-    # 단지 후보가 여러 개인 경우 상위 단계에서 재질문할 수 있도록 후보 목록 생성
-    @staticmethod
-    def _ambiguous_error(candidates: list[Complex]) -> SimpleLookupError:
-        return SimpleLookupError(
-            "ambiguous_target",
-            "조건에 맞는 아파트 단지가 여러 개 있습니다.",
-            candidates=[
-                {
-                    "complex_id": row.id,
-                    "complex_name": row.name,
-                    "trade_name": row.trade_name,
-                    "address": row.address,
-                }
-                for row in candidates
-            ],
-        )
-
-    # Trade ORM 객체를 단순조회 응답용 dict로 변환
-    @staticmethod
-    def _to_trade_dict(row: Trade, complex_: Complex) -> dict[str, Any]:
-        return {
-            "complex_id": complex_.id,
-            "complex_name": complex_.name,
-            "trade_name": complex_.trade_name,
-            "deal_date": row.deal_date,
-            "deal_amount": row.deal_amount,
-            "exclusive_area": row.excl_area,
-            "floor": row.floor,
-            "apt_dong": row.apt_dong,
-        }
-
-
-def _complex_name_variants(complex_name: str) -> list[tuple[str, bool]]:
-    normalized = " ".join(complex_name.split())
-    compact = normalized.replace(" ", "")
-    variants = [(normalized, True)]
-
-    if compact != normalized:
-        variants.append((compact, True))
-
-    jugong_alias = _numbered_jugong_alias(compact)
-    if jugong_alias is not None:
-        variants.append((jugong_alias, True))
-
-    for suffix in ("아파트",):
-        if compact.endswith(suffix) and len(compact) > len(suffix):
-            variants.append((compact[: -len(suffix)], False))
-
-    deduped: list[tuple[str, bool]] = []
-    seen: set[str] = set()
-    for value, allow_partial in variants:
-        if value and value not in seen:
-            deduped.append((value, allow_partial))
-            seen.add(value)
-    return deduped
-
-
-def _numbered_jugong_alias(complex_name: str) -> str | None:
-    matched = re.fullmatch(r"(?P<prefix>.+?)(?P<number>\d+)단지", complex_name)
-    if matched is None or "주공" in complex_name:
-        return None
-
-    return f"{matched.group('prefix')}주공{matched.group('number')}단지"

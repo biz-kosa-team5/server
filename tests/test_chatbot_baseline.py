@@ -152,13 +152,13 @@ def test_simple_lookup_tool_overrides_extracted_slots():
     result = build_simple_lookup_tool(session).invoke({
       "query": "잠실 엘스 시세 알려줘",
       "query_type": "location",
-      "complex_name": "잠실엘스",
+      "target_name": "잠실엘스",
     })
 
   assert result["handler"] == "simple_lookup"
   assert result["success"] is True
   assert result["query_type"] == "location"
-  assert result["criteria"]["complex_name"] == "잠실엘스"
+  assert result["criteria"]["target_name"] == "잠실엘스"
 
 
 def test_feature_tools_are_langchain_tools():
