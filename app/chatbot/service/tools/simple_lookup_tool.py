@@ -145,13 +145,15 @@ def build_simple_lookup_tool(session: Session):
         - "몇 동이 제일 좋아?", "어느 동 추천해?", "살기 좋은 동"처럼 주관적 선호나 추천을 묻는 질문
 
         Args:
-            query: 사용자가 입력한 단순 조회 질문입니다.
+            query: 
+              사용자가 입력한 단순조회 질문입니다.
+              원문 질문을 그대로 넣으세요.
             query_type:
                 필수 인자 입니다.
                 조회 유형입니다.
                 location, trade_history, complex_price_record, region_price_ranking 중 하나입니다.
             target_name:
-                필수 인자 입니다.
+                조회 대상 단지명 또는 지역명을 반드시 넣어야 하는 필수 인자입니다..
                 조회 대상 이름입니다.
                 단지 조회에서는 아파트 단지명입니다.
                 지역 랭킹에서는 지역명입니다.
