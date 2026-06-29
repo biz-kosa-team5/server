@@ -40,7 +40,7 @@ def test_simple_lookup_formatter_uses_location_dto_shape():
   ).model_dump(mode="json")
 
   assert format_simple_lookup_result(result) == (
-    "잠실엘스 위치는 서울 송파구 잠실동입니다. 좌표는 위도 37.5, 경도 127.1입니다."
+    "잠실엘스 위치는 서울 송파구 잠실동입니다. 지도에 표시했습니다."
   )
 
 

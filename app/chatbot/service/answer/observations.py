@@ -39,6 +39,8 @@ def build_answer_observations(context: ChatbotAnswerContext) -> dict[str, Any]:
     "failedObservations": failed_observations,
     "singleResult": compact_result(context.result) if result_shape == "single" else None,
     "multipleResults": compact_result(context.result) if result_shape == "multiple" else [],
+    "uiSummary": compact_ui_summary(context.uiSummary),
+    "uiArtifacts": compact_ui_artifacts(context.uiArtifacts),
     "rawResponse": compact_raw_response(context),
   }
 
@@ -75,6 +77,7 @@ def compact_raw_response(context: ChatbotAnswerContext) -> dict[str, Any]:
     "success": context.success,
     "status": context.status,
     "message": context.message,
+    "uiSummary": compact_ui_summary(context.uiSummary),
     "fragments": [
       compact_fragment_metadata(fragment)
       for fragment in context.fragments
@@ -89,6 +92,51 @@ def compact_fragment_metadata(fragment: dict[str, Any]) -> dict[str, Any]:
     "text": fragment.get("text"),
     "status": fragment.get("status"),
   }
+
+
+def compact_ui_summary(value: dict[str, Any] | None) -> dict[str, Any]:
+  if not isinstance(value, dict):
+    return {
+      "hasMapFocus": False,
+      "artifactTypes": [],
+    }
+  return {
+    "hasMapFocus": value.get("hasMapFocus") is True,
+    "primaryTargetName": clean_str(value.get("primaryTargetName")),
+    "primaryActionLabel": clean_str(value.get("primaryActionLabel")),
+    "artifactTypes": [
+      clean_str(item)
+      for item in value.get("artifactTypes", [])
+      if clean_str(item)
+    ] if isinstance(value.get("artifactTypes"), list) else [],
+  }
+
+
+def compact_ui_artifacts(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  summaries = []
+  for artifact in values:
+    if not isinstance(artifact, dict):
+      continue
+    artifact_type = clean_str(artifact.get("type"))
+    if not artifact_type:
+      continue
+    summary = {
+      "type": artifact_type,
+      "title": clean_str(artifact.get("title")),
+    }
+    if artifact_type == "comparison_bar_chart":
+      summary["metricLabels"] = [
+        clean_str(metric.get("label"))
+        for metric in artifact.get("metrics", [])
+        if isinstance(metric, dict) and clean_str(metric.get("label"))
+      ]
+      summary["itemCount"] = len(artifact.get("items", [])) if isinstance(artifact.get("items"), list) else 0
+    elif artifact_type == "trend_line_chart":
+      summary["pointCount"] = len(artifact.get("points", [])) if isinstance(artifact.get("points"), list) else 0
+    elif artifact_type in {"ranking_list", "recommendation_list"}:
+      summary["itemCount"] = len(artifact.get("items", [])) if isinstance(artifact.get("items"), list) else 0
+    summaries.append(summary)
+  return summaries
 
 
 def compact_result(value: Any) -> Any:

@@ -48,7 +48,7 @@ def test_chatbot_answer_fallback_formats_simple_lookup_location():
     "message": "단지 위치를 조회했습니다.",
   })
 
-  assert fallback_answer(context) == "잠실엘스 위치는 서울 송파구 잠실동입니다. 좌표는 위도 37.5, 경도 127.1입니다."
+  assert fallback_answer(context) == "잠실엘스 위치는 서울 송파구 잠실동입니다. 지도에 표시했습니다."
 
 
 def test_chatbot_answer_fallback_formats_partial_success():

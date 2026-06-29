@@ -28,3 +28,6 @@ class ChatbotQueryResponse(BaseModel):
   message: str
   executionSummary: dict[str, Any]
   answer: str
+  uiActions: list[dict[str, Any]] = Field(default_factory=list)
+  uiArtifacts: list[dict[str, Any]] = Field(default_factory=list)
+  uiSummary: dict[str, Any] | None = None

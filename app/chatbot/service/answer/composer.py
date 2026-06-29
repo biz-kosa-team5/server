@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -25,6 +26,28 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
+MAX_FINAL_ANSWER_LENGTH = 500
+FORBIDDEN_ANSWER_TERMS = (
+  "handler",
+  "agent",
+  "tool",
+  "execution",
+  "planType",
+  "dedupe",
+  "fragment",
+)
+COORDINATE_PATTERNS = (
+  re.compile(
+    r"좌표는?\s*위도\s*[-+]?\d+(?:\.\d+)?\s*,?\s*경도\s*[-+]?\d+(?:\.\d+)?(?:입니다\.?|[.!?。])?",
+    re.IGNORECASE,
+  ),
+  re.compile(
+    r"위도\s*[-+]?\d+(?:\.\d+)?\s*,?\s*경도\s*[-+]?\d+(?:\.\d+)?(?:입니다\.?|[.!?。])?",
+    re.IGNORECASE,
+  ),
+  re.compile(r"latitude\s*[:=]?\s*[-+]?\d+(?:\.\d+)?\s*,?\s*longitude\s*[:=]?\s*[-+]?\d+(?:\.\d+)?", re.IGNORECASE),
+  re.compile(r"longitude\s*[:=]?\s*[-+]?\d+(?:\.\d+)?\s*,?\s*latitude\s*[:=]?\s*[-+]?\d+(?:\.\d+)?", re.IGNORECASE),
+)
 
 
 class ChatbotAnswerComposer:
@@ -42,13 +65,13 @@ class ChatbotAnswerComposer:
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
     if context.success is False:
-      return fallback_answer(context)
+      return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
-      return fallback_answer(context)
+      return finalize_answer_text(fallback_answer(context), context)
 
     client = self._client or openai_client(self._api_key)
     if client is None:
-      return fallback_answer(context)
+      return finalize_answer_text(fallback_answer(context), context)
 
     try:
       response = await asyncio.to_thread(
@@ -74,10 +97,10 @@ class ChatbotAnswerComposer:
       if should_cooldown_answer_llm(exc):
         disable_answer_llm_temporarily()
       logger.exception("Failed to compose chatbot answer")
-      return fallback_answer(context)
+      return finalize_answer_text(fallback_answer(context), context)
 
     answer = extract_response_content(response)
-    return answer or fallback_answer(context)
+    return finalize_answer_text(answer or fallback_answer(context), context)
 
 
 def openai_client(api_key: str | None = None) -> OpenAI | None:
@@ -143,6 +166,70 @@ def extract_response_content(response: Any) -> str:
   if not isinstance(content, str):
     return ""
   return content.strip()
+
+
+def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
+  text = normalize_answer_whitespace(answer)
+  text = remove_coordinate_text(text)
+  if has_forbidden_answer_terms(text):
+    fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+    if has_forbidden_answer_terms(fallback):
+      fallback = remove_forbidden_sentences(fallback)
+    text = fallback
+  text = truncate_answer(text)
+  return text or context.message or "질문을 처리했습니다."
+
+
+def normalize_answer_whitespace(answer: str) -> str:
+  text = str(answer or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+  text = re.sub(r"\n{3,}", "\n\n", text)
+  text = re.sub(r"[ \t]+", " ", text)
+  return text
+
+
+def remove_coordinate_text(answer: str) -> str:
+  text = answer
+  for pattern in COORDINATE_PATTERNS:
+    text = pattern.sub("", text)
+  return normalize_answer_whitespace(text)
+
+
+def has_forbidden_answer_terms(answer: str) -> bool:
+  lowered = answer.lower()
+  return any(term.lower() in lowered for term in FORBIDDEN_ANSWER_TERMS)
+
+
+def remove_forbidden_sentences(answer: str) -> str:
+  sentences = split_sentences(answer)
+  kept = [
+    sentence
+    for sentence in sentences
+    if not has_forbidden_answer_terms(sentence)
+  ]
+  return normalize_answer_whitespace(" ".join(kept))
+
+
+def truncate_answer(answer: str) -> str:
+  if len(answer) <= MAX_FINAL_ANSWER_LENGTH:
+    return answer
+
+  sentences = split_sentences(answer)
+  kept = []
+  current_length = 0
+  for sentence in sentences:
+    next_length = current_length + len(sentence) + (1 if kept else 0)
+    if next_length > MAX_FINAL_ANSWER_LENGTH:
+      break
+    kept.append(sentence)
+    current_length = next_length
+  if kept:
+    return normalize_answer_whitespace(" ".join(kept))
+  return answer[: MAX_FINAL_ANSWER_LENGTH - 3].rstrip() + "..."
+
+
+def split_sentences(answer: str) -> list[str]:
+  sentences = re.findall(r"[^.!?\n。]+[.!?。]?", answer)
+  return [sentence.strip() for sentence in sentences if sentence.strip()]
 
 
 def get_value(value: Any, key: str) -> Any:

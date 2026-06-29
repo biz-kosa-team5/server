@@ -19,6 +19,7 @@ from .supervisor import (
   agent_initialization_failed_result,
 )
 from .splitter import split_question
+from .ui_payload import build_chatbot_ui_payload
 
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,7 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
     task_results=task_results,
   )
   response_dict = chatbot_response.to_response_dict()
+  response_dict.update(build_chatbot_ui_payload(session, response_dict))
   answer_context = chatbot_response.to_answer_context(response_dict)
   response_dict["answer"] = await ChatbotAnswerComposer().compose(answer_context)
   return response_dict

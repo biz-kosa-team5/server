@@ -75,6 +75,46 @@ def test_chatbot_answer_composer_sends_structured_llm_context(monkeypatch):
   assert payload["rawResponse"]["status"] == "partial_success"
 
 
+def test_chatbot_answer_composer_sends_ui_summary_without_action_coordinates(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions()
+  context = ChatbotAnswerContext.from_response_dict({
+    **success_context().to_dict(),
+    "uiActions": [
+      {
+        "type": "focus_map",
+        "target": {
+          "latitude": 37.5124,
+          "longitude": 127.0821,
+        },
+      }
+    ],
+    "uiArtifacts": [
+      {
+        "type": "comparison_bar_chart",
+        "title": "단지 비교",
+        "metrics": [{"label": "최근 거래가"}],
+        "items": [{}, {}],
+      }
+    ],
+    "uiSummary": {
+      "hasMapFocus": True,
+      "primaryTargetName": "잠실엘스",
+      "artifactTypes": ["comparison_bar_chart"],
+    },
+  })
+
+  asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  user_message = completions.calls[0]["messages"][1]["content"]
+  payload = json.loads(user_message.split("답변 조립을 위한 정리본이야.\n", 1)[1])
+  assert payload["uiSummary"]["hasMapFocus"] is True
+  assert payload["uiArtifacts"][0]["type"] == "comparison_bar_chart"
+  assert "uiActions" not in payload
+  assert "latitude" not in user_message
+  assert "longitude" not in user_message
+
+
 def test_chatbot_answer_composer_does_not_call_llm_for_total_failure(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
   completions = RecordingCompletions()
@@ -128,6 +168,45 @@ def test_chatbot_answer_composer_falls_back_when_llm_returns_empty(monkeypatch):
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
 
   assert answer == "시세 추이 결과 메시지입니다."
+
+
+def test_chatbot_answer_composer_removes_coordinate_text(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(
+    content="잠실엘스 위치를 확인했습니다. 좌표는 위도 37.5124, 경도 127.0821입니다. 지도에 표시했습니다."
+  )
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
+
+  assert "위도" not in answer
+  assert "경도" not in answer
+  assert "37.5124" not in answer
+  assert answer == "잠실엘스 위치를 확인했습니다. 지도에 표시했습니다."
+
+
+def test_chatbot_answer_composer_falls_back_when_forbidden_term_is_returned(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="handler 결과로 지도 이동 tool을 실행했습니다.")
+  context = success_context(result={
+    "success": True,
+    "handler": "simple_lookup",
+    "message": "잠실엘스 위치는 서울특별시 송파구 잠실동 19입니다.",
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert answer == "잠실엘스 위치는 서울특별시 송파구 잠실동 19입니다."
+  assert "handler" not in answer
+  assert "tool" not in answer
+
+
+def test_chatbot_answer_composer_limits_answer_to_500_chars(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="문장입니다. " * 80)
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
+
+  assert len(answer) <= 500
 
 
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):

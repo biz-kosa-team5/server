@@ -4,7 +4,7 @@ LLM에는 answer.observations에서 만든 축약 observation을 전달하고, f
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -17,11 +17,17 @@ class ChatbotAnswerContext:
   fragments: list[dict[str, Any]]
   result: Any
   executionSummary: dict[str, int]
+  uiActions: list[dict[str, Any]] = field(default_factory=list)
+  uiArtifacts: list[dict[str, Any]] = field(default_factory=list)
+  uiSummary: dict[str, Any] | None = None
 
   @classmethod
   def from_response_dict(cls, response: dict[str, Any]) -> ChatbotAnswerContext:
     fragments = response.get("fragments")
     execution_summary = response.get("executionSummary")
+    ui_actions = response.get("uiActions")
+    ui_artifacts = response.get("uiArtifacts")
+    ui_summary = response.get("uiSummary")
     return cls(
       question=str(response.get("question", "")),
       success=response.get("success") is True,
@@ -30,6 +36,9 @@ class ChatbotAnswerContext:
       fragments=fragments if isinstance(fragments, list) else [],
       result=response.get("result"),
       executionSummary=execution_summary if isinstance(execution_summary, dict) else {},
+      uiActions=ui_actions if isinstance(ui_actions, list) else [],
+      uiArtifacts=ui_artifacts if isinstance(ui_artifacts, list) else [],
+      uiSummary=ui_summary if isinstance(ui_summary, dict) else None,
     )
 
   def to_dict(self) -> dict[str, Any]:
@@ -41,6 +50,9 @@ class ChatbotAnswerContext:
       "fragments": self.fragments,
       "result": self.result,
       "executionSummary": self.executionSummary,
+      "uiActions": self.uiActions,
+      "uiArtifacts": self.uiArtifacts,
+      "uiSummary": self.uiSummary,
     }
 
 

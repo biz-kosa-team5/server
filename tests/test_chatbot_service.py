@@ -226,7 +226,12 @@ def test_chatbot_answer_context_keeps_existing_response_fields():
 
   context = ChatbotAnswerContext.from_response_dict(response)
 
-  assert context.to_dict() == response
+  assert context.to_dict() == {
+    **response,
+    "uiActions": [],
+    "uiArtifacts": [],
+    "uiSummary": None,
+  }
 
 
 def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
@@ -326,6 +331,49 @@ def test_chatbot_query_uses_direct_lookup_for_single_domain_question(monkeypatch
     "selectedAgent": "lookup_agent",
     "handler": "simple_lookup",
   }
+
+
+def test_chatbot_query_adds_ui_payload_before_composing_answer(monkeypatch):
+  captured_context = {}
+
+  class CapturingAnswerComposer:
+    async def compose(self, context):
+      captured_context["context"] = context
+      return "잠실엘스 위치를 지도에 표시했습니다."
+
+  def fake_run_simple_lookup(_session, slots, _text):
+    return {
+      "success": True,
+      "handler": "simple_lookup",
+      "query_type": "location",
+      "criteria": {
+        "target_name": slots["target_name"],
+      },
+      "data": [
+        {
+          "complex_id": 1002,
+          "complex_name": "잠실엘스",
+          "latitude": 37.5124,
+          "longitude": 127.0821,
+        }
+      ],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", CapturingAnswerComposer)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 위치 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["answer"] == "잠실엘스 위치를 지도에 표시했습니다."
+  assert payload["uiActions"][0]["id"] == "focus_map:complex:1002"
+  assert payload["uiActions"][0]["autoRun"] is True
+  assert payload["uiSummary"]["hasMapFocus"] is True
+  assert captured_context["context"].uiActions[0]["id"] == "focus_map:complex:1002"
 
 
 def test_chatbot_query_does_not_initialize_supervisor_for_direct_lookup(monkeypatch):

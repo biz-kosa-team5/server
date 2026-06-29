@@ -48,7 +48,7 @@ def format_location_result(result: dict[str, Any], item: dict[str, Any]) -> str:
   elif name:
     parts.append(f"{name} 위치 정보를 조회했습니다.")
   if latitude is not None and longitude is not None:
-    parts.append(f"좌표는 위도 {latitude}, 경도 {longitude}입니다.")
+    parts.append("지도에 표시했습니다.")
   return " ".join(parts) or clean_text(result.get("message"))
 
 
