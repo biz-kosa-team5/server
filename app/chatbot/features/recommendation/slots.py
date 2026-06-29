@@ -13,6 +13,7 @@ TRANSPORT_KEYWORDS = ("역세권", "지하철", "교통", "역 근처", "역 주
 EDUCATION_KEYWORDS = ("학군", "학교", "교육", "초등학교", "중학교", "고등학교", "유치원")
 COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "대형마트", "쇼핑", "백화점", "편의점", "카페", "인프라")
 MEDICAL_KEYWORDS = ("병원", "의료", "응급실", "약국")
+CHILD_FRIENDLY_KEYWORDS = ("애 키우", "아이 키우", "자녀", "육아", "초품아")
 
 
 def extract_recommendation_slots(question: str) -> dict[str, Any]:
@@ -48,6 +49,15 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
     slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
     slots["sort_by"] = "school_distance_asc"
 
+  if is_child_friendly_query(text) and school_name is None and not school_types:
+    slots["school_type"] = "초등학교"
+    slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    slots["sort_by"] = "school_distance_asc"
+  elif is_education_centered_query(text) and school_name is None and not school_types:
+    slots["school_types"] = ["초등학교", "중학교", "고등학교"]
+    slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    slots["sort_by"] = "school_distance_asc"
+
   radius = extract_radius_m(text)
   if radius is not None:
     slots["radius_m"] = radius
@@ -67,12 +77,16 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
     slots["min_built_year"] = DEFAULT_NEW_BUILD_YEAR
 
   infra_preferences = extract_infra_preferences(text)
+  if is_education_centered_query(text) and "education" not in infra_preferences:
+    infra_preferences.append("education")
   if infra_preferences:
     slots["infra_preferences"] = infra_preferences
     slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
     if "transport" in infra_preferences:
       slots["sort_by"] = slots.get("sort_by") or "distance_asc"
     if "education" in infra_preferences and is_closest_school_query(text):
+      slots["sort_by"] = "school_distance_asc"
+    if "education" in infra_preferences and is_education_centered_query(text):
       slots["sort_by"] = "school_distance_asc"
 
   sort_by = extract_sort_by(text)
@@ -218,6 +232,19 @@ def extract_pyeong_slots(text: str) -> dict[str, float]:
 
 def has_new_build_condition(text: str) -> bool:
   return any(keyword in text for keyword in ("신축", "새 아파트", "준신축", "최근 지은"))
+
+
+def is_child_friendly_query(text: str) -> bool:
+  return any(keyword in text for keyword in CHILD_FRIENDLY_KEYWORDS)
+
+
+def is_education_centered_query(text: str) -> bool:
+  return (
+    is_child_friendly_query(text)
+    or "학군" in text
+    or "초등학교 도보권" in text
+    or "학교 도보권" in text
+  )
 
 
 def extract_infra_preferences(text: str) -> list[str]:

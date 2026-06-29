@@ -36,6 +36,16 @@ class ExecutionPlan:
 
 
 RECOMMENDATION_SIGNALS = ("추천", "권해", "골라", "조건에 맞는")
+EDUCATION_RECOMMENDATION_SIGNALS = (
+  "애 키우",
+  "아이 키우",
+  "자녀",
+  "육아",
+  "학군 좋은",
+  "초등학교 도보권",
+  "학교 도보권",
+  "초품아",
+)
 COMPARISON_SIGNALS = ("비교", "차이", "둘 중", "어디가 더", " vs ", "vs")
 DEPENDENCY_SIGNALS = (
   "후보 비교",
@@ -646,6 +656,8 @@ def next_connector_start_after(text: str, position: int) -> int:
 def has_recommendation_signal(text: str) -> bool:
   if any(signal in text for signal in RECOMMENDATION_SIGNALS):
     return True
+  if has_education_recommendation_signal(text):
+    return True
   if has_price_trend_signal(text):
     return False
   if any(signal in text for signal in ("최고가", "최저가", "가장 비싼", "제일 비싼", "가장 싼", "제일 싼")):
@@ -654,6 +666,10 @@ def has_recommendation_signal(text: str) -> bool:
     r"(?:[가-힣A-Za-z0-9]+역|강남구|서초구|송파구|근처|주변|인근).*(?:아파트|단지)\s*(?:알려|보여)",
     text,
   ) is not None
+
+
+def has_education_recommendation_signal(text: str) -> bool:
+  return any(signal in text for signal in EDUCATION_RECOMMENDATION_SIGNALS)
 
 
 def has_comparison_signal(text: str) -> bool:
@@ -678,6 +694,8 @@ def has_price_trend_signal(text: str) -> bool:
 
 
 def has_simple_lookup_signal(text: str) -> bool:
+  if has_education_recommendation_signal(text):
+    return False
   if has_legal_signal(text) and not any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
     return False
   if any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
