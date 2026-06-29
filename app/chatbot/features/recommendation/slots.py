@@ -11,7 +11,8 @@ DEFAULT_NEW_BUILD_YEAR = 2020
 
 TRANSPORT_KEYWORDS = ("역세권", "지하철", "교통", "역 근처", "역 주변", "역 인근")
 EDUCATION_KEYWORDS = ("학군", "학교", "교육", "초등학교", "중학교", "고등학교", "유치원")
-COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "병원", "카페", "인프라")
+COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "대형마트", "쇼핑", "백화점", "편의점", "카페", "인프라")
+MEDICAL_KEYWORDS = ("병원", "의료", "응급실", "약국")
 
 
 def extract_recommendation_slots(question: str) -> dict[str, Any]:
@@ -227,6 +228,8 @@ def extract_infra_preferences(text: str) -> list[str]:
     preferences.append("education")
   if any(keyword in text for keyword in COMMERCIAL_KEYWORDS):
     preferences.append("commercial")
+  if any(keyword in text for keyword in MEDICAL_KEYWORDS):
+    preferences.append("medical")
   return preferences
 
 

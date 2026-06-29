@@ -62,10 +62,16 @@ def find_poi_groups(
     groups.append(education_matches)
 
   if "commercial" in infra_preferences:
-    lifestyle_matches = lifestyle_pois(session)
-    if not lifestyle_matches:
+    commercial_matches = pois_by_category(session, "commercial")
+    if not commercial_matches:
       return None
-    groups.append(lifestyle_matches)
+    groups.append(commercial_matches)
+
+  if "medical" in infra_preferences:
+    medical_matches = pois_by_category(session, "medical")
+    if not medical_matches:
+      return None
+    groups.append(medical_matches)
 
   return groups
 
@@ -121,7 +127,7 @@ def enrich_infrastructure(session: Session, item: dict[str, Any], slots: dict[st
     "nearestEducation": education,
     "nearestEducationByType": education_by_type,
     "educationDistanceTotalM": education_distance_total(education_by_type),
-    "nearbyLifestyle": nearby_lifestyle_pois_for_item(session, item),
+    "nearbyLifestyle": nearby_lifestyle_pois_for_item(session, item, slots),
     "requestedPreferences": sorted(requested_infra(slots)),
     "notes": infrastructure_notes(slots),
   }
@@ -160,6 +166,7 @@ def nearest_education_by_type(
 def nearby_lifestyle_pois_for_item(
   session: Session,
   item: dict[str, Any],
+  slots: dict[str, Any],
   max_distance_m: int = LIFESTYLE_RADIUS_M,
 ) -> list[dict[str, Any]]:
   latitude = item.get("latitude")
@@ -167,12 +174,32 @@ def nearby_lifestyle_pois_for_item(
   if latitude is None or longitude is None:
     return []
 
-  return pois_within_radius_for_coordinates(
+  matches = pois_within_radius_for_coordinates(
     float(latitude),
     float(longitude),
     lifestyle_pois(session),
     max_distance_m,
-  )[:LIFESTYLE_LIMIT]
+  )
+  return prioritize_lifestyle_pois(matches, requested_infra(slots))[:LIFESTYLE_LIMIT]
+
+
+def prioritize_lifestyle_pois(values: list[dict[str, Any]], infra_preferences: set[str]) -> list[dict[str, Any]]:
+  if "commercial" in infra_preferences and "medical" not in infra_preferences:
+    values = [item for item in values if item.get("category") == "commercial"]
+    preferred_categories = ("commercial", "medical")
+  elif "medical" in infra_preferences and "commercial" not in infra_preferences:
+    values = [item for item in values if item.get("category") == "medical"]
+    preferred_categories = ("medical", "commercial")
+  else:
+    preferred_categories = LIFESTYLE_CATEGORIES
+  category_rank = {category: index for index, category in enumerate(preferred_categories)}
+  return sorted(
+    values,
+    key=lambda item: (
+      category_rank.get(str(item.get("category")), len(category_rank)),
+      float(item.get("distanceM") or 0),
+    ),
+  )
 
 
 def education_distance_total(education_by_type: dict[str, Any]) -> float | None:

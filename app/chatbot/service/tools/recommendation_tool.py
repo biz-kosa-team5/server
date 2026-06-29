@@ -49,7 +49,7 @@ def build_recommendation_tool(session: Session):
       max_pyeong: 최대 평형입니다.
       is_new_build: 신축/준신축 조건 여부입니다.
       min_built_year: 최소 준공연도입니다.
-      infra_preferences: transport, education, commercial 중 선호 인프라 목록입니다.
+      infra_preferences: transport, education, commercial, medical 중 선호 인프라 목록입니다.
       sort_by: 정렬 기준입니다. 예: distance_asc, price_asc, price_desc, school_distance_asc
       limit: 반환할 최대 후보 개수입니다.
 
