@@ -28,6 +28,8 @@ def build_recommendation_tool(session: Session):
     is_new_build: bool | None = None,
     min_built_year: int | None = None,
     infra_preferences: list[str] | None = None,
+    investment_focus: list[str] | None = None,
+    redevelopment_interest: bool | None = None,
     sort_by: str | None = None,
     limit: int | None = None,
   ) -> dict[str, Any]:
@@ -50,6 +52,8 @@ def build_recommendation_tool(session: Session):
       is_new_build: 신축/준신축 조건 여부입니다.
       min_built_year: 최소 준공연도입니다.
       infra_preferences: transport, education, commercial, medical 중 선호 인프라 목록입니다.
+      investment_focus: 투자/호재/재건축 질문에서 참고할 관심 기준입니다. 예: investment, redevelopment, development
+      redevelopment_interest: 재건축/재개발/정비사업 공개 정보를 참고해야 하는지 여부입니다.
       sort_by: 정렬 기준입니다. 예: distance_asc, price_asc, price_desc, school_distance_asc
       limit: 반환할 최대 후보 개수입니다.
 
@@ -72,6 +76,8 @@ def build_recommendation_tool(session: Session):
       "is_new_build": is_new_build,
       "min_built_year": min_built_year,
       "infra_preferences": infra_preferences,
+      "investment_focus": investment_focus,
+      "redevelopment_interest": redevelopment_interest,
       "sort_by": sort_by,
       "limit": limit,
     }))

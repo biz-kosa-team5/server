@@ -14,6 +14,8 @@ EDUCATION_KEYWORDS = ("학군", "학교", "교육", "초등학교", "중학교",
 COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "대형마트", "쇼핑", "백화점", "편의점", "카페", "인프라")
 MEDICAL_KEYWORDS = ("병원", "의료", "응급실", "약국")
 CHILD_FRIENDLY_KEYWORDS = ("애 키우", "아이 키우", "자녀", "육아", "초품아")
+INVESTMENT_KEYWORDS = ("투자가치", "투자 가치", "투자", "호재", "재건축", "재개발", "정비사업", "개발 가능성")
+REDEVELOPMENT_KEYWORDS = ("재건축", "재개발", "정비사업")
 
 
 def extract_recommendation_slots(question: str) -> dict[str, Any]:
@@ -76,7 +78,11 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
     slots["is_new_build"] = True
     slots["min_built_year"] = DEFAULT_NEW_BUILD_YEAR
 
+  slots.update(extract_investment_slots(text))
+
   infra_preferences = extract_infra_preferences(text)
+  if is_investment_query(text) and "transport" not in infra_preferences:
+    infra_preferences.append("transport")
   if is_education_centered_query(text) and "education" not in infra_preferences:
     infra_preferences.append("education")
   if infra_preferences:
@@ -245,6 +251,30 @@ def is_education_centered_query(text: str) -> bool:
     or "초등학교 도보권" in text
     or "학교 도보권" in text
   )
+
+
+def is_investment_query(text: str) -> bool:
+  return any(keyword in text for keyword in INVESTMENT_KEYWORDS)
+
+
+def extract_investment_slots(text: str) -> dict[str, Any]:
+  if not is_investment_query(text):
+    return {}
+
+  focus = []
+  if any(keyword in text for keyword in REDEVELOPMENT_KEYWORDS):
+    focus.append("redevelopment")
+  if "호재" in text or "개발" in text:
+    focus.append("development")
+  if "투자" in text:
+    focus.append("investment")
+
+  return {
+    "investment_focus": focus or ["investment"],
+    "redevelopment_interest": True,
+    "radius_m": DEFAULT_RADIUS_M,
+    "sort_by": "distance_asc",
+  }
 
 
 def extract_infra_preferences(text: str) -> list[str]:

@@ -30,7 +30,11 @@ class RecommendationService:
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
     """추천 후보 조회 observation을 챗봇 tool 응답으로 만든다."""
     slots = dict(slots)
-    slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
+    slots["_include_redevelopment_context"] = (
+      should_search_redevelopment_context(text)
+      or slots.get("redevelopment_interest") is True
+      or bool(slots.get("investment_focus"))
+    )
     return self.recommend_apartments_by_filters(session, slots)
 
   def recommend_apartments_by_filters(self, session: Session, slots: dict[str, Any]) -> dict[str, Any]:
@@ -103,9 +107,11 @@ class RecommendationService:
     requested_limit = optional_int(slots.get("limit"))
     limit = min(max(requested_limit or RECOMMENDATION_RESULT_LIMIT, 1), RECOMMENDATION_RESULT_LIMIT)
     limited = enriched[:limit]
-    if slots.get("_include_redevelopment_context") is not True:
-      return limited
-    return attach_redevelopment_context(limited)
+    if slots.get("_include_redevelopment_context") is True:
+      limited = attach_redevelopment_context(limited)
+    if slots.get("investment_focus") or slots.get("redevelopment_interest") is True:
+      limited = attach_investment_signals(limited)
+    return limited
 
 
 RecommendationServiceDep = Annotated[RecommendationService, Depends(RecommendationService)]
@@ -140,3 +146,52 @@ def attach_redevelopment_context(items: list[dict[str, Any]]) -> list[dict[str, 
     )
     enriched.append(copied)
   return enriched
+
+
+def attach_investment_signals(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  enriched = []
+  for item in items:
+    copied = dict(item)
+    copied["investmentSignals"] = investment_signals(item)
+    enriched.append(copied)
+  return enriched
+
+
+def investment_signals(item: dict[str, Any]) -> list[dict[str, Any]]:
+  signals = []
+  station = item.get("infrastructure", {}).get("nearestStation")
+  if isinstance(station, dict) and station.get("distanceM") is not None:
+    signals.append({
+      "type": "transport",
+      "label": "역세권",
+      "detail": f"{station.get('name')} {round(float(station['distanceM']))}m",
+    })
+
+  built_year = built_year_from_use_date(item.get("useDate"))
+  if built_year is not None and built_year <= 1995:
+    signals.append({
+      "type": "building_age",
+      "label": "노후 단지",
+      "detail": f"{built_year}년 준공",
+    })
+
+  redevelopment_info = item.get("redevelopmentInfo")
+  if isinstance(redevelopment_info, list) and redevelopment_info:
+    first = redevelopment_info[0]
+    if isinstance(first, dict) and first.get("title"):
+      signals.append({
+        "type": "redevelopment_public_info",
+        "label": "정비사업 공개 검색",
+        "detail": str(first["title"]),
+      })
+
+  return signals
+
+
+def built_year_from_use_date(value: Any) -> int | None:
+  if not value:
+    return None
+  try:
+    return int(str(value)[:4])
+  except (TypeError, ValueError):
+    return None
