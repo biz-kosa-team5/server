@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from typing import Annotated, Any
 
 from fastapi import Depends
@@ -168,10 +169,50 @@ def normalize_station_name(value: str | None) -> str | None:
   station_name = value.strip()
   if not station_name:
     return None
+  station_name = re.sub(r"\s+", "", station_name)
   if not station_name.endswith("역"):
     station_name = f"{station_name}역"
 
   aliases = {
     "잠실역": "잠실(송파구청)역",
+    "양재역": "양재(서초구청)역",
+    "올림픽공원역": "올림픽공원(한국체대)역",
+    "남부터미널역": "남부터미널(예술의전당)역",
+    "총신대입구역": "총신대입구(이수)역",
+    "이수역": "총신대입구(이수)역",
   }
   return aliases.get(station_name, station_name)
+
+
+def normalize_poi_match_name(value: str | None) -> str | None:
+  if value is None:
+    return None
+  name = re.sub(r"\s+", "", value.strip())
+  if not name:
+    return None
+  name = re.sub(r"\([^)]*\)", "", name)
+  name = re.sub(r"^서울", "", name)
+  return name
+
+
+def normalize_station_match_name(value: str | None) -> str | None:
+  name = normalize_poi_match_name(normalize_station_name(value))
+  if name is None:
+    return None
+  return name[:-1] if name.endswith("역") else name
+
+
+def normalize_school_match_name(value: str | None) -> str | None:
+  name = normalize_poi_match_name(value)
+  if name is None:
+    return None
+  aliases = (
+    ("초", "초등학교"),
+    ("중", "중학교"),
+    ("고", "고등학교"),
+    ("유치원", "유치원"),
+  )
+  for suffix, expanded in aliases:
+    if name.endswith(suffix) and not name.endswith(expanded):
+      return f"{name[:-len(suffix)]}{expanded}"
+  return name

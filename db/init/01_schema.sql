@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS trades (
 
 CREATE TABLE IF NOT EXISTS pois (
   id BIGSERIAL PRIMARY KEY,
-  category TEXT NOT NULL CHECK (category IN ('station', 'education')),
+  category TEXT NOT NULL CHECK (category IN ('station', 'education', 'commercial', 'medical')),
   name TEXT NOT NULL,
   subtype TEXT NOT NULL,
   latitude DOUBLE PRECISION NOT NULL,
