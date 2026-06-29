@@ -4,6 +4,7 @@ from sqlalchemy import func, select
 from app.database import SessionLocal, ensure_initialized
 from app.main import app
 from app.models import Poi
+from app.real_estate.dao import education_pois, station_pois
 
 client = TestClient(app)
 
@@ -169,6 +170,12 @@ def test_poi_seed_supports_station_and_education_categories():
     station = session.scalar(
       select(Poi).where(Poi.category == "station", Poi.name == "서초역")
     )
+    commercial = session.scalar(
+      select(Poi).where(Poi.category == "commercial", Poi.name == "Fixture Mart")
+    )
+    medical = session.scalar(
+      select(Poi).where(Poi.category == "medical", Poi.name == "Fixture Hospital")
+    )
     counts = dict(session.execute(
       select(Poi.category, func.count()).group_by(Poi.category)
     ).all())
@@ -179,5 +186,19 @@ def test_poi_seed_supports_station_and_education_categories():
   assert station is not None
   assert station.subtype == "2호선"
   assert station.latitude == 37.491897
-  assert counts == {"education": 5, "station": 2}
+  assert commercial is not None
+  assert commercial.subtype == "supermarket"
+  assert medical is not None
+  assert medical.subtype == "general hospital"
+  assert counts == {"commercial": 1, "education": 5, "medical": 1, "station": 2}
   assert education_subtypes == {"유치원", "초등학교", "중학교", "고등학교", "특수학교"}
+
+
+def test_poi_name_matching_supports_station_and_school_aliases():
+  ensure_initialized()
+  with SessionLocal() as session:
+    station_matches = station_pois(session, "잠실새내")
+    school_matches = education_pois(session, name="대치초")
+
+  assert [poi.name for poi in station_matches] == ["잠실새내역"]
+  assert [poi.name for poi in school_matches] == ["대치초등학교"]

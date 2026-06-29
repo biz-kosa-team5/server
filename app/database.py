@@ -11,7 +11,7 @@ from pathlib import Path
 from threading import Lock
 from typing import TypeVar
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -23,6 +23,10 @@ from .models import Base, Complex, Poi, Region, Trade
 DEFAULT_DATABASE_URL = "sqlite+pysqlite:///:memory:"
 DEFAULT_IMPORT_DIR = Path(__file__).resolve().parents[1] / "db" / "import"
 BATCH_SIZE = 1000
+LIFESTYLE_POI_IMPORTS = {
+  "large_marts.csv": "commercial",
+  "hospitals.csv": "medical",
+}
 
 load_environment()
 database_url = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL)
@@ -48,8 +52,11 @@ def get_session() -> Generator[Session, None, None]:
 
 def initialize_database(target_engine: Engine = engine) -> None:
   Base.metadata.create_all(bind=target_engine)
+  ensure_poi_category_constraint(target_engine)
   with SessionLocal() as session:
     if session.query(Region).first() is not None:
+      import_lifestyle_pois(session)
+      session.commit()
       return
     seed(session)
     session.commit()
@@ -71,6 +78,7 @@ def seed(session: Session) -> None:
   import_complexes(session)
   import_trades(session)
   import_pois(session)
+  import_lifestyle_pois(session)
 
 
 def import_regions(session: Session) -> None:
@@ -139,6 +147,61 @@ def import_pois(session: Session) -> None:
       longitude=to_float(row["longitude"]),
     ),
   )
+
+
+def import_lifestyle_pois(session: Session) -> None:
+  existing = {
+    poi_key(row)
+    for row in session.query(Poi).filter(Poi.category.in_(LIFESTYLE_POI_IMPORTS.values())).all()
+  }
+  for filename, category in LIFESTYLE_POI_IMPORTS.items():
+    path = import_dir / filename
+    if not path.exists():
+      continue
+    batch: list[Poi] = []
+    for row in read_import_csv(filename):
+      poi = Poi(
+        category=category,
+        name=row["name"],
+        subtype=row["subtype"],
+        latitude=to_float(row["latitude"]),
+        longitude=to_float(row["longitude"]),
+      )
+      key = poi_key(poi)
+      if key in existing:
+        continue
+      existing.add(key)
+      batch.append(poi)
+      if len(batch) >= BATCH_SIZE:
+        session.add_all(batch)
+        session.flush()
+        batch.clear()
+    if batch:
+      session.add_all(batch)
+      session.flush()
+
+
+def poi_key(poi: Poi) -> tuple[str, str, str, float, float]:
+  return (
+    poi.category,
+    poi.name,
+    poi.subtype,
+    round(float(poi.latitude), 8),
+    round(float(poi.longitude), 8),
+  )
+
+
+def ensure_poi_category_constraint(target_engine: Engine) -> None:
+  if target_engine.dialect.name != "postgresql":
+    return
+  with target_engine.begin() as connection:
+    connection.execute(text("ALTER TABLE pois DROP CONSTRAINT IF EXISTS pois_category_check"))
+    connection.execute(text("ALTER TABLE pois DROP CONSTRAINT IF EXISTS ck_pois_category"))
+    connection.execute(text(
+      "ALTER TABLE pois "
+      "ADD CONSTRAINT ck_pois_category "
+      "CHECK (category IN ('station', 'education', 'commercial', 'medical'))"
+    ))
 
 
 def add_csv_objects(session: Session, filename: str, factory: Callable[[dict[str, str]], T]) -> None:

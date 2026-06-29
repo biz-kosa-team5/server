@@ -19,6 +19,35 @@ COPY pois (category, name, subtype, latitude, longitude)
 FROM '/import/pois.csv'
 WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
 
+CREATE TEMP TABLE lifestyle_pois_import (
+  category TEXT NOT NULL,
+  name TEXT NOT NULL,
+  subtype TEXT NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL
+);
+
+COPY lifestyle_pois_import (category, name, subtype, latitude, longitude)
+FROM '/import/large_marts.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+COPY lifestyle_pois_import (category, name, subtype, latitude, longitude)
+FROM '/import/hospitals.csv'
+WITH (FORMAT csv, HEADER true, ENCODING 'UTF8');
+
+INSERT INTO pois (category, name, subtype, latitude, longitude)
+SELECT
+  CASE category
+    WHEN 'large_mart' THEN 'commercial'
+    WHEN 'hospital' THEN 'medical'
+    ELSE category
+  END,
+  name,
+  subtype,
+  latitude,
+  longitude
+FROM lifestyle_pois_import;
+
 TRUNCATE TABLE law_documents, daily_legal_term_mappings, raw_api_responses RESTART IDENTITY;
 
 COPY daily_legal_term_mappings (
