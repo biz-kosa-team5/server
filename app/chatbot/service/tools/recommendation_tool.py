@@ -15,6 +15,7 @@ def build_recommendation_tool(session: Session):
   def recommend_apartments(
     query: str,
     district: str | None = None,
+    neighborhood: str | None = None,
     station_name: str | None = None,
     school_type: str | None = None,
     school_types: list[str] | None = None,
@@ -35,6 +36,7 @@ def build_recommendation_tool(session: Session):
     Args:
       query: 사용자가 입력한 아파트 추천 질문입니다. 예: "송파구 40억 이하 아파트 추천해줘"
       district: 추천 대상 구 이름입니다. 예: 송파구
+      neighborhood: 추천 대상 동 이름입니다. 예: 잠실동
       station_name: 가까워야 하는 역 이름입니다. 예: 잠실역
       school_type: 가까워야 하는 단일 학교 유형입니다.
       school_types: 가까워야 하는 복수 학교 유형입니다.
@@ -55,6 +57,7 @@ def build_recommendation_tool(session: Session):
     slots = extract_recommendation_slots(query)
     slots.update(compact_none({
       "district": district,
+      "neighborhood": neighborhood,
       "station_name": station_name,
       "school_type": school_type,
       "school_types": school_types,

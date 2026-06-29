@@ -42,7 +42,7 @@ def sort_query_results(results: list[dict[str, Any]], sort_by: str | None) -> li
     return sorted(results, key=lambda item: item["latestDealAmount"] if item["latestDealAmount"] is not None else math.inf)
   if sort_by == "price_desc":
     return sorted(results, key=lambda item: item["latestDealAmount"] if item["latestDealAmount"] is not None else -math.inf, reverse=True)
-  return results
+  return sorted(results, key=default_recommendation_sort_key)
 
 
 def format_deal_amount(value: int | None) -> str:
@@ -66,3 +66,23 @@ def distance_sort_key(item: dict[str, Any]) -> float:
   if isinstance(station, dict) and station.get("distanceM") is not None:
     return float(station["distanceM"])
   return math.inf
+
+
+def default_recommendation_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+  infrastructure = item.get("infrastructure")
+  if not isinstance(infrastructure, dict):
+    infrastructure = {}
+
+  score = 0
+  if item.get("latitude") is not None and item.get("longitude") is not None:
+    score += 2
+  if isinstance(infrastructure.get("nearestStation"), dict):
+    score += 3
+  if isinstance(infrastructure.get("nearestEducation"), dict):
+    score += 3
+  lifestyle = infrastructure.get("nearbyLifestyle")
+  if isinstance(lifestyle, list):
+    score += min(len(lifestyle), 4)
+  if item.get("latestDealAmount") is not None:
+    score += 1
+  return (-score, str(item.get("complexName") or ""))
