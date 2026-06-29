@@ -1,5 +1,5 @@
-from app.chatbot.features.comparison import extract_compare_slots
-from app.chatbot.features.recommendation import extract_recommendation_slots
+from app.chatbot.features.comparison import extract_compare_slots, run_comparison
+from app.chatbot.features.recommendation import extract_recommendation_slots, run_recommendation
 from app.chatbot.service.answer.formatters.comparison import format_comparison_result
 from app.chatbot.service.answer.formatters.recommendation import format_recommendation_result
 from app.chatbot.service.tools import (
@@ -32,6 +32,46 @@ def test_recommendation_extractor_does_not_treat_connector_go_as_high_school():
   }
 
 
+def test_recommendation_extractor_builds_neighborhood_slot():
+  slots = extract_recommendation_slots("송파구 잠실동 아파트 3개 추천해줘")
+
+  assert slots["district"] == "송파구"
+  assert slots["neighborhood"] == "잠실동"
+  assert slots["limit"] == 3
+
+
+def test_recommendation_filters_by_neighborhood():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = run_recommendation(session, {"neighborhood": "잠실동", "limit": 5}, "잠실동 아파트 추천해줘")
+
+  assert result["success"] is True, result
+  assert result["results"]
+  assert all("잠실동" in item["address"] for item in result["results"])
+
+
+def test_recommendation_prefers_candidates_with_infrastructure_by_default():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = run_recommendation(session, {"neighborhood": "대치동", "limit": 5}, "대치동 아파트 추천해줘")
+
+  assert result["success"] is True
+  first = result["results"][0]
+  assert first["latitude"] is not None
+  assert first["longitude"] is not None
+  assert first["infrastructure"]["nearestStation"] is not None
+  assert first["infrastructure"]["nearestEducation"] is not None
+
+
+def test_recommendation_does_not_fallback_to_other_regions_for_unknown_neighborhood():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = run_recommendation(session, {"neighborhood": "없는동", "limit": 5}, "없는동 아파트 추천해줘")
+
+  assert result["success"] is False
+  assert result["results"] == []
+
+
 def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
   slots = extract_recommendation_slots("초/중/고 가까운 강남구 아파트 3개 추천해줘")
 
@@ -59,6 +99,12 @@ def test_comparison_extractor_builds_subject_and_metric_slots():
   assert slots["metrics"] == ["latest_price", "pyeong", "price_per_pyeong"]
 
 
+def test_comparison_extractor_accepts_comma_separated_names():
+  slots = extract_compare_slots("잠실엘스, 래미안대치펠리스 비교해봐")
+
+  assert slots["apartment_names"] == ["잠실엘스", "래미안대치펠리스"]
+
+
 def test_comparison_extractor_cleans_metric_words_from_names():
   assert extract_compare_slots("반포자이랑 래미안퍼스티지 초등학교 접근성 비교해줘")["apartment_names"] == [
     "반포자이",
@@ -80,6 +126,49 @@ def test_comparison_extractor_cleans_metric_words_from_names():
     "잠실엘스",
     "리센츠",
   ]
+
+
+def test_comparison_name_lookup_accepts_palace_spelling_variant():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = run_comparison(
+      session,
+      extract_compare_slots("잠실엘스, 래미안대치펠리스 비교해봐"),
+      "잠실엘스, 래미안대치펠리스 비교해봐",
+    )
+
+  assert result["success"] is True, result
+  assert result["missingApartmentNames"] == []
+  assert [row["complexName"] for row in result["results"]] == ["잠실엘스", "래미안대치팰리스"]
+
+
+def test_comparison_infers_names_without_explicit_separator():
+  ensure_initialized()
+  with SessionLocal() as session:
+    spaced_result = run_comparison(
+      session,
+      extract_compare_slots("잠실엘스 래미안대치팰리스 비교해줘"),
+      "잠실엘스 래미안대치팰리스 비교해줘",
+    )
+    joined_result = run_comparison(
+      session,
+      extract_compare_slots("잠실엘스래미안대치팰리스 비교해줘"),
+      "잠실엘스래미안대치팰리스 비교해줘",
+    )
+
+  assert spaced_result["success"] is True, spaced_result
+  assert joined_result["success"] is True, joined_result
+  assert spaced_result["criteria"]["apartment_names"] == ["잠실엘스", "래미안대치팰리스"]
+  assert joined_result["criteria"]["apartment_names"] == ["잠실엘스", "래미안대치팰리스"]
+
+
+def test_comparison_accepts_apartment_suffix_and_school_closeness_phrase():
+  q = "은마아파트랑 잠실엘스 중 초등학교가 더 가까운 곳 비교"
+  slots = extract_compare_slots(q)
+
+  assert slots["apartment_names"] == ["은마아파트", "잠실엘스"]
+  assert slots["metrics"] == ["nearest_school"]
+  assert slots["school_type"] == "초등학교"
 
 
 def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
@@ -106,6 +195,28 @@ def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
   assert "롯데백화점 잠실점" in answer
   assert "재개발/정비사업 검색결과" in answer
   assert "상권이나 학군 평판처럼 데이터에 없는" not in answer
+
+
+def test_recommendation_answer_mentions_missing_redevelopment_context():
+  answer = format_recommendation_result({
+    "handler": "recommendation",
+    "success": True,
+    "criteria": {"neighborhood": "대치동"},
+    "results": [{
+      "complexName": "대치테스트",
+      "latestDealAmountText": "12.0억원",
+      "infrastructure": {
+        "nearestStation": {"name": "한티역", "distanceM": 300},
+        "nearestEducation": {"name": "서울도곡초등학교", "distanceM": 200},
+        "nearbyLifestyle": [],
+      },
+      "redevelopmentInfo": [],
+    }],
+  })
+
+  assert "한티역" in answer
+  assert "서울도곡초등학교" in answer
+  assert "현재 응답 데이터에서 확인된 재개발/정비사업 정보는 없습니다" in answer
 
 
 def test_comparison_answer_includes_lifestyle_and_redevelopment_context():
