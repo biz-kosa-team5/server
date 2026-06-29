@@ -148,6 +148,28 @@ def test_planner_extracts_lookup_target_after_leading_query_phrase():
   assert plan.steps[0].slot_overrides["target_name"] == "래미안대치팰리스"
 
 
+def test_planner_preserves_apartment_word_inside_building_name():
+  plan = build_execution_plan("해동아파트b동 위치")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["simple_lookup"]
+  assert plan.steps[0].slot_overrides == {
+    "target_name": "해동아파트b동",
+    "query_type": "location",
+  }
+
+
+def test_planner_routes_named_complex_find_phrase_to_location_lookup():
+  plan = build_execution_plan("해동아파트b동 찾아줘")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["simple_lookup"]
+  assert plan.steps[0].slot_overrides == {
+    "target_name": "해동아파트b동",
+    "query_type": "location",
+  }
+
+
 def test_planner_routes_legal_questions_with_plain_legal_terms():
   plan = build_execution_plan("소유권 이전등기는 어떤 법과 관련 있어?")
 

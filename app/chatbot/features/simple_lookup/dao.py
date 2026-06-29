@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 from sqlalchemy import func, select, text, Date, cast
@@ -216,8 +217,8 @@ class SimpleLookupDao:
 
         for target in self._complex_name_variants(target_name):
             for column, exact in search_steps:
-                # DB 단지명 공백 제거 후 비교
-                compact_column = func.replace(column, " ", "")
+                # DB 단지명과 입력 단지명을 같은 검색용 형태로 맞춘다.
+                compact_column = func.lower(func.replace(column, " ", ""))
 
                 if exact:
                     stmt = select(Complex).where(
@@ -282,11 +283,20 @@ class SimpleLookupDao:
 
     # 단지명 검색 후보 생성: 공백 제거 + 끝의 "아파트" 제거
     def _complex_name_variants(self, target_name: str) -> list[str]:
-        target = "".join(target_name.split())
+        target = normalize_complex_search_text(target_name)
         variants = [target]
+
+        without_parentheses = re.sub(r"\([^)]*\)", "", target)
+        if without_parentheses and without_parentheses != target:
+            variants.append(without_parentheses)
 
         if target.endswith("아파트"):
             stripped = target.removesuffix("아파트")
+            if stripped:
+                variants.append(stripped)
+
+        if without_parentheses.endswith("아파트"):
+            stripped = without_parentheses.removesuffix("아파트")
             if stripped:
                 variants.append(stripped)
 
@@ -313,3 +323,7 @@ class SimpleLookupDao:
             stmt = stmt.where(Trade.excl_area <= criteria.area_max)
 
         return stmt
+
+
+def normalize_complex_search_text(value: str) -> str:
+    return "".join(str(value).split()).lower()
