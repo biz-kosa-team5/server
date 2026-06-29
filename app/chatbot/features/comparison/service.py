@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Annotated, Any
 
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
+from app.models import Complex
 from app.real_estate.dao import latest_trade_for_complex, pois_by_category
 from app.real_estate.support import (
   clean_text,
@@ -29,6 +31,7 @@ class ComparisonService:
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
     """비교 데이터 observation을 챗봇 tool 응답으로 만든다."""
     slots = dict(slots)
+    slots["_original_query"] = text
     slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
     return self.compare_apartments_by_metrics(session, slots)
 
@@ -36,6 +39,10 @@ class ComparisonService:
     """아파트명 목록과 비교 항목에 맞춰 비교 결과를 만든다."""
     normalized = normalize_slots(slots)
     names = normalized.get("apartment_names")
+    if not isinstance(names, list) or len(names) < 2:
+      names = infer_apartment_names_from_text(session, str(normalized.get("_original_query") or ""))
+      if names:
+        normalized["apartment_names"] = names
     if not isinstance(names, list) or len(names) < 2:
       return empty_result("comparison", "missing_apartment_names", "비교할 아파트명을 2개 이상 입력해야 합니다.", normalized)
 
@@ -138,3 +145,56 @@ def nearby_lifestyle_pois(session: Session, complex_row: Any, max_distance_m: in
   for category in ("commercial", "medical"):
     pois.extend(pois_by_category(session, category))
   return pois_within_radius_for_complex(complex_row, pois, max_distance_m)[:6]
+
+
+def infer_apartment_names_from_text(session: Session, text: str, limit: int = 3) -> list[str]:
+  query_key = normalize_name_scan_text(text)
+  if not query_key:
+    return []
+
+  matches = []
+  for complex_id, complex_name in session.query(Complex.id, Complex.name).all():
+    name_key = normalize_name_scan_text(complex_name)
+    if len(name_key) < 2:
+      continue
+    position = query_key.find(name_key)
+    if position < 0:
+      continue
+    matches.append({
+      "id": complex_id,
+      "name": complex_name,
+      "position": position,
+      "length": len(name_key),
+    })
+
+  selected = select_non_overlapping_name_matches(matches)
+  selected.sort(key=lambda item: int(item["position"]))
+  return [str(item["name"]) for item in selected[:limit]]
+
+
+def select_non_overlapping_name_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  selected = []
+  occupied_spans: list[tuple[int, int]] = []
+  seen_names = set()
+  for match in sorted(matches, key=lambda item: (-int(item["length"]), int(item["position"]))):
+    name = str(match["name"])
+    if name in seen_names:
+      continue
+    start = int(match["position"])
+    end = start + int(match["length"])
+    if any(start < occupied_end and end > occupied_start for occupied_start, occupied_end in occupied_spans):
+      continue
+    selected.append(match)
+    occupied_spans.append((start, end))
+    seen_names.add(name)
+  return selected
+
+
+def normalize_name_scan_text(value: Any) -> str:
+  text = clean_text(value) or ""
+  text = re.sub(
+    r"(비교해줘|비교해봐|비교|차이|알려줘|해줘|해봐|줘|랑|이랑|와|과|하고|,|，|/|vs|VS|\s+)",
+    "",
+    text,
+  )
+  return text.replace("펠리스", "팰리스").lower()

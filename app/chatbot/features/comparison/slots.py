@@ -42,6 +42,10 @@ def extract_compare_slots(question: str) -> dict[str, Any]:
 
 
 def extract_apartment_names(text: str) -> list[str]:
+  comma_names = split_apartment_names_by_separator(text)
+  if len(comma_names) >= 2:
+    return comma_names[:3]
+
   match = re.search(r"(.+?)(?:랑|와|과|하고)\s*(.+)", text)
   if match is None:
     return []
@@ -50,14 +54,25 @@ def extract_apartment_names(text: str) -> list[str]:
   return [name for name in [first, second] if name]
 
 
+def split_apartment_names_by_separator(text: str) -> list[str]:
+  subject = re.split(r"\s*(?:비교|차이|둘 중|어디가)\b", text, maxsplit=1)[0]
+  parts = re.split(r"\s*(?:,|，|/| vs | VS |vs|VS)\s*", subject)
+  return [
+    name
+    for name in (clean_apartment_name(part) for part in parts)
+    if name
+  ]
+
+
 def clean_apartment_name(value: str) -> str:
   text = value.strip()
   text = re.sub(
-    r"(가격|시세|거래가|평당가|세대수|대단지|신축|준공|연식|교통|역세권|역\s*접근성|접근성|학군|학교|교육|초등학교|초등|중학교|중등|고등학교|고등|상권|생활편의|편의시설|인프라|미래\s*가격\s*전망|가격\s*전망|미래|전망|재개발|재건축|정비사업|호재|비교|비교해줘|알려줘|해줘|줘|이랑|랑|와|과|하고|중\s*어디|어디가\s*더\s*좋아|어디가\s*더|어디가|가까운지|가까워|야|\?)",
+    r"(가격|시세|거래가|평당가|세대수|대단지|신축|준공|연식|교통|역세권|역\s*접근성|접근성|학군|학교|교육|초등학교|초등|중학교|중등|고등학교|고등|상권|생활편의|편의시설|인프라|미래\s*가격\s*전망|가격\s*전망|미래|전망|재개발|재건축|정비사업|호재|비교|비교해줘|비교해봐|알려줘|해줘|해봐|줘|이랑|랑|와|과|하고|중\s*어디|중\s*더\s*가까운\s*곳|중|더\s*가까운\s*곳|가까운\s*곳|어디가\s*더\s*좋아|어디가\s*더|어디가|가까운지|가까워|야|\?)",
     "",
     text,
   )
   text = text.strip()
+  text = re.sub(r"\s+(이|가|은|는)$", "", text).strip()
   if text.endswith("이") and not text.endswith("자이"):
     return text[:-1].strip()
   return text
