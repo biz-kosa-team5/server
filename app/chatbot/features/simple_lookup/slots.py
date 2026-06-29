@@ -54,6 +54,10 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
     if sort_order is not None:
         slots["sort_order"] = sort_order
 
+    limit = _extract_limit(text)
+    if limit is not None:
+        slots["limit"] = limit
+
     return slots
 
 
@@ -148,6 +152,13 @@ def _extract_sort_order(text: str) -> str | None:
         return "oldest"
 
     return None
+
+
+def _extract_limit(text: str) -> int | None:
+    matched = re.search(r"(?P<value>\d+)\s*건", text)
+    if matched is None:
+        return None
+    return int(matched.group("value"))
 
 
 def _has_price_record_expression(text: str) -> bool:

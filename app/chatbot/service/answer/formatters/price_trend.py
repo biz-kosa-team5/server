@@ -23,6 +23,7 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
     for item in (list_value(result.get("data")) or list_value(result.get("rows")))
   ]
   query_type = clean_text(result.get("query_type") or result.get("observation_type"))
+  target_name = price_trend_target_name(result)
 
   if query_type in {"price_change_ranking", "ranking"} and data:
     items = []
@@ -32,7 +33,8 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
       if name and rate:
         items.append(f"{name} {rate}")
     if items:
-      return "가격 변화율 순위는 " + ", ".join(items) + "입니다."
+      prefix = f"{target_name} 가격 변화율 순위는 " if target_name else "가격 변화율 순위는 "
+      return prefix + ", ".join(items) + "입니다."
 
   if summary:
     first_period = clean_text(summary.get("first_period"))
@@ -53,7 +55,8 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
     if trade_count is not None:
       parts.append(f"거래 건수는 {trade_count}건입니다")
     if parts:
-      return "시세추이를 조회했습니다. " + ". ".join(parts) + "."
+      prefix = f"{target_name} 시세추이를 조회했습니다. " if target_name else "시세추이를 조회했습니다. "
+      return prefix + ". ".join(parts) + "."
 
   if data:
     first = data[0]
@@ -64,11 +67,22 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
     first_amount = format_timeseries_value(first.get(metric_key), unit)
     last_amount = format_timeseries_value(last.get(metric_key), unit)
     if first_period and last_period and first_amount and last_amount:
+      prefix = f"{target_name} 시세추이를 조회했습니다. " if target_name else "시세추이를 조회했습니다. "
       return (
-        f"시세추이를 조회했습니다. {first_period} 평균 {first_amount}에서 "
+        f"{prefix}{first_period} 평균 {first_amount}에서 "
         f"{last_period} 평균 {last_amount}{summary_change_particle(unit)} 확인됩니다."
       )
   return clean_text(result.get("message"))
+
+
+def price_trend_target_name(result: dict[str, Any]) -> str:
+  criteria = dict_value(result.get("criteria"))
+  target_name = clean_text(criteria.get("target_name"))
+  if target_name:
+    return target_name
+
+  slots = dict_value(result.get("slots"))
+  return clean_text(slots.get("target_name"))
 
 
 def timeseries_metric(first: dict[str, Any], last: dict[str, Any]) -> tuple[str, str]:

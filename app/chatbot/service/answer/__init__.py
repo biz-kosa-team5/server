@@ -5,10 +5,12 @@ Supervisor와 전문 tool이 만든 JSON 결과를 사용자용 자연어 answer
 from .composer import ChatbotAnswerComposer
 from .context import ChatbotAnswerContext, build_llm_context
 from .fallback import fallback_answer
+from .observations import build_answer_observations
 
 __all__ = [
   "ChatbotAnswerComposer",
   "ChatbotAnswerContext",
+  "build_answer_observations",
   "build_llm_context",
   "fallback_answer",
 ]

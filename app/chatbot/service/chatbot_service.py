@@ -10,22 +10,39 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.chatbot.features.comparison.service import run_comparison
-from app.chatbot.features.comparison.slots import extract_compare_slots
-from app.chatbot.features.recommendation.service import run_recommendation
-from app.chatbot.features.recommendation.slots import extract_recommendation_slots
-
 from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
+from .orchestrator import execute_plan
+from .planner import build_execution_plan
 from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
   agent_initialization_failed_result,
-  suggest_specialist_agents,
 )
 from .splitter import split_question
+from .ui_payload import build_chatbot_ui_payload
 
 
 logger = logging.getLogger(__name__)
+
+
+class LazySupervisorProvider:
+  def __init__(self, session: Session):
+    self.session = session
+    self.supervisor: ChatbotSupervisor | None = None
+    self.attempted = False
+    self.initialization_failed = False
+
+  def __call__(self) -> ChatbotSupervisor | None:
+    if self.supervisor is not None or self.initialization_failed:
+      return self.supervisor
+    self.attempted = True
+    try:
+      self.supervisor = ChatbotSupervisor(self.session)
+    except Exception:
+      logger.exception("Failed to initialize chatbot supervisor")
+      self.initialization_failed = True
+      self.supervisor = None
+    return self.supervisor
 
 
 @dataclass(frozen=True)
@@ -46,6 +63,7 @@ class ChatbotTask:
 class TaskExecutionResult:
   task: ChatbotTask
   result: dict[str, Any]
+  execution: dict[str, Any] | None = None
 
   @property
   def success(self) -> bool:
@@ -60,12 +78,15 @@ class TaskExecutionResult:
     return "handled" if self.success else "not_handled"
 
   def to_fragment_dict(self) -> dict[str, Any]:
-    return {
+    fragment = {
       "index": self.task.index,
       "text": self.task.text,
       "status": self.status,
       "result": self.result,
     }
+    if self.execution:
+      fragment["execution"] = self.execution
+    return fragment
 
 
 @dataclass(frozen=True)
@@ -144,7 +165,7 @@ class ChatbotQueryResponse:
     fragments = self.fragments
     results = self.results
     result = results[0] if len(results) == 1 else results
-    return {
+    return strip_nested_answers({
       "success": summary.success,
       "status": summary.status,
       "question": self.question,
@@ -152,7 +173,7 @@ class ChatbotQueryResponse:
       "result": result,
       "message": summary.message,
       "executionSummary": summary.to_dict(),
-    }
+    })
 
   def to_answer_context(self, response_dict: dict[str, Any]) -> ChatbotAnswerContext:
     return ChatbotAnswerContext.from_response_dict(response_dict)
@@ -160,26 +181,21 @@ class ChatbotQueryResponse:
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
-  supervisor_initialization_failed = False
-  try:
-    supervisor = ChatbotSupervisor(session)
-  except Exception:
-    logger.exception("Failed to initialize chatbot supervisor")
-    supervisor = None
-    supervisor_initialization_failed = True
+  supervisor_provider = LazySupervisorProvider(session)
   task_results = []
   for task in ChatbotTask.from_question(question):
     task_results.append(await execute_task(
       session,
-      supervisor,
+      None,
       task,
-      supervisor_initialization_failed=supervisor_initialization_failed,
+      supervisor_provider=supervisor_provider,
     ))
   chatbot_response = ChatbotQueryResponse(
     question=question,
     task_results=task_results,
   )
   response_dict = chatbot_response.to_response_dict()
+  response_dict.update(build_chatbot_ui_payload(session, response_dict))
   answer_context = chatbot_response.to_answer_context(response_dict)
   response_dict["answer"] = await ChatbotAnswerComposer().compose(answer_context)
   return response_dict
@@ -190,43 +206,171 @@ async def execute_task(
   supervisor: ChatbotSupervisor | None,
   task: ChatbotTask,
   *,
+  supervisor_provider: LazySupervisorProvider | None = None,
   supervisor_initialization_failed: bool = False,
 ) -> TaskExecutionResult:
+  execution: dict[str, Any] | None = None
   try:
-    result = direct_feature_result(session, task.text)
-    if result is None:
+    plan = build_execution_plan(task.text)
+    orchestration_result = await execute_plan(
+      session,
+      task.text,
+      plan,
+      supervisor=supervisor,
+      supervisor_provider=supervisor_provider,
+      supervisor_initialization_failed=supervisor_initialization_failed,
+    )
+    if orchestration_result is not None:
+      result = orchestration_result.result
+      execution = enrich_execution_trace(orchestration_result.execution, result)
+    else:
+      if supervisor is None and supervisor_provider is not None:
+        supervisor = supervisor_provider()
+        supervisor_initialization_failed = (
+          supervisor_initialization_failed
+          or supervisor_provider.initialization_failed
+        )
       if supervisor is None:
         result = (
           agent_initialization_failed_result()
           if supervisor_initialization_failed
           else agent_execution_failed_result()
         )
+        execution = {
+          "path": "supervisor_initialization_failed"
+          if supervisor_initialization_failed
+          else "supervisor_unavailable",
+        }
       else:
-        result = await supervisor.run(task.text)
+        run_with_trace = getattr(supervisor, "run_with_trace", None)
+        if callable(run_with_trace):
+          result, execution = await run_with_trace(task.text)
+          if execution is not None:
+            execution = enrich_execution_trace(execution, result)
+        else:
+          result = await supervisor.run(task.text)
+        if execution is None:
+          execution = infer_supervisor_execution(result)
+      if execution is not None and "planType" not in execution:
+        execution = {
+          **execution,
+          "planType": plan.plan_type,
+        }
   except Exception:
-    logger.exception("Failed to run chatbot supervisor for task %s", task.index)
+    logger.exception("Failed to run chatbot task %s", task.index)
     result = agent_execution_failed_result()
+    execution = {"path": "supervisor_execution_failed"}
 
-  return TaskExecutionResult(task=task, result=result)
-
-
-def direct_feature_result(session: Session, text: str) -> dict[str, Any] | None:
-  """Route obvious single-domain recommendation/comparison questions without an LLM tool hop."""
-  hinted_agents = suggest_specialist_agents(text)
-  if hinted_agents == ["comparison_agent"] and is_comparison_question(text):
-    slots = extract_compare_slots(text)
-    if len(slots.get("apartment_names", [])) >= 2:
-      return run_comparison(session, slots, text)
-
-  if hinted_agents == ["recommendation_agent"] and is_recommendation_question(text):
-    return run_recommendation(session, extract_recommendation_slots(text), text)
-
-  return None
+  return TaskExecutionResult(task=task, result=result, execution=execution)
 
 
-def is_comparison_question(text: str) -> bool:
-  return any(keyword in text for keyword in ("비교", "둘 중", "어디가 더", "차이", " vs ", "VS"))
+def infer_supervisor_execution(result: dict[str, Any]) -> dict[str, Any]:
+  if result.get("reason") == "no_matching_tool":
+    return {"path": "supervisor_no_tool"}
+  if isinstance(result.get("results"), list):
+    return enrich_execution_trace(
+      {
+        "path": "supervisor_aggregate",
+        "selectedAgents": selected_agents_from_result(result),
+      },
+      result,
+    )
+  return enrich_execution_trace(
+    {
+      "path": "specialist_tool",
+      "selectedAgent": agent_for_handler(result.get("handler")),
+    },
+    result,
+  )
 
 
-def is_recommendation_question(text: str) -> bool:
-  return any(keyword in text for keyword in ("추천", "권해", "골라", "조건에 맞는"))
+def enrich_execution_trace(trace: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+  enriched = {
+    key: item
+    for key, item in trace.items()
+    if item or item == 0
+  }
+  handler = first_handler(result)
+  handlers = handlers_from_result(result)
+  if handler:
+    enriched["handler"] = handler
+  if len(handlers) > 1:
+    enriched["handlers"] = handlers
+  selected_agents = selected_agents_from_result(result)
+  if selected_agents and "selectedAgents" not in enriched and "selectedAgent" not in enriched:
+    if len(selected_agents) == 1:
+      enriched["selectedAgent"] = selected_agents[0]
+    else:
+      enriched["selectedAgents"] = selected_agents
+  return enriched
+
+
+def agent_for_handler(handler: Any) -> str | None:
+  return {
+    "simple_lookup": "lookup_agent",
+    "price_trend": "price_trend_agent",
+    "recommendation": "recommendation_agent",
+    "comparison": "comparison_agent",
+    "legal_contract": "legal_contract_agent",
+  }.get(handler)
+
+
+def first_handler(result: Any) -> str | None:
+  handlers = handlers_from_result(result)
+  return handlers[0] if handlers else None
+
+
+def handlers_from_result(result: Any) -> list[str]:
+  handlers: list[str] = []
+
+  def visit(value: Any) -> None:
+    if isinstance(value, list):
+      for item in value:
+        visit(item)
+      return
+    if not isinstance(value, dict):
+      return
+    handler = value.get("handler")
+    if isinstance(handler, str) and handler not in handlers:
+      handlers.append(handler)
+    if "result" in value:
+      visit(value.get("result"))
+    if "results" in value:
+      visit(value.get("results"))
+
+  visit(result)
+  return handlers
+
+
+def selected_agents_from_result(result: Any) -> list[str]:
+  agents: list[str] = []
+
+  def visit(value: Any) -> None:
+    if isinstance(value, list):
+      for item in value:
+        visit(item)
+      return
+    if not isinstance(value, dict):
+      return
+    agent = value.get("agent")
+    if isinstance(agent, str) and agent not in agents:
+      agents.append(agent)
+    if "result" in value:
+      visit(value.get("result"))
+    if "results" in value:
+      visit(value.get("results"))
+
+  visit(result)
+  return agents
+
+
+def strip_nested_answers(value: Any) -> Any:
+  if isinstance(value, list):
+    return [strip_nested_answers(item) for item in value]
+  if isinstance(value, dict):
+    return {
+      key: strip_nested_answers(item)
+      for key, item in value.items()
+      if key != "answer"
+    }
+  return value

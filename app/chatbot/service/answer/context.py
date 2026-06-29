@@ -1,10 +1,10 @@
 """
 기존 chatbot JSON 응답을 최종 답변 생성용 context로 정규화합니다.
-LLM에는 원본 응답과 성공/실패 fragment 구분을 함께 전달하고, fallback도 같은 구조를 사용합니다.
+LLM에는 answer.observations에서 만든 축약 observation을 전달하고, fallback도 같은 context를 사용합니다.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -17,11 +17,17 @@ class ChatbotAnswerContext:
   fragments: list[dict[str, Any]]
   result: Any
   executionSummary: dict[str, int]
+  uiActions: list[dict[str, Any]] = field(default_factory=list)
+  uiArtifacts: list[dict[str, Any]] = field(default_factory=list)
+  uiSummary: dict[str, Any] | None = None
 
   @classmethod
   def from_response_dict(cls, response: dict[str, Any]) -> ChatbotAnswerContext:
     fragments = response.get("fragments")
     execution_summary = response.get("executionSummary")
+    ui_actions = response.get("uiActions")
+    ui_artifacts = response.get("uiArtifacts")
+    ui_summary = response.get("uiSummary")
     return cls(
       question=str(response.get("question", "")),
       success=response.get("success") is True,
@@ -30,6 +36,9 @@ class ChatbotAnswerContext:
       fragments=fragments if isinstance(fragments, list) else [],
       result=response.get("result"),
       executionSummary=execution_summary if isinstance(execution_summary, dict) else {},
+      uiActions=ui_actions if isinstance(ui_actions, list) else [],
+      uiArtifacts=ui_artifacts if isinstance(ui_artifacts, list) else [],
+      uiSummary=ui_summary if isinstance(ui_summary, dict) else None,
     )
 
   def to_dict(self) -> dict[str, Any]:
@@ -41,35 +50,16 @@ class ChatbotAnswerContext:
       "fragments": self.fragments,
       "result": self.result,
       "executionSummary": self.executionSummary,
+      "uiActions": self.uiActions,
+      "uiArtifacts": self.uiArtifacts,
+      "uiSummary": self.uiSummary,
     }
 
 
 def build_llm_context(context: ChatbotAnswerContext) -> dict[str, Any]:
-  successful_fragments = [
-    fragment
-    for fragment in context.fragments
-    if is_successful_fragment(fragment)
-  ]
-  failed_fragments = [
-    fragment
-    for fragment in context.fragments
-    if not is_successful_fragment(fragment)
-  ]
-  result_shape = "multiple" if isinstance(context.result, list) else "single"
+  from .observations import build_answer_observations
 
-  return {
-    "question": context.question,
-    "success": context.success,
-    "status": context.status,
-    "message": context.message,
-    "executionSummary": context.executionSummary,
-    "resultShape": result_shape,
-    "successfulFragments": successful_fragments,
-    "failedFragments": failed_fragments,
-    "singleResult": context.result if result_shape == "single" else None,
-    "multipleResults": context.result if result_shape == "multiple" else [],
-    "rawResponse": context.to_dict(),
-  }
+  return build_answer_observations(context)
 
 
 def is_successful_fragment(fragment: dict[str, Any]) -> bool:

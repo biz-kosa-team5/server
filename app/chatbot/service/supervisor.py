@@ -20,6 +20,7 @@ from .tools import (
   build_recommendation_tool,
   build_simple_lookup_tool,
 )
+from .dedupe import dedupe_specialist_results, dedupe_tool_results
 
 
 DEFAULT_AGENT_MODEL = "openai:gpt-4o-mini"
@@ -54,8 +55,10 @@ SUPERVISOR_AGENT_SYSTEM_PROMPT = """
 - 추천과 함께 시세/가격 흐름, 실거래/위치, 후보 비교, 계약/법령 근거를 함께 묻는 경우 관련 전문 agent를 추가로 호출할 수 있습니다.
 - "추천 이유"처럼 recommendation_agent 결과만으로 설명 가능한 경우에는 recommendation_agent 하나로 충분합니다.
 - 하나의 전문 agent로 충분하면 하나만 호출하세요.
-- 같은 질문을 여러 전문 agent에 중복 위임하지 마세요.
-- 전문 agent 선택이 애매하면 가장 직접적인 하나만 호출하세요.
+- 서로 다른 관측이 필요하면 여러 specialist agent를 호출할 수 있습니다.
+- 같은 의미의 동일 agent/tool 중복 호출은 금지합니다.
+- 같은 tool이라도 대상이나 조건이 다르면 각각 호출할 수 있습니다.
+- 전문 agent 선택이 애매하고 서로 다른 관측이 명확하지 않으면 가장 직접적인 하나만 호출하세요.
 - 전문 agent tool 결과에 없는 부동산 사실, 가격, 법령 내용을 추측하지 마세요.
 - 지원 범위 밖 질문이면 tool을 호출하지 않아도 됩니다.
 
@@ -90,17 +93,21 @@ class SupervisorRoutingRule:
 class SpecialistAgentResult:
   agent: str
   result: dict[str, Any]
+  depends_on: str | None = None
 
   @property
   def success(self) -> bool:
     return self.result.get("success") is True
 
   def to_dict(self) -> dict[str, Any]:
-    return {
+    value = {
       "agent": self.agent,
       "success": self.success,
       "result": self.result,
     }
+    if self.depends_on:
+      value["dependsOn"] = self.depends_on
+    return value
 
 
 SUPERVISOR_ROUTING_RULES = (
@@ -123,8 +130,16 @@ SUPERVISOR_ROUTING_RULES = (
     agent="price_trend_agent",
     signals=(
       "시세 추이",
+      "시세추이",
+      "시세 흐름",
       "가격 추이",
       "가격 흐름",
+      "가격 변화",
+      "실거래가 추이",
+      "최근 가격",
+      "월별 시세",
+      "분기별 시세",
+      "연도별 시세",
       "변화율",
       "변동률",
       "가격 순위",
@@ -247,10 +262,14 @@ class ChatbotSupervisor:
     )
 
   async def run(self, question: str) -> dict[str, Any]:
+    result, _execution = await self.run_with_trace(question)
+    return result
+
+  async def run_with_trace(self, question: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
     result = await self.supervisor.ainvoke({
       "messages": [{"role": "user", "content": build_supervisor_user_content(question)}],
     })
-    return extract_supervisor_result(result)
+    return extract_supervisor_result_with_trace(result)
 
 
 ChatbotAgent = ChatbotSupervisor
@@ -295,6 +314,11 @@ def normalize_question_signal_text(question: str) -> str:
 
 
 def extract_supervisor_result(result: dict[str, Any]) -> dict[str, Any]:
+  supervisor_result, _execution = extract_supervisor_result_with_trace(result)
+  return supervisor_result
+
+
+def extract_supervisor_result_with_trace(result: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
   tool_messages = [
     message
     for message in result.get("messages", [])
@@ -303,15 +327,35 @@ def extract_supervisor_result(result: dict[str, Any]) -> dict[str, Any]:
   tool_results = parse_tool_messages(tool_messages)
 
   if not tool_messages:
-    return no_matching_tool_result()
+    return no_matching_tool_result(), {"path": "supervisor_no_tool"}
 
   specialist_results = []
   for tool_result in tool_results:
     specialist_results.append(specialist_result_from_tool_result(tool_result))
+  specialist_results, deduplicated_count = dedupe_specialist_results(specialist_results)
 
   if len(specialist_results) == 1:
-    return specialist_results[0].result
-  return aggregate_specialist_results(specialist_results)
+    specialist_result = specialist_results[0]
+    execution = {
+      "path": "specialist_tool",
+      "selectedAgent": specialist_result.agent,
+    }
+    if deduplicated_count:
+      execution["deduplicatedCount"] = deduplicated_count
+    return (
+      specialist_result.result,
+      execution,
+    )
+  execution = {
+    "path": "supervisor_aggregate",
+    "selectedAgents": [item.agent for item in specialist_results],
+  }
+  if deduplicated_count:
+    execution["deduplicatedCount"] = deduplicated_count
+  return (
+    aggregate_specialist_results(specialist_results),
+    execution,
+  )
 
 
 def extract_agent_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -354,7 +398,11 @@ def specialist_result_from_tool_result(tool_result: dict[str, Any]) -> Specialis
 
 
 def aggregate_tool_results(tool_messages: list[Any], tool_results: list[dict[str, Any]]) -> dict[str, Any]:
-  total = len(tool_messages)
+  tool_results, _deduplicated_count = dedupe_tool_results(tool_results)
+  if len(tool_results) == 1:
+    return tool_results[0]
+
+  total = len(tool_results)
   succeeded = sum(1 for item in tool_results if item.get("success") is True)
   failed = total - succeeded
   partial_succeeded = sum(
@@ -390,6 +438,7 @@ def aggregate_tool_results(tool_messages: list[Any], tool_results: list[dict[str
 
 
 def aggregate_specialist_results(specialist_results: list[SpecialistAgentResult]) -> dict[str, Any]:
+  specialist_results, _deduplicated_count = dedupe_specialist_results(specialist_results)
   total = len(specialist_results)
   succeeded = sum(1 for item in specialist_results if item.success)
   failed = total - succeeded

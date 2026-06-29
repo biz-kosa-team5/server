@@ -1,7 +1,7 @@
 from app.chatbot.features.comparison import extract_compare_slots
-from app.chatbot.features.comparison.rag_answer import fallback_comparison_answer
 from app.chatbot.features.recommendation import extract_recommendation_slots
-from app.chatbot.features.recommendation.rag_answer import fallback_recommendation_answer
+from app.chatbot.service.answer.formatters.comparison import format_comparison_result
+from app.chatbot.service.answer.formatters.recommendation import format_recommendation_result
 from app.chatbot.service.tools import (
   build_comparison_tool,
   build_legal_contract_tool,
@@ -83,9 +83,11 @@ def test_comparison_extractor_cleans_metric_words_from_names():
 
 
 def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
-  answer = fallback_recommendation_answer(
-    {"district": "송파구"},
-    [{
+  answer = format_recommendation_result({
+    "handler": "recommendation",
+    "success": True,
+    "criteria": {"district": "송파구"},
+    "results": [{
       "complexName": "잠실엘스",
       "latestDealAmountText": "25.0억원",
       "unitCnt": 5678,
@@ -98,7 +100,7 @@ def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
       },
       "redevelopmentInfo": [{"title": "잠실 일대 정비사업 관련 기사", "url": "https://example.com"}],
     }],
-  )
+  })
 
   assert "800m 생활편의" in answer
   assert "롯데백화점 잠실점" in answer
@@ -107,9 +109,11 @@ def test_recommendation_answer_includes_lifestyle_and_redevelopment_context():
 
 
 def test_comparison_answer_includes_lifestyle_and_redevelopment_context():
-  answer = fallback_comparison_answer(
-    {"apartment_names": ["잠실엘스", "리센츠"]},
-    [
+  answer = format_comparison_result({
+    "handler": "comparison",
+    "success": True,
+    "criteria": {"apartment_names": ["잠실엘스", "리센츠"]},
+    "results": [
       {
         "complexName": "잠실엘스",
         "latestDealAmountText": "25.0억원",
@@ -127,8 +131,8 @@ def test_comparison_answer_includes_lifestyle_and_redevelopment_context():
         "redevelopmentInfo": [],
       },
     ],
-    [],
-  )
+    "missingApartmentNames": [],
+  })
 
   assert "800m 생활편의" in answer
   assert "롯데백화점 잠실점" in answer
@@ -159,6 +163,65 @@ def test_simple_lookup_tool_overrides_extracted_slots():
   assert result["success"] is True
   assert result["query_type"] == "location"
   assert result["criteria"]["target_name"] == "잠실엘스"
+
+
+def test_price_trend_tool_accepts_query_only_for_clear_timeseries_question(monkeypatch):
+  captured = {}
+
+  def fake_run_price_trend(_session, slots):
+    captured["slots"] = slots
+    return {
+      "handler": "price_trend",
+      "success": True,
+      "observation_type": "timeseries",
+      "criteria": slots,
+      "rows": [{"period_start": "2026-01-01"}],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.tools.price_trend_tool.run_price_trend", fake_run_price_trend)
+
+  result = build_price_trend_tool(object()).invoke({
+    "query": "잠실엘스 최근 1년 시세추이",
+  })
+
+  assert result["handler"] == "price_trend"
+  assert result["success"] is True
+  assert result["observation_type"] == "timeseries"
+  assert captured["slots"]["analysis_type"] == "timeseries"
+  assert captured["slots"]["target_type"] == "complex"
+  assert captured["slots"]["target_name"] == "잠실엘스"
+  assert captured["slots"]["period"] == "1y"
+  assert result["rows"]
+
+
+def test_price_trend_tool_accepts_query_only_for_clear_ranking_question(monkeypatch):
+  captured = {}
+
+  def fake_run_price_trend(_session, slots):
+    captured["slots"] = slots
+    return {
+      "handler": "price_trend",
+      "success": True,
+      "observation_type": "ranking",
+      "criteria": slots,
+      "rows": [{"rank": 1}],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.tools.price_trend_tool.run_price_trend", fake_run_price_trend)
+
+  result = build_price_trend_tool(object()).invoke({
+    "query": "강남구에서 많이 오른 아파트 TOP 5",
+  })
+
+  assert result["handler"] == "price_trend"
+  assert result["success"] is True
+  assert result["observation_type"] == "ranking"
+  assert captured["slots"]["analysis_type"] == "ranking"
+  assert captured["slots"]["target_type"] == "region"
+  assert captured["slots"]["target_name"] == "강남구"
+  assert captured["slots"]["direction"] == "desc"
+  assert captured["slots"]["limit"] == 5
+  assert result["rows"]
 
 
 def test_feature_tools_are_langchain_tools():

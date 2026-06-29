@@ -11,6 +11,7 @@ from app.chatbot.service.supervisor import (
   build_supervisor_user_content,
   extract_agent_result,
   extract_supervisor_result,
+  extract_supervisor_result_with_trace,
   suggest_specialist_agents,
 )
 
@@ -53,6 +54,18 @@ def test_suggest_specialist_agents_opens_additional_agents_for_distinct_evidence
   assert suggest_specialist_agents("강남구 아파트 추천하고 매매 계약 법령도 알려줘") == [
     "recommendation_agent",
     "legal_contract_agent",
+  ]
+
+
+def test_suggest_specialist_agents_handles_price_trend_spacing_variants():
+  assert suggest_specialist_agents("잠실엘스 시세추이 알려줘") == [
+    "price_trend_agent",
+  ]
+  assert suggest_specialist_agents("잠실엘스 시세 흐름 알려줘") == [
+    "price_trend_agent",
+  ]
+  assert suggest_specialist_agents("잠실엘스 최근 가격 변화 알려줘") == [
+    "price_trend_agent",
   ]
 
 
@@ -187,6 +200,26 @@ def test_extract_supervisor_result_unwraps_single_specialist_result():
   }
 
 
+def test_extract_supervisor_result_with_trace_tracks_single_specialist_agent():
+  result, execution = extract_supervisor_result_with_trace({
+    "messages": [
+      FakeAgentMessage(
+        "tool",
+        '{"agent": "recommendation_agent", "success": true, "result": {"success": true, "handler": "recommendation"}}',
+      ),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "handler": "recommendation",
+  }
+  assert execution == {
+    "path": "specialist_tool",
+    "selectedAgent": "recommendation_agent",
+  }
+
+
 def test_extract_supervisor_result_aggregates_multiple_specialist_results():
   result = extract_supervisor_result({
     "messages": [
@@ -253,6 +286,56 @@ def test_extract_supervisor_result_marks_partial_success_for_mixed_parse_failure
       "succeeded": 1,
       "failed": 1,
     },
+  }
+
+
+def test_extract_supervisor_result_with_trace_tracks_aggregate_agents():
+  result, execution = extract_supervisor_result_with_trace({
+    "messages": [
+      FakeAgentMessage(
+        "tool",
+        '{"agent": "recommendation_agent", "success": true, "result": {"success": true, "handler": "recommendation"}}',
+      ),
+      FakeAgentMessage("tool", "not json"),
+    ],
+  })
+
+  assert result["status"] == "partial_success"
+  assert execution == {
+    "path": "supervisor_aggregate",
+    "selectedAgents": [
+      "recommendation_agent",
+      "unknown_agent",
+    ],
+  }
+
+
+def test_extract_supervisor_result_with_trace_dedupes_duplicate_specialist_results():
+  result, execution = extract_supervisor_result_with_trace({
+    "messages": [
+      FakeAgentMessage(
+        "tool",
+        '{"agent": "lookup_agent", "success": true, "result": {"success": true, "handler": "simple_lookup", "query_type": "location", "criteria": {"target_name": "잠실엘스"}}}',
+      ),
+      FakeAgentMessage(
+        "tool",
+        '{"agent": "lookup_agent", "success": true, "result": {"success": true, "handler": "simple_lookup", "query_type": "location", "criteria": {"target_name": "잠실엘스"}}}',
+      ),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "handler": "simple_lookup",
+    "query_type": "location",
+    "criteria": {
+      "target_name": "잠실엘스",
+    },
+  }
+  assert execution == {
+    "path": "specialist_tool",
+    "selectedAgent": "lookup_agent",
+    "deduplicatedCount": 1,
   }
 
 
@@ -371,6 +454,30 @@ def test_extract_agent_result_wraps_multiple_successful_tool_results():
       "total": 2,
       "succeeded": 2,
       "failed": 0,
+    },
+  }
+
+
+def test_extract_agent_result_unwraps_duplicate_tool_results_after_dedupe():
+  result = extract_agent_result({
+    "messages": [
+      FakeAgentMessage(
+        "tool",
+        '{"success": true, "handler": "simple_lookup", "query_type": "location", "criteria": {"target_name": "잠실엘스"}}',
+      ),
+      FakeAgentMessage(
+        "tool",
+        '{"success": true, "handler": "simple_lookup", "query_type": "location", "criteria": {"target_name": "잠실엘스"}}',
+      ),
+    ],
+  })
+
+  assert result == {
+    "success": True,
+    "handler": "simple_lookup",
+    "query_type": "location",
+    "criteria": {
+      "target_name": "잠실엘스",
     },
   }
 

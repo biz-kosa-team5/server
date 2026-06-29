@@ -6,7 +6,6 @@ from typing import Annotated, Any
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-from app.chatbot.features.recommendation.rag_answer import generate_recommendation_answer
 from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
 from app.real_estate.dao import all_complexes_ordered, latest_trade_for_complex
 from app.real_estate.support import clean_text, criteria_from_slots, empty_result, normalize_slots, optional_int
@@ -29,16 +28,10 @@ class RecommendationService:
     self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
-    """추천 후보 조회 결과에 RAG 답변을 붙여 챗봇 tool 응답을 만든다."""
+    """추천 후보 조회 observation을 챗봇 tool 응답으로 만든다."""
     slots = dict(slots)
     slots["_include_redevelopment_context"] = should_search_redevelopment_context(text)
-    result = self.recommend_apartments_by_filters(session, slots)
-    result["answer"] = generate_recommendation_answer(
-      question=text,
-      criteria=result.get("criteria", {}),
-      results=result.get("results", []),
-    )
-    return result
+    return self.recommend_apartments_by_filters(session, slots)
 
   def recommend_apartments_by_filters(self, session: Session, slots: dict[str, Any]) -> dict[str, Any]:
     """슬롯 조건에 맞는 아파트 추천 후보를 조회한다."""

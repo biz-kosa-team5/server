@@ -39,5 +39,7 @@ def test_legal_contract_service_fills_expanded_terms_in_slots():
   assert slots["original_query"] == "계약금을 돌려받을 수 있나요?"
   assert slots["normalized_query"] == "계약금을 돌려받을 수 있나요"
   assert slots["expanded_terms"] == result["expandedTerms"]
-  assert result["question"] == slots["original_query"]
-  assert result["answerStatus"] == "insufficient_evidence"
+  assert result["question"] == slots["normalized_query"]
+  assert result["handler"] == "legal_contract"
+  assert "answer" not in result
+  assert "answerStatus" not in result
