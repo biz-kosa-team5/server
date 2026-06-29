@@ -114,6 +114,10 @@ def build_simple_lookup_tool(session: Session):
           -> query_type="region_price_ranking", target_name="송파구",
              period="6m", price_order="lowest", limit=5
 
+        - "송파구 2020년 최저가"
+          -> query_type="region_price_ranking", target_name="송파구",
+            price_order="lowest", start_date="2020-01-01", end_date="2020-12-31"
+
         면적/평형 해석 규칙:
         - "㎡", "m2", "제곱미터"가 붙은 숫자는 area에 넣으세요.
           예: "84㎡" -> area=84

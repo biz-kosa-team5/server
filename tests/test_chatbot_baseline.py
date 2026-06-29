@@ -165,7 +165,7 @@ def test_simple_lookup_tool_overrides_extracted_slots():
   assert result["criteria"]["target_name"] == "잠실엘스"
 
 
-def test_price_trend_tool_accepts_query_only_for_clear_timeseries_question(monkeypatch):
+def test_price_trend_tool_uses_llm_args_for_timeseries_question(monkeypatch):
   captured = {}
 
   def fake_run_price_trend(_session, slots):
@@ -181,7 +181,11 @@ def test_price_trend_tool_accepts_query_only_for_clear_timeseries_question(monke
   monkeypatch.setattr("app.chatbot.service.tools.price_trend_tool.run_price_trend", fake_run_price_trend)
 
   result = build_price_trend_tool(object()).invoke({
-    "query": "잠실엘스 최근 1년 시세추이",
+    "query": "Eunma recent price trend",
+    "analysis_type": "timeseries",
+    "target_type": "complex",
+    "target_name": "Eunma",
+    "period": "1y",
   })
 
   assert result["handler"] == "price_trend"
@@ -189,12 +193,13 @@ def test_price_trend_tool_accepts_query_only_for_clear_timeseries_question(monke
   assert result["observation_type"] == "timeseries"
   assert captured["slots"]["analysis_type"] == "timeseries"
   assert captured["slots"]["target_type"] == "complex"
-  assert captured["slots"]["target_name"] == "잠실엘스"
+  assert captured["slots"]["target_name"] == "Eunma"
   assert captured["slots"]["period"] == "1y"
+  assert captured["slots"]["original_question"] == "Eunma recent price trend"
   assert result["rows"]
 
 
-def test_price_trend_tool_accepts_query_only_for_clear_ranking_question(monkeypatch):
+def test_price_trend_tool_uses_llm_args_for_ranking_question(monkeypatch):
   captured = {}
 
   def fake_run_price_trend(_session, slots):
@@ -210,7 +215,13 @@ def test_price_trend_tool_accepts_query_only_for_clear_ranking_question(monkeypa
   monkeypatch.setattr("app.chatbot.service.tools.price_trend_tool.run_price_trend", fake_run_price_trend)
 
   result = build_price_trend_tool(object()).invoke({
-    "query": "강남구에서 많이 오른 아파트 TOP 5",
+    "query": "Gangnam-gu top movers",
+    "analysis_type": "ranking",
+    "target_type": "region",
+    "target_name": "Gangnam-gu",
+    "rank_by": "change_rate",
+    "direction": "desc",
+    "limit": 5,
   })
 
   assert result["handler"] == "price_trend"
@@ -218,9 +229,11 @@ def test_price_trend_tool_accepts_query_only_for_clear_ranking_question(monkeypa
   assert result["observation_type"] == "ranking"
   assert captured["slots"]["analysis_type"] == "ranking"
   assert captured["slots"]["target_type"] == "region"
-  assert captured["slots"]["target_name"] == "강남구"
+  assert captured["slots"]["target_name"] == "Gangnam-gu"
+  assert captured["slots"]["rank_by"] == "change_rate"
   assert captured["slots"]["direction"] == "desc"
   assert captured["slots"]["limit"] == 5
+  assert captured["slots"]["original_question"] == "Gangnam-gu top movers"
   assert result["rows"]
 
 

@@ -8,6 +8,22 @@ def run_plan(question):
   return asyncio.run(execute_plan(None, question, build_execution_plan(question)))
 
 
+def test_orchestrator_skips_direct_lookup_and_trend():
+  lookup = asyncio.run(execute_plan(
+    None,
+    "잠실엘스 위치 알려줘",
+    build_execution_plan("잠실엘스 위치 알려줘"),
+  ))
+  trend = asyncio.run(execute_plan(
+    None,
+    "잠실엘스 시세추이 알려줘",
+    build_execution_plan("잠실엘스 시세추이 알려줘"),
+  ))
+
+  assert lookup is None
+  assert trend is None
+
+
 def test_orchestrator_passes_recommendation_candidates_to_comparison(monkeypatch):
   comparison_calls = []
 
@@ -103,7 +119,7 @@ def test_orchestrator_skips_comparison_when_recommendation_fails(monkeypatch):
   assert orchestration.result["results"][1]["result"]["reason"] == "dependency_failed"
 
 
-def test_orchestrator_runs_lookup_and_trend_for_ambiguous_price_question(monkeypatch):
+def test_orchestrator_skips_lookup_and_trend_for_ambiguous_price_question(monkeypatch):
   calls = []
 
   def fake_lookup(_session, slots, text):
@@ -132,15 +148,11 @@ def test_orchestrator_runs_lookup_and_trend_for_ambiguous_price_question(monkeyp
 
   orchestration = run_plan("잠실엘스 시세 알려줘")
 
-  assert [call[0] for call in calls] == ["lookup", "trend"]
-  assert calls[0][1]["target_name"] == "잠실엘스"
-  assert calls[0][1]["query_type"] == "trade_history"
-  assert calls[1][1]["target_type"] == "complex"
-  assert calls[1][1]["period"] == "1y"
-  assert orchestration.execution["path"] == "direct_ambiguous_features"
+  assert calls == []
+  assert orchestration is None
 
 
-def test_orchestrator_preserves_price_trend_ranking_slots(monkeypatch):
+def test_orchestrator_skips_price_trend_ranking_direct_execution(monkeypatch):
   calls = []
 
   def fake_trend(_session, slots):
@@ -158,14 +170,11 @@ def test_orchestrator_preserves_price_trend_ranking_slots(monkeypatch):
 
   orchestration = run_plan("최근 1년 강남구에서 많이 오른 아파트 TOP 5 알려줘")
 
-  assert calls[0]["analysis_type"] == "ranking"
-  assert calls[0]["rank_by"] == "change_rate"
-  assert calls[0]["direction"] == "desc"
-  assert calls[0]["limit"] == 5
-  assert orchestration.execution["path"] == "direct_feature"
+  assert calls == []
+  assert orchestration is None
 
 
-def test_orchestrator_runs_same_tool_multi_target_directly(monkeypatch):
+def test_orchestrator_skips_same_tool_price_trend_multi_target(monkeypatch):
   calls = []
 
   def fake_trend(_session, slots):
@@ -183,11 +192,8 @@ def test_orchestrator_runs_same_tool_multi_target_directly(monkeypatch):
 
   orchestration = run_plan("강남구 시세추이랑 송파구 시세추이 알려줘")
 
-  assert [call["target_name"] for call in calls] == ["강남구", "송파구"]
-  assert [call["target_type"] for call in calls] == ["region", "region"]
-  assert orchestration.result["status"] == "success"
-  assert orchestration.execution["path"] == "direct_same_tool_features"
-  assert orchestration.execution["handlers"] == ["price_trend", "price_trend"]
+  assert calls == []
+  assert orchestration is None
 
 
 def test_orchestrator_uses_sub_queries_for_independent_comparison_and_legal(monkeypatch):
@@ -248,11 +254,11 @@ def test_orchestrator_fallback_uses_step_query_for_insufficient_direct_slots(mon
     supervisor=FakeSupervisor(),
   ))
 
-  assert supervisor_calls == ["실거래도 알려줘"]
-  assert orchestration.result["status"] == "partial_success"
+  assert supervisor_calls == []
+  assert orchestration is None
 
 
-def test_orchestrator_directly_aggregates_supported_and_unsupported_question(monkeypatch):
+def test_orchestrator_skips_supported_and_unsupported_question_with_lookup(monkeypatch):
   lookup_calls = []
 
   def fake_lookup(_session, slots, text):
@@ -269,15 +275,8 @@ def test_orchestrator_directly_aggregates_supported_and_unsupported_question(mon
 
   orchestration = run_plan("잠실엘스 위치랑 오늘 날씨 알려줘")
 
-  assert lookup_calls[0][1] == "잠실엘스 위치 알려줘"
-  assert orchestration.result["success"] is True
-  assert orchestration.result["status"] == "partial_success"
-  assert orchestration.execution["path"] == "direct_supported_unsupported_features"
-  assert [item["result"].get("handler") for item in orchestration.result["results"]] == [
-    "simple_lookup",
-    None,
-  ]
-  assert orchestration.result["results"][1]["result"]["reason"] == "no_matching_tool"
+  assert lookup_calls == []
+  assert orchestration is None
 
 
 def test_orchestrator_directly_handles_pure_unsupported_question():

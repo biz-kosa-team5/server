@@ -275,7 +275,7 @@ def test_chatbot_query_returns_no_matching_tool_response(monkeypatch):
   assert payload["result"]["reason"] == "no_matching_tool"
 
 
-def test_chatbot_query_uses_direct_lookup_for_single_domain_question(monkeypatch):
+def test_chatbot_query_uses_supervisor_for_single_lookup_question(monkeypatch):
   calls = []
   supervisor_calls = []
 
@@ -286,8 +286,12 @@ def test_chatbot_query_uses_direct_lookup_for_single_domain_question(monkeypatch
     async def run(self, question):
       supervisor_calls.append(question)
       return {
-        "success": False,
-        "reason": "should_not_call_supervisor",
+        "success": True,
+        "handler": "simple_lookup",
+        "query_type": "location",
+        "criteria": {
+          "target_name": "잠실엘스",
+        },
       }
 
   def fake_run_simple_lookup(_session, slots, text):
@@ -310,12 +314,8 @@ def test_chatbot_query_uses_direct_lookup_for_single_domain_question(monkeypatch
   )
 
   assert response.status_code == 200
-  assert calls == [({
-    "original_question": "잠실엘스 위치 알려줘",
-    "query_type": "location",
-    "target_name": "잠실엘스",
-  }, "잠실엘스 위치 알려줘")]
-  assert supervisor_calls == []
+  assert calls == []
+  assert supervisor_calls == ["잠실엘스 위치 알려줘"]
   assert response.json()["answer"] == "질문을 처리했습니다."
   assert response.json()["result"] == {
     "success": True,
@@ -326,7 +326,7 @@ def test_chatbot_query_uses_direct_lookup_for_single_domain_question(monkeypatch
     },
   }
   assert response.json()["fragments"][0]["execution"] == {
-    "path": "direct_feature",
+    "path": "specialist_tool",
     "planType": "single_feature",
     "selectedAgent": "lookup_agent",
     "handler": "simple_lookup",
@@ -341,26 +341,30 @@ def test_chatbot_query_adds_ui_payload_before_composing_answer(monkeypatch):
       captured_context["context"] = context
       return "잠실엘스 위치를 지도에 표시했습니다."
 
-  def fake_run_simple_lookup(_session, slots, _text):
-    return {
-      "success": True,
-      "handler": "simple_lookup",
-      "query_type": "location",
-      "criteria": {
-        "target_name": slots["target_name"],
-      },
-      "data": [
-        {
-          "complex_id": 1002,
-          "complex_name": "잠실엘스",
-          "latitude": 37.5124,
-          "longitude": 127.0821,
-        }
-      ],
-    }
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, _question):
+      return {
+        "success": True,
+        "handler": "simple_lookup",
+        "query_type": "location",
+        "criteria": {
+          "target_name": "잠실엘스",
+        },
+        "data": [
+          {
+            "complex_id": 1002,
+            "complex_name": "잠실엘스",
+            "latitude": 37.5124,
+            "longitude": 127.0821,
+          }
+        ],
+      }
 
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", CapturingAnswerComposer)
-  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
 
   response = client.post(
     "/api/v1/chatbot/query",
@@ -376,24 +380,23 @@ def test_chatbot_query_adds_ui_payload_before_composing_answer(monkeypatch):
   assert captured_context["context"].uiActions[0]["id"] == "focus_map:complex:1002"
 
 
-def test_chatbot_query_does_not_initialize_supervisor_for_direct_lookup(monkeypatch):
+def test_chatbot_query_initializes_supervisor_for_lookup(monkeypatch):
   class FakeChatbotSupervisor:
     def __init__(self, _):
-      raise AssertionError("direct lookup should not initialize supervisor")
+      pass
 
-  def fake_run_simple_lookup(_session, slots, text):
-    return {
-      "success": True,
-      "handler": "simple_lookup",
-      "query_type": "location",
-      "criteria": {
-        "target_name": slots["target_name"],
-      },
-      "message": "단지 위치를 조회했습니다.",
-    }
+    async def run(self, _question):
+      return {
+        "success": True,
+        "handler": "simple_lookup",
+        "query_type": "location",
+        "criteria": {
+          "target_name": "잠실엘스",
+        },
+        "message": "단지 위치를 조회했습니다.",
+      }
 
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
-  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
 
   response = client.post(
     "/api/v1/chatbot/query",
@@ -402,7 +405,7 @@ def test_chatbot_query_does_not_initialize_supervisor_for_direct_lookup(monkeypa
 
   assert response.status_code == 200
   assert response.json()["success"] is True
-  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
+  assert response.json()["fragments"][0]["execution"]["path"] == "specialist_tool"
 
 
 def test_chatbot_query_marks_direct_feature_execution(monkeypatch):

@@ -32,6 +32,8 @@ from .supervisor import (
 
 SupervisorProvider = Callable[[], ChatbotSupervisor | None]
 
+LLM_ONLY_HANDLERS = {"simple_lookup", "price_trend"}
+
 
 @dataclass(frozen=True)
 class OrchestrationResult:
@@ -49,6 +51,8 @@ async def execute_plan(
   supervisor_initialization_failed: bool = False,
 ) -> OrchestrationResult | None:
   if plan.plan_type == "supervisor_llm":
+    return None
+  if should_use_llm_for_plan(plan):
     return None
   if plan.plan_type == "single_feature":
     return await execute_single_feature(session, text, plan)
@@ -87,6 +91,10 @@ async def execute_plan(
       supervisor_initialization_failed=supervisor_initialization_failed,
     )
   return None
+
+
+def should_use_llm_for_plan(plan: ExecutionPlan) -> bool:
+  return any(step.handler in LLM_ONLY_HANDLERS for step in plan.steps)
 
 
 async def execute_single_feature(

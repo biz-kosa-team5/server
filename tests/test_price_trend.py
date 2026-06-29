@@ -109,41 +109,25 @@ def test_policy_rejects_bad_inputs(bad_slots: dict[str, Any]):
 def test_period_extractor_keeps_original_question():
     result = extract_price_trend_slots("Eunma recent price trend")
 
-    assert result["original_question"] == "Eunma recent price trend"
+    assert result == {"original_question": "Eunma recent price trend"}
 
 
-def test_period_extractor_infers_timeseries_target_from_korean_query():
-    result = extract_price_trend_slots("잠실엘스 최근 1년 시세추이")
+@pytest.mark.parametrize(
+    "query",
+    [
+        "잠실엘스 최근 1년 시세추이",
+        "경덕 아파트 2015년부터 월별 시세추이",
+        "경덕아파트 2015년 시세추이",
+        "은마 2018년부터 2022년까지 시세추이",
+        "경덕아파트 10년간 시세추이",
+        "강남구에서 많이 오른 아파트 TOP 5",
+        "강남 3구에서 많이 오른 아파트",
+    ],
+)
+def test_period_extractor_preserves_only_original_question_for_korean_queries(query: str):
+    result = extract_price_trend_slots(query)
 
-    assert result == {
-        "original_question": "잠실엘스 최근 1년 시세추이",
-        "period": "1y",
-        "analysis_type": ANALYSIS_TIMESERIES,
-        "target_type": TARGET_COMPLEX,
-        "target_name": "잠실엘스",
-    }
-
-
-def test_period_extractor_infers_ranking_target_from_korean_query():
-    result = extract_price_trend_slots("강남구에서 많이 오른 아파트 TOP 5")
-
-    assert result == {
-        "original_question": "강남구에서 많이 오른 아파트 TOP 5",
-        "analysis_type": ANALYSIS_RANKING,
-        "target_type": TARGET_REGION,
-        "target_name": "강남구",
-        "rank_by": "change_rate",
-        "direction": "desc",
-        "limit": 5,
-    }
-
-
-def test_period_extractor_does_not_treat_gangnam_three_as_ranking_limit():
-    result = extract_price_trend_slots("강남 3구에서 많이 오른 아파트")
-
-    assert result["analysis_type"] == ANALYSIS_RANKING
-    assert result["target_name"] == "강남3구"
-    assert "limit" not in result
+    assert result == {"original_question": query}
 
 
 def test_service_returns_timeseries_observation():
@@ -220,7 +204,7 @@ def test_service_returns_trend_error_failure_with_candidates():
 
     assert result["success"] is False
     assert result["reason"] == "target_not_found"
-    assert result["error"] == "target was not found"
+    assert result["message"] == "target was not found"
     assert result["candidates"] == [{"name": "Eunma"}]
 
 
