@@ -69,6 +69,8 @@ def format_recommendation_result(result: dict[str, Any]) -> str:
       reasons.append(f"가까운 교육시설 {education}")
     if lifestyle:
       reasons.append(f"800m 생활편의 {lifestyle}")
+    if not station and not education and not lifestyle:
+      reasons.append("주변 인프라는 좌표/POI 데이터로 확인되지 않음")
     if redevelopment:
       reasons.append(f"재개발/정비사업 검색결과 {redevelopment}")
     if item.get("unitCnt") is not None:
@@ -83,7 +85,7 @@ def format_recommendation_result(result: dict[str, Any]) -> str:
   if has_search_results(results):
     lines.append("학군은 평판이 아니라 가까운 교육시설 거리 기준이며, 미래 가격은 예측하지 않고 웹검색된 재개발/정비사업 공개 정보만 참고로 제시했습니다.")
   else:
-    lines.append("학군은 평판이 아니라 가까운 교육시설 거리 기준이며, 생활편의는 800m 이내 DB POI 기준으로만 제시했습니다.")
+    lines.append("생활편의는 800m 이내 DB POI 기준이며, 현재 응답 데이터에서 확인된 재개발/정비사업 정보는 없습니다.")
   return "\n".join(lines)
 
 
