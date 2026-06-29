@@ -22,11 +22,21 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
   if district is not None:
     slots["district"] = district
 
+  neighborhood = extract_neighborhood_name(text)
+  if neighborhood is not None:
+    slots["neighborhood"] = neighborhood
+
   station_name = extract_station_name(text)
   if station_name is not None:
     slots["station_name"] = station_name
     slots["radius_m"] = DEFAULT_RADIUS_M
     slots["sort_by"] = "distance_asc"
+
+  school_name = extract_school_name(text)
+  if school_name is not None:
+    slots["school_name"] = school_name
+    slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    slots["sort_by"] = "school_distance_asc"
 
   school_types = extract_school_types(text)
   if len(school_types) == 1:
@@ -81,20 +91,43 @@ def extract_district(text: str) -> str | None:
   return next((district for district in DISTRICTS if district in text), None)
 
 
-def extract_station_name(text: str) -> str | None:
-  match = re.search(r"([가-힣A-Za-z0-9]+역)\s*(?:근처|주변|인근|역세권)?", text)
+def extract_neighborhood_name(text: str) -> str | None:
+  match = re.search(
+    r"(?<![가-힣A-Za-z0-9])([가-힣A-Za-z0-9]{2,}동)\s*(?:에서|에|의|쪽|근처|주변|인근)?\s*(?:아파트|단지|매물|추천)",
+    text,
+  )
   if match is not None:
     return match.group(1)
 
+  leading_match = re.search(
+    r"(?<![가-힣A-Za-z0-9])([가-힣A-Za-z0-9]{2,}동)(?![가-힣A-Za-z0-9])",
+    text,
+  )
+  return None if leading_match is None else leading_match.group(1)
+
+
+def extract_station_name(text: str) -> str | None:
   connected_match = re.search(
-    r"([가-힣A-Za-z0-9]+?)\s*(?:이랑|랑|와|과)\s*(?:가까운|가까이에|근처|주변|인근)",
+    r"([가-힣A-Za-z0-9()]+역)\s*(?:이랑|랑|와|과|에서)?\s*(?:가까운|가까이에|근처|주변|인근)",
     text,
   )
   if connected_match is not None:
     return connected_match.group(1)
 
+  match = re.search(r"([가-힣A-Za-z0-9()]+역)\s*(?:근처|주변|인근|역세권)?", text)
+  if match is not None:
+    return match.group(1)
+
   near_match = re.search(r"([가-힣A-Za-z0-9]+)\s*(?:근처|주변|인근)", text)
   return None if near_match is None else near_match.group(1)
+
+
+def extract_school_name(text: str) -> str | None:
+  match = re.search(
+    r"([가-힣A-Za-z0-9]+(?:유치원|초등학교|중학교|고등학교|특수학교|초|중|고))\s*(?:이랑|랑|와|과|에서)?\s*(?:가까운|가까이에|근처|주변|인근)",
+    text,
+  )
+  return None if match is None else match.group(1)
 
 
 def extract_school_types(text: str) -> list[str]:

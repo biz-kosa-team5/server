@@ -20,6 +20,15 @@ def test_planner_routes_candidate_comparison_as_dependent_multi_feature():
   assert plan.steps[1].depends_on == "recommendation_agent"
 
 
+def test_planner_routes_nearby_station_apartment_comparison_as_dependent_multi_feature():
+  plan = build_execution_plan("잠실역이랑 가까운 아파트들을 비교해줘")
+
+  assert plan.plan_type == "dependent_multi_feature"
+  assert plan.reason == "nearby_candidates_feed_comparison"
+  assert handlers(plan) == ["recommendation", "comparison"]
+  assert plan.steps[1].depends_on == "recommendation_agent"
+
+
 def test_planner_routes_plain_complex_price_as_ambiguous_multi_feature():
   plan = build_execution_plan("잠실엘스 시세 알려줘")
 

@@ -19,6 +19,10 @@ def complex_matches_base_filters(complex_row: Complex, slots: dict[str, Any]) ->
   if district is not None and complex_row.region is None:
     return False
 
+  neighborhood = clean_text(slots.get("neighborhood"))
+  if neighborhood is not None and not complex_matches_neighborhood(complex_row, neighborhood):
+    return False
+
   min_households = optional_int(slots.get("min_households"))
   if min_households is not None and (complex_row.unit_cnt is None or complex_row.unit_cnt < min_households):
     return False
@@ -27,6 +31,18 @@ def complex_matches_base_filters(complex_row: Complex, slots: dict[str, Any]) ->
   if min_built_year is not None and (complex_row.use_date is None or complex_row.use_date < f"{min_built_year}-01-01"):
     return False
   return True
+
+
+def complex_matches_neighborhood(complex_row: Complex, neighborhood: str) -> bool:
+  """동 단위 요청은 단지 주소를 기준으로 좁힌다."""
+  region_name = clean_text(complex_row.region.name if complex_row.region is not None else None)
+  if region_name == neighborhood:
+    return True
+
+  address = clean_text(complex_row.address)
+  if address is None:
+    return False
+  return neighborhood in address.split()
 
 
 def latest_trade_matches(latest_trade: Trade | None, slots: dict[str, Any]) -> bool:

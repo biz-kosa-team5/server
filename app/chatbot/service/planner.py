@@ -135,6 +135,10 @@ def build_execution_plan(text: str) -> ExecutionPlan:
   if not question:
     return supervisor_plan("empty_question")
 
+  nearby_comparison_plan = build_nearby_candidate_comparison_plan(question)
+  if nearby_comparison_plan is not None:
+    return nearby_comparison_plan
+
   dependent_plan = build_dependent_multi_feature_plan(question)
   if dependent_plan is not None:
     return dependent_plan
@@ -196,6 +200,37 @@ def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
       ),
     ],
     reason="recommendation_candidates_feed_comparison",
+  )
+
+
+def build_nearby_candidate_comparison_plan(text: str) -> ExecutionPlan | None:
+  if not has_comparison_signal(text):
+    return None
+  if "아파트" not in text:
+    return None
+  if re.search(
+    r"(?:[가-힣A-Za-z0-9()]+역|[가-힣A-Za-z0-9]+(?:유치원|초등학교|중학교|고등학교|특수학교|초|중|고))"
+    r"\s*(?:이랑|랑|와|과|에서)?\s*(?:가까운|가까이에|근처|주변|인근)",
+    text,
+  ) is None:
+    return None
+
+  return ExecutionPlan(
+    plan_type="dependent_multi_feature",
+    steps=[
+      FeatureStep(
+        agent="recommendation_agent",
+        handler="recommendation",
+        mode="direct",
+      ),
+      FeatureStep(
+        agent="comparison_agent",
+        handler="comparison",
+        mode="dependent",
+        depends_on="recommendation_agent",
+      ),
+    ],
+    reason="nearby_candidates_feed_comparison",
   )
 
 
