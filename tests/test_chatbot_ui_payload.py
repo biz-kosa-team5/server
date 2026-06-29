@@ -54,7 +54,7 @@ def test_location_lookup_builds_focus_map_action():
     "parcelId": 9001002,
     "latitude": 37.5124,
     "longitude": 127.0821,
-    "level": 4,
+    "level": 2,
     "openDetail": True,
   }
   assert ui_payload["uiSummary"]["hasMapFocus"] is True

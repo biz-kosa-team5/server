@@ -470,7 +470,7 @@ def simple_lookup_slot_overrides(text: str) -> dict[str, Any]:
   target_name = extract_lookup_target_name(text)
   if target_name:
     overrides["target_name"] = target_name
-  if any(signal in text for signal in ("위치", "주소", "어디", "좌표")):
+  if any(signal in text for signal in ("위치", "주소", "어디", "좌표")) or looks_like_find_location_question(text):
     overrides["query_type"] = "location"
   elif any(signal in text for signal in ("최고가", "가장 비싼", "제일 비싼")):
     overrides["query_type"] = "region_price_ranking" if looks_like_region_target(target_name or "") else "complex_price_record"
@@ -573,7 +573,7 @@ def simple_lookup_sub_query(text: str) -> str | None:
     return f"{target_name} 최근 실거래 알려줘"
   if target_name is None and query_type in {"trade_history", "complex_price_record"}:
     return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
-  return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마"))
+  return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
 
 def price_trend_sub_query(text: str) -> str | None:
@@ -646,6 +646,8 @@ def has_simple_lookup_signal(text: str) -> bool:
   if has_legal_signal(text) and not any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
     return False
   if any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
+    return True
+  if looks_like_find_location_question(text):
     return True
   if any(signal in text for signal in ("가장 비싼", "제일 비싼", "가장 싼", "제일 싼", "제일 싸")):
     return True
@@ -736,6 +738,7 @@ def extract_lookup_target_name(text: str) -> str | None:
       "가격",
       "시세",
       "얼마",
+      "찾아",
     ),
     reject_region=False,
   )
@@ -787,13 +790,27 @@ def clean_target_candidate(value: str) -> str:
   text = re.sub(r"\d+\s*(?:개월|달|년|건)", "", text)
   text = re.sub(r"\d{4}\s*년", "", text)
   text = re.sub(r"\d+(?:\.\d+)?\s*(?:평|평형|㎡|m2|제곱미터)", "", text, flags=re.IGNORECASE)
-  text = re.sub(r"(?:전용|아파트|단지)\s*", "", text)
+  text = re.sub(r"전용\s*", "", text)
+  text = re.sub(r"\s+(?:아파트|단지)\s*$", "", text)
   text = re.sub(r"(?:그리고|또|랑|와|과|하고)\s*$", "", text)
   text = re.sub(r"(?:에서|부터)$", "", text)
   text = text.strip(" ,")
   text = re.sub(r"\s+", "", text)
   text = text.rstrip("은는이가을를")
   return text.strip()
+
+
+def looks_like_find_location_question(text: str) -> bool:
+  match = re.search(r"(?P<target>.+?)\s*찾아(?:줘|주세요)?\??$", text)
+  if match is None:
+    return False
+  target = clean_target_candidate(match.group("target"))
+  if not target or looks_like_region_target(target):
+    return False
+  return re.fullmatch(
+    r"(?:강남구|서초구|송파구|강남|서초|송파)?(?:아파트|단지)",
+    target,
+  ) is None
 
 
 def looks_like_region_target(value: str) -> bool:
@@ -822,7 +839,7 @@ def price_trend_position(text: str) -> int:
 
 
 def simple_lookup_position(text: str) -> int:
-  return signal_position(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마"))
+  return signal_position(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
 
 def dedupe_preserve_order(values: list[str]) -> list[str]:
