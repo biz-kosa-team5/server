@@ -59,9 +59,7 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
   if households is not None:
     slots["min_households"] = households
 
-  pyeong = extract_min_pyeong(text)
-  if pyeong is not None:
-    slots["min_pyeong"] = pyeong
+  slots.update(extract_pyeong_slots(text))
 
   if has_new_build_condition(text):
     slots["is_new_build"] = True
@@ -189,9 +187,32 @@ def extract_min_households(text: str) -> int | None:
   return None if match is None else int(match.group(1))
 
 
-def extract_min_pyeong(text: str) -> float | None:
-  match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*이상", text)
-  return None if match is None else float(match.group(1))
+def extract_pyeong_slots(text: str) -> dict[str, float]:
+  range_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*대", text)
+  if range_match is not None:
+    minimum = float(range_match.group(1))
+    return {
+      "min_pyeong": minimum,
+      "max_pyeong": minimum + 9,
+    }
+
+  minimum_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*(?:이상|초과|넘는|넘어)", text)
+  if minimum_match is not None:
+    return {"min_pyeong": float(minimum_match.group(1))}
+
+  maximum_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*(?:이하|미만|아래|까지)", text)
+  if maximum_match is not None:
+    return {"max_pyeong": float(maximum_match.group(1))}
+
+  exact_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)", text)
+  if exact_match is None:
+    return {}
+
+  pyeong = float(exact_match.group(1))
+  return {
+    "min_pyeong": max(0, pyeong - 2),
+    "max_pyeong": pyeong + 2,
+  }
 
 
 def has_new_build_condition(text: str) -> bool:

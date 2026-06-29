@@ -24,6 +24,7 @@ def build_recommendation_tool(session: Session):
     max_price: int | None = None,
     min_households: int | None = None,
     min_pyeong: float | None = None,
+    max_pyeong: float | None = None,
     is_new_build: bool | None = None,
     min_built_year: int | None = None,
     infra_preferences: list[str] | None = None,
@@ -45,6 +46,7 @@ def build_recommendation_tool(session: Session):
       max_price: 최대 매매가입니다. 단위는 만원입니다.
       min_households: 최소 세대수입니다.
       min_pyeong: 최소 평형입니다.
+      max_pyeong: 최대 평형입니다.
       is_new_build: 신축/준신축 조건 여부입니다.
       min_built_year: 최소 준공연도입니다.
       infra_preferences: transport, education, commercial 중 선호 인프라 목록입니다.
@@ -66,6 +68,7 @@ def build_recommendation_tool(session: Session):
       "max_price": max_price,
       "min_households": min_households,
       "min_pyeong": min_pyeong,
+      "max_pyeong": max_pyeong,
       "is_new_build": is_new_build,
       "min_built_year": min_built_year,
       "infra_preferences": infra_preferences,
