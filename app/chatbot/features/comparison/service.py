@@ -40,6 +40,7 @@ class ComparisonService:
     normalized = normalize_slots(slots)
     names = normalized.get("apartment_names")
     if not isinstance(names, list) or len(names) < 2:
+      # 쉼표나 "랑"으로 못 나눈 경우, 원문에서 DB 단지명을 직접 스캔해 다시 찾는다.
       names = infer_apartment_names_from_text(session, str(normalized.get("_original_query") or ""))
       if names:
         normalized["apartment_names"] = names
@@ -148,6 +149,8 @@ def nearby_lifestyle_pois(session: Session, complex_row: Any, max_distance_m: in
 
 
 def infer_apartment_names_from_text(session: Session, text: str, limit: int = 3) -> list[str]:
+  # "다성리치빌루컴스힐더테라스"처럼 붙여 쓴 비교도 처리하기 위해
+  # 공백/조사/비교 표현을 제거한 문자열에서 DB 단지명을 찾아낸다.
   query_key = normalize_name_scan_text(text)
   if not query_key:
     return []
@@ -173,6 +176,7 @@ def infer_apartment_names_from_text(session: Session, text: str, limit: int = 3)
 
 
 def select_non_overlapping_name_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  # 짧은 이름이 긴 이름 안에 겹쳐 잡히는 문제를 막기 위해 긴 단지명을 우선 선택한다.
   selected = []
   occupied_spans: list[tuple[int, int]] = []
   seen_names = set()

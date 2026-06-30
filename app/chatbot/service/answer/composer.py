@@ -66,6 +66,7 @@ class ChatbotAnswerComposer:
     self.last_usage: dict[str, int] | None = None
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
+    # tool 결과가 실패했거나 LLM을 사용할 수 없으면 fallback 답변으로 안전하게 내려간다.
     self.last_usage = None
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
@@ -217,6 +218,7 @@ def int_or_zero(value: Any) -> int:
 
 
 def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
+  # 최종 답변에서 내부 용어(handler/tool 등)와 좌표 문장을 제거하고, 추천 답변은 목록형으로 고정한다.
   text = normalize_answer_whitespace(answer)
   text = remove_coordinate_text(text)
   if has_forbidden_answer_terms(text):
@@ -297,6 +299,7 @@ def truncate_multiline_answer(answer: str, max_length: int) -> str:
 
 
 def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
+  # 추천 결과는 LLM 문단 그대로 쓰지 않고, 서버에서 번호 목록 형태로 재구성해 가독성을 맞춘다.
   recommendation_results = recommendation_observations(context)
   if not recommendation_results:
     return ""
@@ -320,6 +323,7 @@ def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
         row_price_text(row),
         row_built_year_text(row),
         row_lifestyle_text(row),
+        row_investment_text(row),
         row_redevelopment_text(row),
       )
       if value
@@ -333,6 +337,8 @@ def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
 def recommendation_answer_title(result: dict[str, Any]) -> str:
   criteria = result.get("criteria")
   if isinstance(criteria, dict):
+    if criteria.get("investment_focus") or criteria.get("redevelopment_interest") is True:
+      return "투자 참고 신호 기준 추천 후보입니다."
     station_name = str(criteria.get("station_name") or criteria.get("stationName") or "").strip()
     if station_name:
       return f"{station_name} 근처 추천 후보입니다."
@@ -400,6 +406,9 @@ def row_lifestyle_text(row: dict[str, Any]) -> str:
 
 
 def row_redevelopment_text(row: dict[str, Any]) -> str:
+  investment_signals = row.get("investmentSignals")
+  if isinstance(investment_signals, list) and investment_signals:
+    return ""
   redevelopment_info = row.get("redevelopmentInfo")
   if not isinstance(redevelopment_info, list) or not redevelopment_info:
     return "재건축/정비사업 정보 없음"
@@ -412,10 +421,27 @@ def row_redevelopment_text(row: dict[str, Any]) -> str:
   return f"재건축/정비사업 {title}"
 
 
+def row_investment_text(row: dict[str, Any]) -> str:
+  investment_signals = row.get("investmentSignals")
+  if not isinstance(investment_signals, list) or not investment_signals:
+    return ""
+  signals = [
+    f"{label} {detail}".strip()
+    for item in investment_signals
+    if isinstance(item, dict)
+    if (label := str(item.get("label") or "").strip())
+    if (detail := str(item.get("detail") or "").strip())
+  ][:2]
+  if not signals:
+    return ""
+  return f"투자 참고 신호 {', '.join(signals)}"
+
+
 def ensure_required_recommendation_notes(answer: str, context: ChatbotAnswerContext) -> str:
   notes = [
     note
     for note in (
+      required_investment_note(context, answer),
       required_lifestyle_note(context, answer),
       required_redevelopment_note(context, answer),
     )
@@ -442,6 +468,19 @@ def required_redevelopment_note(context: ChatbotAnswerContext, answer: str) -> s
   if any(result_has_redevelopment_info(result) for result in recommendation_results):
     return ""
   return "재건축/정비사업은 현재 응답 데이터에서 확인된 정보가 없습니다."
+
+
+def required_investment_note(context: ChatbotAnswerContext, answer: str) -> str:
+  if "투자가치는 예측하지 않고" in answer:
+    return ""
+  recommendation_results = recommendation_observations(context)
+  if not recommendation_results:
+    return ""
+  for result in recommendation_results:
+    criteria = result.get("criteria")
+    if isinstance(criteria, dict) and (criteria.get("investment_focus") or criteria.get("redevelopment_interest") is True):
+      return "투자가치는 예측하지 않고 확인 가능한 참고 신호 기준입니다."
+  return ""
 
 
 def required_lifestyle_note(context: ChatbotAnswerContext, answer: str) -> str:

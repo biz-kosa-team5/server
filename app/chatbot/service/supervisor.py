@@ -117,7 +117,7 @@ class SpecialistAgentResult:
 SUPERVISOR_ROUTING_RULES = (
   SupervisorRoutingRule(
     agent="recommendation_agent",
-    signals=("추천", "권해", "골라", "조건에 맞는", "아파트 3개"),
+    signals=("추천", "권해", "골라", "조건에 맞는", "아파트 3개", "초등학교근처", "초등학교 근처", "학교근처", "학군", "초품아"),
     reason="지역, 가격, 역세권, 신축, 세대수 조건에 맞는 후보 추천",
   ),
   SupervisorRoutingRule(
@@ -164,7 +164,9 @@ def specialist_system_prompt(role: str, responsibility: str, tool_name: str) -> 
   return (
     f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n"
     f"당신은 {role} 전문 Agent입니다. "
-    f"{responsibility} 질문만 {tool_name} tool로 처리하세요."
+    f"{responsibility} 질문만 {tool_name} tool로 처리하세요. "
+    "질문이 짧거나 붙여 쓰였거나 오타가 있어도 원문 전체 의미를 보고 가능한 tool 인자를 직접 채우세요. "
+    "단지명은 사용자가 쓴 문자열을 후보로 넘기고, 실제 존재 여부 판단은 tool 결과에 맡기세요."
   )
 
 

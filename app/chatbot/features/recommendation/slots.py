@@ -11,10 +11,16 @@ DEFAULT_NEW_BUILD_YEAR = 2020
 
 TRANSPORT_KEYWORDS = ("역세권", "지하철", "교통", "역 근처", "역 주변", "역 인근")
 EDUCATION_KEYWORDS = ("학군", "학교", "교육", "초등학교", "중학교", "고등학교", "유치원")
-COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "병원", "카페", "인프라")
+COMMERCIAL_KEYWORDS = ("상권", "생활편의", "편의시설", "마트", "대형마트", "쇼핑", "백화점", "편의점", "카페", "인프라")
+MEDICAL_KEYWORDS = ("병원", "의료", "응급실", "약국")
+CHILD_FRIENDLY_KEYWORDS = ("애 키우", "아이 키우", "자녀", "육아", "초품아")
+INVESTMENT_KEYWORDS = ("투자가치", "투자 가치", "투자", "호재", "재건축", "재개발", "정비사업", "개발 가능성")
+REDEVELOPMENT_KEYWORDS = ("재건축", "재개발", "정비사업")
 
 
 def extract_recommendation_slots(question: str) -> dict[str, Any]:
+  # 추천 질문의 자연어 조건을 service가 이해할 수 있는 슬롯 dict로 바꾼다.
+  # 예: "잠실역 근처" -> station_name/radius_m/sort_by, "40평대" -> min_pyeong/max_pyeong.
   slots: dict[str, Any] = {}
   text = question.strip()
 
@@ -42,8 +48,19 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
   if len(school_types) == 1:
     slots["school_type"] = school_types[0]
     slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    if is_closest_school_query(text):
+      slots["sort_by"] = "school_distance_asc"
   elif school_types:
     slots["school_types"] = school_types
+    slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    slots["sort_by"] = "school_distance_asc"
+
+  if is_child_friendly_query(text) and school_name is None and not school_types:
+    slots["school_type"] = "초등학교"
+    slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
+    slots["sort_by"] = "school_distance_asc"
+  elif is_education_centered_query(text) and school_name is None and not school_types:
+    slots["school_types"] = ["초등학교", "중학교", "고등학교"]
     slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
     slots["sort_by"] = "school_distance_asc"
 
@@ -59,21 +76,27 @@ def extract_recommendation_slots(question: str) -> dict[str, Any]:
   if households is not None:
     slots["min_households"] = households
 
-  pyeong = extract_min_pyeong(text)
-  if pyeong is not None:
-    slots["min_pyeong"] = pyeong
+  slots.update(extract_pyeong_slots(text))
 
   if has_new_build_condition(text):
     slots["is_new_build"] = True
     slots["min_built_year"] = DEFAULT_NEW_BUILD_YEAR
 
+  slots.update(extract_investment_slots(text))
+
   infra_preferences = extract_infra_preferences(text)
+  if is_investment_query(text) and "transport" not in infra_preferences:
+    infra_preferences.append("transport")
+  if is_education_centered_query(text) and "education" not in infra_preferences:
+    infra_preferences.append("education")
   if infra_preferences:
     slots["infra_preferences"] = infra_preferences
     slots["radius_m"] = slots.get("radius_m") or DEFAULT_RADIUS_M
     if "transport" in infra_preferences:
       slots["sort_by"] = slots.get("sort_by") or "distance_asc"
     if "education" in infra_preferences and is_closest_school_query(text):
+      slots["sort_by"] = "school_distance_asc"
+    if "education" in infra_preferences and is_education_centered_query(text):
       slots["sort_by"] = "school_distance_asc"
 
   sort_by = extract_sort_by(text)
@@ -119,7 +142,12 @@ def extract_station_name(text: str) -> str | None:
     return match.group(1)
 
   near_match = re.search(r"([가-힣A-Za-z0-9]+)\s*(?:근처|주변|인근)", text)
-  return None if near_match is None else near_match.group(1)
+  if near_match is None:
+    return None
+  candidate = near_match.group(1)
+  if looks_like_school_reference(candidate):
+    return None
+  return candidate
 
 
 def extract_school_name(text: str) -> str | None:
@@ -189,13 +217,79 @@ def extract_min_households(text: str) -> int | None:
   return None if match is None else int(match.group(1))
 
 
-def extract_min_pyeong(text: str) -> float | None:
-  match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*이상", text)
-  return None if match is None else float(match.group(1))
+def extract_pyeong_slots(text: str) -> dict[str, float]:
+  # "40평대"는 40~49평, "40평 이상"은 min_pyeong, "40평 이하"는 max_pyeong으로 변환한다.
+  range_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*대", text)
+  if range_match is not None:
+    minimum = float(range_match.group(1))
+    return {
+      "min_pyeong": minimum,
+      "max_pyeong": minimum + 9,
+    }
+
+  minimum_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*(?:이상|초과|넘는|넘어)", text)
+  if minimum_match is not None:
+    return {"min_pyeong": float(minimum_match.group(1))}
+
+  maximum_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)\s*(?:이하|미만|아래|까지)", text)
+  if maximum_match is not None:
+    return {"max_pyeong": float(maximum_match.group(1))}
+
+  exact_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:평|평형)", text)
+  if exact_match is None:
+    return {}
+
+  pyeong = float(exact_match.group(1))
+  return {
+    "min_pyeong": max(0, pyeong - 2),
+    "max_pyeong": pyeong + 2,
+  }
 
 
 def has_new_build_condition(text: str) -> bool:
   return any(keyword in text for keyword in ("신축", "새 아파트", "준신축", "최근 지은"))
+
+
+def is_child_friendly_query(text: str) -> bool:
+  return any(keyword in text for keyword in CHILD_FRIENDLY_KEYWORDS)
+
+
+def is_education_centered_query(text: str) -> bool:
+  return (
+    is_child_friendly_query(text)
+    or "학군" in text
+    or (
+      has_school_reference(text)
+      and any(keyword in text for keyword in ("근처", "주변", "인근", "가까운", "도보권"))
+    )
+    or "초등학교 도보권" in text
+    or "학교 도보권" in text
+  )
+
+
+def is_investment_query(text: str) -> bool:
+  return any(keyword in text for keyword in INVESTMENT_KEYWORDS)
+
+
+def extract_investment_slots(text: str) -> dict[str, Any]:
+  # 투자/호재/재건축 질문은 예측이 아니라 참고 신호를 붙이기 위한 슬롯으로 변환한다.
+  if not is_investment_query(text):
+    return {}
+
+  focus = []
+  if any(keyword in text for keyword in REDEVELOPMENT_KEYWORDS):
+    focus.append("redevelopment")
+  if "호재" in text or "개발" in text:
+    focus.append("development")
+  if "투자" in text:
+    focus.append("investment")
+
+  return {
+    "investment_focus": focus or ["investment"],
+    "redevelopment_interest": True,
+    "radius_m": DEFAULT_RADIUS_M,
+    "sort_by": "distance_asc",
+  }
 
 
 def extract_infra_preferences(text: str) -> list[str]:
@@ -206,6 +300,8 @@ def extract_infra_preferences(text: str) -> list[str]:
     preferences.append("education")
   if any(keyword in text for keyword in COMMERCIAL_KEYWORDS):
     preferences.append("commercial")
+  if any(keyword in text for keyword in MEDICAL_KEYWORDS):
+    preferences.append("medical")
   return preferences
 
 
@@ -222,11 +318,22 @@ def extract_sort_by(text: str) -> str | None:
 
 
 def is_closest_school_query(text: str) -> bool:
-  return any(keyword in text for keyword in ("가장 가까", "제일 가까", "가까이에", "가까운")) and (
-    "학교" in text or "학군" in text or "초" in text or "중" in text or "고" in text
+  return any(keyword in text for keyword in ("가장 가까", "제일 가까", "가까이에", "가까운", "근처", "주변", "인근", "도보권")) and (
+    has_school_reference(text)
   )
 
 
+def has_school_reference(text: str) -> bool:
+  if any(keyword in text for keyword in ("학교", "학군", "초등", "중학교", "고등학교", "유치원", "교육", "초품아")):
+    return True
+  return re.search(r"(?<![가-힣A-Za-z0-9])[초중고](?![가-힣A-Za-z0-9])", text) is not None
+
+
+def looks_like_school_reference(text: str) -> bool:
+  return any(keyword in text for keyword in ("학교", "학군", "초등", "중등", "고등", "유치원", "교육", "초품아"))
+
+
 def extract_limit(text: str) -> int | None:
+  # 사용자가 "3개 추천"처럼 말한 개수를 읽는다. 실제 상한은 service/formatting에서 5개로 제한된다.
   match = re.search(r"(\d+)\s*(?:개|곳|건)\s*(?:추천|보여|알려)?", text)
   return None if match is None else int(match.group(1))

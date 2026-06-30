@@ -124,8 +124,22 @@ def test_planner_routes_indirect_comparison_phrases_to_comparison():
   assert handlers(plan) == ["comparison"]
 
 
+def test_planner_prioritizes_comparison_over_education_recommendation_signal():
+  plan = build_execution_plan("은마아파트랑 잠실엘스 중 초등학교가 더 가까운 곳 비교")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["comparison"]
+
+
 def test_planner_routes_station_apartment_lookup_like_recommendation():
   plan = build_execution_plan("서초역 근처 아파트 알려줘")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["recommendation"]
+
+
+def test_planner_routes_short_school_nearby_question_to_recommendation():
+  plan = build_execution_plan("초등학교근처")
 
   assert plan.plan_type == "single_feature"
   assert handlers(plan) == ["recommendation"]

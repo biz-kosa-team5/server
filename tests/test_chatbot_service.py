@@ -804,6 +804,38 @@ def test_chatbot_query_does_not_use_direct_fallback_when_selected_tool_returns_n
   }
 
 
+def test_chatbot_query_routes_short_school_nearby_question_directly(monkeypatch):
+  captured = {}
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      raise AssertionError("short education recommendation should not initialize supervisor")
+
+  def fake_run_recommendation(_session, slots, text):
+    captured["slots"] = slots
+    captured["text"] = text
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "results": [],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "초등학교근처"},
+  )
+
+  assert response.status_code == 200
+  assert captured["text"] == "초등학교근처"
+  assert captured["slots"]["school_type"] == "초등학교"
+  assert captured["slots"]["sort_by"] == "school_distance_asc"
+  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
+
+
 def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
   monkeypatch.delenv("OPENAI_API_KEY", raising=False)
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", ChatbotAnswerComposer)
