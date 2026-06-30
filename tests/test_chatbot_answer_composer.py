@@ -209,6 +209,34 @@ def test_chatbot_answer_composer_limits_answer_to_500_chars(monkeypatch):
   assert len(answer) <= 500
 
 
+def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendation(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="대치동 추천 후보는 개포우성1입니다. 도곡역과 대청중학교가 가깝고 생활편의시설도 확인됩니다.")
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "message": "조건에 맞는 아파트를 조회했습니다.",
+    "results": [{
+      "complexName": "개포우성1",
+      "infrastructure": {
+        "nearestStation": {"name": "도곡역", "distanceM": 382},
+        "nearestEducation": {"name": "대청중학교", "distanceM": 145},
+        "nearbyLifestyle": [{"name": "연치과병원", "distanceM": 300}],
+      },
+      "redevelopmentInfo": [],
+    }],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert answer.startswith("조건에 맞는 추천 후보입니다.\n1. 개포우성1")
+  assert "도곡역 382m" in answer
+  assert "생활편의 연치과병원 300m" in answer
+  assert "재건축/정비사업 정보 없음" in answer
+  assert "\n" in answer
+  assert len(answer) <= 650
+
+
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):
   monkeypatch.delenv("OPENAI_API_KEY", raising=False)
   completions = RecordingCompletions(content="주입된 LLM client가 만든 답변입니다.")

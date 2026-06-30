@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
 MAX_FINAL_ANSWER_LENGTH = 500
+MAX_RECOMMENDATION_ANSWER_LENGTH = 650
 FORBIDDEN_ANSWER_TERMS = (
   "handler",
   "agent",
@@ -176,7 +177,11 @@ def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
     if has_forbidden_answer_terms(fallback):
       fallback = remove_forbidden_sentences(fallback)
     text = fallback
+  recommendation_text = readable_recommendation_answer(context)
+  if recommendation_text:
+    return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
   text = truncate_answer(text)
+  text = ensure_required_recommendation_notes(text, context)
   return text or context.message or "질문을 처리했습니다."
 
 
@@ -209,22 +214,275 @@ def remove_forbidden_sentences(answer: str) -> str:
   return normalize_answer_whitespace(" ".join(kept))
 
 
-def truncate_answer(answer: str) -> str:
-  if len(answer) <= MAX_FINAL_ANSWER_LENGTH:
+def truncate_answer(answer: str, max_length: int = MAX_FINAL_ANSWER_LENGTH) -> str:
+  if len(answer) <= max_length:
     return answer
+  if "\n" in answer:
+    return truncate_multiline_answer(answer, max_length)
 
   sentences = split_sentences(answer)
   kept = []
   current_length = 0
   for sentence in sentences:
     next_length = current_length + len(sentence) + (1 if kept else 0)
-    if next_length > MAX_FINAL_ANSWER_LENGTH:
+    if next_length > max_length:
       break
     kept.append(sentence)
     current_length = next_length
   if kept:
     return normalize_answer_whitespace(" ".join(kept))
-  return answer[: MAX_FINAL_ANSWER_LENGTH - 3].rstrip() + "..."
+  return answer[: max_length - 3].rstrip() + "..."
+
+
+def truncate_multiline_answer(answer: str, max_length: int) -> str:
+  lines = answer.split("\n")
+  kept: list[str] = []
+  current_length = 0
+  for line in lines:
+    next_length = current_length + len(line) + (1 if kept else 0)
+    if next_length > max_length - 3:
+      break
+    kept.append(line)
+    current_length = next_length
+  if kept:
+    return "\n".join(kept).rstrip() + "..."
+  return answer[: max_length - 3].rstrip() + "..."
+
+
+def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
+  recommendation_results = recommendation_observations(context)
+  if not recommendation_results:
+    return ""
+
+  result = recommendation_results[0]
+  rows = [
+    row
+    for row in result.get("results", [])
+    if isinstance(row, dict)
+  ][:5]
+  if not rows:
+    return ""
+
+  lines = [recommendation_answer_title(result)]
+  for index, row in enumerate(rows, start=1):
+    name = str(row.get("complexName") or row.get("name") or f"추천 후보 {index}").strip()
+    facts = [
+      value
+      for value in (
+        row_station_text(row),
+        row_price_text(row),
+        row_built_year_text(row),
+        row_lifestyle_text(row),
+        row_redevelopment_text(row),
+      )
+      if value
+    ]
+    detail = " · ".join(facts)
+    lines.append(f"{index}. {name}" + (f" - {detail}" if detail else ""))
+
+  return normalize_answer_whitespace("\n".join(lines))
+
+
+def recommendation_answer_title(result: dict[str, Any]) -> str:
+  criteria = result.get("criteria")
+  if isinstance(criteria, dict):
+    station_name = str(criteria.get("station_name") or criteria.get("stationName") or "").strip()
+    if station_name:
+      return f"{station_name} 근처 추천 후보입니다."
+  return "조건에 맞는 추천 후보입니다."
+
+
+def row_station_text(row: dict[str, Any]) -> str:
+  matched_pois = row.get("matchedPois")
+  if isinstance(matched_pois, list):
+    for poi in matched_pois:
+      if not isinstance(poi, dict):
+        continue
+      name = str(poi.get("name") or "").strip()
+      distance = format_distance_m(poi.get("distanceM"))
+      if name and distance:
+        return f"{name} {distance}"
+
+  infrastructure = row.get("infrastructure")
+  if not isinstance(infrastructure, dict):
+    return ""
+  station = infrastructure.get("nearestStation")
+  if not isinstance(station, dict):
+    return ""
+  name = str(station.get("name") or "").strip()
+  distance = format_distance_m(station.get("distanceM"))
+  if not name or not distance:
+    return ""
+  return f"{name} {distance}"
+
+
+def row_price_text(row: dict[str, Any]) -> str:
+  price = str(row.get("latestDealAmountText") or row.get("dealAmountText") or "").strip()
+  if not price:
+    return ""
+  return f"최근 거래가 {price}"
+
+
+def row_built_year_text(row: dict[str, Any]) -> str:
+  use_date = str(row.get("useDate") or "").strip()
+  if len(use_date) < 4:
+    return ""
+  year = use_date[:4]
+  if not year.isdigit():
+    return ""
+  return f"{year}년 준공"
+
+
+def row_lifestyle_text(row: dict[str, Any]) -> str:
+  infrastructure = row.get("infrastructure")
+  if not isinstance(infrastructure, dict):
+    return "생활편의 확인 정보 없음"
+  lifestyle = infrastructure.get("nearbyLifestyle")
+  if not isinstance(lifestyle, list) or not lifestyle:
+    return "생활편의 확인 정보 없음"
+  pois = [
+    f"{name} {distance}"
+    for item in lifestyle
+    if isinstance(item, dict)
+    if (name := str(item.get("name") or "").strip())
+    if (distance := format_distance_m(item.get("distanceM")))
+  ][:2]
+  if not pois:
+    return "생활편의 확인 정보 없음"
+  return f"생활편의 {', '.join(pois)}"
+
+
+def row_redevelopment_text(row: dict[str, Any]) -> str:
+  redevelopment_info = row.get("redevelopmentInfo")
+  if not isinstance(redevelopment_info, list) or not redevelopment_info:
+    return "재건축/정비사업 정보 없음"
+  first_info = redevelopment_info[0]
+  if not isinstance(first_info, dict):
+    return "재건축/정비사업 정보 없음"
+  title = str(first_info.get("title") or first_info.get("name") or "").strip()
+  if not title:
+    return "재건축/정비사업 정보 없음"
+  return f"재건축/정비사업 {title}"
+
+
+def ensure_required_recommendation_notes(answer: str, context: ChatbotAnswerContext) -> str:
+  notes = [
+    note
+    for note in (
+      required_lifestyle_note(context, answer),
+      required_redevelopment_note(context, answer),
+    )
+    if note
+  ]
+  if not notes:
+    return answer
+  note = " ".join(notes)
+
+  separator = " " if answer else ""
+  base_budget = MAX_FINAL_ANSWER_LENGTH - len(separator) - len(note)
+  if base_budget <= 0:
+    return truncate_answer(note)
+  base = truncate_answer(answer, base_budget)
+  return normalize_answer_whitespace(f"{base}{separator}{note}")
+
+
+def required_redevelopment_note(context: ChatbotAnswerContext, answer: str) -> str:
+  if mentions_redevelopment(answer):
+    return ""
+  recommendation_results = recommendation_observations(context)
+  if not recommendation_results:
+    return ""
+  if any(result_has_redevelopment_info(result) for result in recommendation_results):
+    return ""
+  return "재건축/정비사업은 현재 응답 데이터에서 확인된 정보가 없습니다."
+
+
+def required_lifestyle_note(context: ChatbotAnswerContext, answer: str) -> str:
+  for result in recommendation_observations(context):
+    rows = result.get("results")
+    if not isinstance(rows, list):
+      continue
+    for row in rows[:3]:
+      if not isinstance(row, dict):
+        continue
+      infrastructure = row.get("infrastructure")
+      if not isinstance(infrastructure, dict):
+        continue
+      lifestyle = infrastructure.get("nearbyLifestyle")
+      if not isinstance(lifestyle, list) or not lifestyle:
+        continue
+      pois = [
+        (name, distance)
+        for item in lifestyle
+        if isinstance(item, dict)
+        if (name := str(item.get("name") or "").strip())
+        if (distance := format_distance_m(item.get("distanceM")))
+      ][:2]
+      if not pois or all(lifestyle_poi_mentioned_with_distance(answer, name, distance) for name, distance in pois):
+        continue
+      complex_name = str(row.get("complexName") or "첫 후보").strip()
+      poi_text = ", ".join(f"{name} {distance}" for name, distance in pois)
+      return f"생활편의 거리는 {complex_name} 기준 {poi_text}입니다."
+  return ""
+
+
+def format_distance_m(value: Any) -> str:
+  try:
+    return f"{round(float(value))}m"
+  except (TypeError, ValueError):
+    return ""
+
+
+def lifestyle_poi_mentioned_with_distance(answer: str, name: str, distance: str) -> bool:
+  if name not in answer:
+    return False
+  number = distance.removesuffix("m")
+  return distance in answer or f"{number} m" in answer or f"{number}미터" in answer
+
+
+def recommendation_observations(context: ChatbotAnswerContext) -> list[dict[str, Any]]:
+  return [
+    result
+    for result in iter_results(context.result)
+    if isinstance(result, dict)
+    and result.get("handler") == "recommendation"
+    and result.get("success") is True
+    and isinstance(result.get("results"), list)
+    and result.get("results")
+  ]
+
+
+def result_has_redevelopment_info(result: dict[str, Any]) -> bool:
+  rows = result.get("results")
+  if not isinstance(rows, list):
+    return False
+  return any(
+    isinstance(row, dict)
+    and isinstance(row.get("redevelopmentInfo"), list)
+    and bool(row.get("redevelopmentInfo"))
+    for row in rows
+  )
+
+
+def iter_results(value: Any):
+  if isinstance(value, list):
+    for item in value:
+      yield from iter_results(item)
+    return
+  if not isinstance(value, dict):
+    return
+  yield value
+  nested = value.get("result")
+  if nested is not None:
+    yield from iter_results(nested)
+  nested_results = value.get("results")
+  if isinstance(nested_results, list):
+    for item in nested_results:
+      yield from iter_results(item)
+
+
+def mentions_redevelopment(answer: str) -> bool:
+  return any(keyword in answer for keyword in ("재건축", "재개발", "정비사업"))
 
 
 def split_sentences(answer: str) -> list[str]:

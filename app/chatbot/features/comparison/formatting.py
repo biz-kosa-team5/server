@@ -17,12 +17,33 @@ def find_complex_by_name(session: Session, name: str) -> Complex | None:
   normalized = clean_text(name)
   if normalized is None:
     return None
-  found = select_complex_by_name(session, normalized)
-  if found is not None:
-    return found
-  if normalized.endswith("이") and len(normalized) > 1:
-    return select_complex_by_name(session, normalized[:-1])
+  for candidate in complex_name_candidates(normalized):
+    found = select_complex_by_name(session, candidate)
+    if found is not None:
+      return found
   return None
+
+
+def complex_name_candidates(name: str) -> list[str]:
+  candidates = [name]
+  if name.endswith("아파트") and len(name) > 3:
+    candidates.append(name.removesuffix("아파트"))
+  if name.endswith("이") and not name.endswith("자이") and len(name) > 1:
+    candidates.append(name[:-1])
+  if "펠리스" in name:
+    candidates.append(name.replace("펠리스", "팰리스"))
+  return dedupe(candidates)
+
+
+def dedupe(values: list[str]) -> list[str]:
+  result = []
+  seen = set()
+  for value in values:
+    if value in seen:
+      continue
+    result.append(value)
+    seen.add(value)
+  return result
 
 
 def comparison_item(complex_row: Complex, latest_trade: Trade | None, metrics: list[str]) -> dict[str, Any]:
