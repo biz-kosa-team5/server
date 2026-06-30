@@ -43,6 +43,40 @@ def test_planner_routes_plain_complex_price_as_ambiguous_multi_feature():
   }
 
 
+def test_planner_routes_generic_complex_profile_to_location_trade_and_trend():
+  plan = build_execution_plan("은마 아파트 정보를 줘봐")
+
+  assert plan.plan_type == "ambiguous_multi_feature"
+  assert plan.reason == "generic_complex_profile_needs_location_trade_and_trend"
+  assert handlers(plan) == ["simple_lookup", "simple_lookup", "price_trend"]
+  assert [step.query for step in plan.steps] == [
+    "은마 위치 알려줘",
+    "은마 최근 실거래 알려줘",
+    "은마 최근 1년 가격 흐름 알려줘",
+  ]
+  assert plan.steps[0].slot_overrides == {
+    "query_type": "location",
+    "target_name": "은마",
+  }
+  assert plan.steps[1].slot_overrides == {
+    "query_type": "trade_history",
+    "target_name": "은마",
+  }
+  assert plan.steps[2].slot_overrides == {
+    "analysis_type": "timeseries",
+    "target_type": "complex",
+    "target_name": "은마",
+    "period": "1y",
+  }
+
+
+def test_planner_normalizes_joined_apartment_suffix_for_generic_profile():
+  plan = build_execution_plan("은마아파트 알려줘")
+
+  assert plan.plan_type == "ambiguous_multi_feature"
+  assert [step.slot_overrides["target_name"] for step in plan.steps] == ["은마", "은마", "은마"]
+
+
 def test_planner_routes_recommendation_and_legal_as_independent_multi_feature():
   plan = build_execution_plan("강남구 아파트 추천하고 매매 계약 법령도 알려줘")
 
