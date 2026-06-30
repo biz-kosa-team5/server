@@ -430,31 +430,49 @@ def test_chatbot_answer_composer_uses_long_deterministic_sequence_without_llm(mo
   assert "종합하면" in answer
 
 
-def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendation(monkeypatch):
+def test_chatbot_answer_composer_uses_per_candidate_context_for_recommendations(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-  completions = RecordingCompletions(content="대치동 추천 후보는 개포우성1입니다.\n개포우성1 - 도곡역과 대청중학교가 가까워 추천할 수 있습니다.")
+  completions = RecordingCompletions(content="Alpha를 추천합니다. Alpha는 Mall A가 가까워 생활편의성이 좋습니다.")
   context = success_context(result={
     "success": True,
     "handler": "recommendation",
-    "message": "조건에 맞는 아파트를 조회했습니다.",
-    "results": [{
-      "complexName": "개포우성1",
-      "infrastructure": {
-        "nearestStation": {"name": "도곡역", "distanceM": 382},
-        "nearestEducation": {"name": "대청중학교", "distanceM": 145},
-        "nearbyLifestyle": [{"name": "연치과병원", "distanceM": 300}],
+    "criteria": {"station_name": "Central"},
+    "message": "추천 후보를 조회했습니다.",
+    "results": [
+      {
+        "complexName": "Alpha",
+        "matchedPois": [{"category": "station", "name": "Central Station", "distanceM": 100}],
+        "latestDealAmountText": "10.0억원",
+        "useDate": "2000-01-01",
+        "infrastructure": {
+          "nearbyLifestyle": [{"name": "Mall A", "distanceM": 154}],
+        },
+        "redevelopmentInfo": [{"title": "Alpha redevelopment plan"}],
       },
-      "redevelopmentInfo": [],
-    }],
+      {
+        "complexName": "Beta",
+        "matchedPois": [{"category": "station", "name": "Central Station", "distanceM": 240}],
+        "latestDealAmountText": "12.0억원",
+        "useDate": "2010-01-01",
+        "infrastructure": {
+          "nearbyLifestyle": [{"name": "Clinic B", "distanceM": 220}],
+        },
+        "redevelopmentInfo": [],
+      },
+    ],
   })
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
 
-  assert answer.startswith("대치동 추천 후보는 개포우성1입니다.\n\n1. 개포우성1")
-  assert "\n도곡역과 대청중학교가 가까워 추천할 수 있습니다." in answer
+  assert len(completions.calls) == 1
+  assert "1. Alpha" in answer
+  assert "Mall A 154m" in answer
+  assert "Alpha redevelopment plan" in answer
+  assert "2. Beta" in answer
+  assert "Clinic B 220m" in answer
+  assert "Beta 기준" not in answer
+  assert "정보 없음" not in answer
   assert "\n이유:" not in answer
-  assert "생활편의 거리는 개포우성1 기준 연치과병원 300m입니다." in answer
-  assert "재건축/정비사업은 현재 응답 데이터에서 확인된 정보가 없습니다." in answer
   assert "\n" in answer
   assert len(answer) <= 1000
 

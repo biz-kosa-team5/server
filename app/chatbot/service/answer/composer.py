@@ -30,7 +30,7 @@ DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
 MAX_FINAL_ANSWER_LENGTH = 1000
 MAX_SEQUENCE_ANSWER_LENGTH = 5000
-MAX_RECOMMENDATION_ANSWER_LENGTH = 1000
+MAX_RECOMMENDATION_ANSWER_LENGTH = 1800
 FORBIDDEN_ANSWER_TERMS = (
   "전문 에이전트",
   "handler",
@@ -128,7 +128,7 @@ class ChatbotAnswerComposer:
     return finalize_answer_text(
       answer or fallback_answer(context),
       context,
-      use_structured_recommendation=not bool(answer),
+      use_structured_recommendation=not bool(answer) or should_prefer_structured_recommendation(context),
     )
 
 
@@ -300,6 +300,25 @@ def finalize_sequence_answer_text(answer: str, context: ChatbotAnswerContext) ->
     text = remove_forbidden_sentences(fallback) if has_forbidden_answer_terms(fallback) else fallback
   text = truncate_answer(text, MAX_SEQUENCE_ANSWER_LENGTH)
   return text or context.message or "질문을 처리했습니다."
+
+
+def should_prefer_structured_recommendation(context: ChatbotAnswerContext) -> bool:
+  for result in recommendation_observations(context):
+    rows = result.get("results")
+    if not isinstance(rows, list):
+      continue
+    for row in rows[:5]:
+      if isinstance(row, dict) and row_has_inline_context(row):
+        return True
+  return False
+
+
+def row_has_inline_context(row: dict[str, Any]) -> bool:
+  return (
+    bool(row_lifestyle_text(row))
+    or bool(row_redevelopment_text(row))
+    or bool(row_investment_text(row))
+  )
 
 
 def normalize_answer_whitespace(answer: str) -> str:
@@ -488,26 +507,70 @@ def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
   lines = [recommendation_answer_title(result)]
   for index, row in enumerate(rows, start=1):
     name = str(row.get("complexName") or row.get("name") or f"추천 후보 {index}").strip()
-    facts = [
-      value
-      for value in (
-        row_station_text(row),
-        row_price_text(row),
-        row_built_year_text(row),
-        row_lifestyle_text(row),
-        row_investment_text(row),
-        row_redevelopment_text(row),
-      )
-      if value
-    ]
-    detail = " · ".join(facts)
     if index > 1:
       lines.append("")
     lines.append(f"{index}. {name}")
+    detail = row_recommendation_explanation(row)
     if detail:
       lines.append(detail)
 
   return normalize_answer_whitespace("\n".join(lines))
+
+
+def row_recommendation_explanation(row: dict[str, Any]) -> str:
+  sentences = [
+    sentence
+    for sentence in (
+      row_access_sentence(row),
+      row_trade_sentence(row),
+      row_lifestyle_sentence(row),
+      row_investment_sentence(row),
+      row_redevelopment_sentence(row),
+    )
+    if sentence
+  ]
+  return " ".join(sentences)
+
+
+def row_access_sentence(row: dict[str, Any]) -> str:
+  station = row_station_text(row)
+  if not station:
+    return ""
+  return f"{station} 거리에 있어 접근성이 좋습니다."
+
+
+def row_trade_sentence(row: dict[str, Any]) -> str:
+  price = row_price_text(row)
+  built_year = row_built_year_text(row)
+  if price and built_year:
+    return f"{price}이고, {built_year}된 단지입니다."
+  if price:
+    return f"{price}입니다."
+  if built_year:
+    return f"{built_year}된 단지입니다."
+  return ""
+
+
+def row_lifestyle_sentence(row: dict[str, Any]) -> str:
+  lifestyle = row_lifestyle_text(row)
+  if not lifestyle:
+    return ""
+  facilities = lifestyle.removeprefix("생활편의 ").strip()
+  return f"주변에는 {facilities}가 있어 생활 편의성도 함께 볼 수 있습니다."
+
+
+def row_investment_sentence(row: dict[str, Any]) -> str:
+  investment = row_investment_text(row)
+  if not investment:
+    return ""
+  return f"{investment}가 있어 투자 관점에서는 참고 지표로 볼 수 있습니다."
+
+
+def row_redevelopment_sentence(row: dict[str, Any]) -> str:
+  redevelopment = row_redevelopment_text(row)
+  if not redevelopment:
+    return ""
+  return f"{redevelopment} 정보가 확인되어 정비사업 여부도 함께 참고할 수 있습니다."
 
 
 def normalize_recommendation_answer_layout(answer: str, context: ChatbotAnswerContext) -> str:
@@ -707,10 +770,10 @@ def row_built_year_text(row: dict[str, Any]) -> str:
 def row_lifestyle_text(row: dict[str, Any]) -> str:
   infrastructure = row.get("infrastructure")
   if not isinstance(infrastructure, dict):
-    return "생활편의 확인 정보 없음"
+    return ""
   lifestyle = infrastructure.get("nearbyLifestyle")
   if not isinstance(lifestyle, list) or not lifestyle:
-    return "생활편의 확인 정보 없음"
+    return ""
   pois = [
     f"{name} {distance}"
     for item in lifestyle
@@ -719,7 +782,7 @@ def row_lifestyle_text(row: dict[str, Any]) -> str:
     if (distance := format_distance_m(item.get("distanceM")))
   ][:2]
   if not pois:
-    return "생활편의 확인 정보 없음"
+    return ""
   return f"생활편의 {', '.join(pois)}"
 
 
@@ -729,13 +792,13 @@ def row_redevelopment_text(row: dict[str, Any]) -> str:
     return ""
   redevelopment_info = row.get("redevelopmentInfo")
   if not isinstance(redevelopment_info, list) or not redevelopment_info:
-    return "재건축/정비사업 정보 없음"
+    return ""
   first_info = redevelopment_info[0]
   if not isinstance(first_info, dict):
-    return "재건축/정비사업 정보 없음"
+    return ""
   title = str(first_info.get("title") or first_info.get("name") or "").strip()
   if not title:
-    return "재건축/정비사업 정보 없음"
+    return ""
   return f"재건축/정비사업 {title}"
 
 
@@ -778,14 +841,7 @@ def ensure_required_recommendation_notes(answer: str, context: ChatbotAnswerCont
 
 
 def required_redevelopment_note(context: ChatbotAnswerContext, answer: str) -> str:
-  if mentions_redevelopment(answer):
-    return ""
-  recommendation_results = recommendation_observations(context)
-  if not recommendation_results:
-    return ""
-  if any(result_has_redevelopment_info(result) for result in recommendation_results):
-    return ""
-  return "재건축/정비사업은 현재 응답 데이터에서 확인된 정보가 없습니다."
+  return ""
 
 
 def required_investment_note(context: ChatbotAnswerContext, answer: str) -> str:
@@ -802,31 +858,6 @@ def required_investment_note(context: ChatbotAnswerContext, answer: str) -> str:
 
 
 def required_lifestyle_note(context: ChatbotAnswerContext, answer: str) -> str:
-  for result in recommendation_observations(context):
-    rows = result.get("results")
-    if not isinstance(rows, list):
-      continue
-    for row in rows[:3]:
-      if not isinstance(row, dict):
-        continue
-      infrastructure = row.get("infrastructure")
-      if not isinstance(infrastructure, dict):
-        continue
-      lifestyle = infrastructure.get("nearbyLifestyle")
-      if not isinstance(lifestyle, list) or not lifestyle:
-        continue
-      pois = [
-        (name, distance)
-        for item in lifestyle
-        if isinstance(item, dict)
-        if (name := str(item.get("name") or "").strip())
-        if (distance := format_distance_m(item.get("distanceM")))
-      ][:2]
-      if not pois or all(lifestyle_poi_mentioned_with_distance(answer, name, distance) for name, distance in pois):
-        continue
-      complex_name = str(row.get("complexName") or "첫 후보").strip()
-      poi_text = ", ".join(f"{name} {distance}" for name, distance in pois)
-      return f"생활편의 거리는 {complex_name} 기준 {poi_text}입니다."
   return ""
 
 
