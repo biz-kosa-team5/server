@@ -37,11 +37,12 @@ ACTION_SOURCE_PRIORITY = {
   "recommendation.results": 2,
   "comparison.results": 3,
   "simple_lookup.trade_history": 4,
-  "simple_lookup.complex_price_record": 5,
-  "price_trend.complex_timeseries": 6,
-  "simple_lookup.region_price_ranking": 7,
-  "price_trend.ranking": 8,
-  "price_trend.region_timeseries": 9,
+  "simple_lookup.region_trade_history": 5,
+  "simple_lookup.complex_price_record": 6,
+  "price_trend.complex_timeseries": 7,
+  "simple_lookup.region_price_ranking": 8,
+  "price_trend.ranking": 9,
+  "price_trend.region_timeseries": 10,
 }
 
 ARTIFACT_TYPE_PRIORITY = {
@@ -213,7 +214,7 @@ def simple_lookup_actions(session: Session, result: dict[str, Any]) -> Iterable[
       yield "simple_lookup.location", action
     return
 
-  if query_type in {"trade_history", "complex_price_record"}:
+  if query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     row = data[0]
     complex_row = resolve_complex_target(
       session,

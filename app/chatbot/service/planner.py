@@ -108,7 +108,7 @@ LEGAL_SIGNALS = (
   "위약금",
 )
 UNSUPPORTED_SIGNALS = ("날씨", "주식", "환율", "서울 아파트", "부동산 후보", "근처 학교", "신고가", "신저가")
-REGION_PATTERN = re.compile(r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파")
+REGION_PATTERN = re.compile(r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파|[가-힣]+동")
 
 
 AGENT_BY_HANDLER = {
@@ -487,7 +487,7 @@ def step_for_handler(
     agent=AGENT_BY_HANDLER[handler],
     handler=handler,
     mode=mode,
-    slot_overrides=slot_overrides_for_handler(handler, text),
+    slot_overrides=slot_overrides_for_handler(handler, query or text),
     query=query,
   )
 
@@ -516,7 +516,7 @@ def simple_lookup_slot_overrides(text: str) -> dict[str, Any]:
   elif any(signal in text for signal in ("실거래", "거래내역", "거래 내역", "최근 거래", "가격", "시세", "얼마")) or re.search(r"최근\s*\d+\s*건", text):
     overrides["query_type"] = "trade_history"
   if overrides.get("query_type") == "trade_history" and looks_like_region_target(str(overrides.get("target_name") or "")):
-    overrides.pop("target_name", None)
+    overrides["query_type"] = "region_trade_history"
   return overrides
 
 
@@ -602,12 +602,20 @@ def simple_lookup_sub_query(text: str) -> str | None:
   overrides = simple_lookup_slot_overrides(text)
   target_name = overrides.get("target_name")
   query_type = overrides.get("query_type")
+  lookup_clause = clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+  if (
+    isinstance(target_name, str)
+    and query_type in {"trade_history", "region_trade_history", "complex_price_record"}
+    and lookup_clause
+    and target_name not in lookup_clause
+  ):
+    return lookup_clause
   if isinstance(target_name, str) and query_type == "location":
     return f"{target_name} 위치 알려줘"
-  if isinstance(target_name, str) and query_type in {"trade_history", "complex_price_record"}:
+  if isinstance(target_name, str) and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     return f"{target_name} 최근 실거래 알려줘"
-  if target_name is None and query_type in {"trade_history", "complex_price_record"}:
-    return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+  if target_name is None and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
+    return lookup_clause
   return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
 

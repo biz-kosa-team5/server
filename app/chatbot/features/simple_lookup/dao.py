@@ -133,6 +133,7 @@ class SimpleLookupDao:
         filters: list[str] = []
         params: dict[str, Any] = {
             "region_id": region_obj.id,
+            "region_id_text": str(region_obj.id),
             "region_name": region_obj.name,
             "limit": criteria.limit,
         }
@@ -184,7 +185,7 @@ class SimpleLookupDao:
             FROM trades t
             JOIN complexes c
                 ON c.id = t.complex_id
-            WHERE c.region_id = :region_id
+            WHERE {self._region_trade_filter(region_obj)}
             {filter_sql}
             ORDER BY
                 t.deal_amount {amount_order}
@@ -207,6 +208,103 @@ class SimpleLookupDao:
         return rows
 
     # 단지명 확정: name 정확 → trade_name 정확 → name 부분 → trade_name 부분
+    # 지역 실거래 내역 조회: raw SQL row 목록 반환
+    def find_region_trade_history(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> list[Mapping[str, Any]]:
+        region_obj = self._resolve_region(criteria.target_name)
+
+        date_order = "ASC" if criteria.sort_order == SORT_OLDEST else "DESC"
+        deal_date_expr = "t.deal_date" if self._dialect_name() == "sqlite" else "t.deal_date::date"
+
+        filters: list[str] = []
+        params: dict[str, Any] = {
+            "region_id": region_obj.id,
+            "region_id_text": str(region_obj.id),
+            "region_name": region_obj.name,
+            "limit": criteria.limit,
+        }
+
+        if criteria.start_date is not None:
+            filters.append(
+                "AND t.deal_date >= :start_date"
+                if self._dialect_name() == "sqlite"
+                else "AND t.deal_date::date >= :start_date"
+            )
+            params["start_date"] = self._date_param(criteria.start_date)
+
+        if criteria.end_date is not None:
+            filters.append(
+                "AND t.deal_date <= :end_date"
+                if self._dialect_name() == "sqlite"
+                else "AND t.deal_date::date <= :end_date"
+            )
+            params["end_date"] = self._date_param(criteria.end_date)
+
+        if criteria.area_min is not None:
+            filters.append("AND t.excl_area >= :area_min")
+            params["area_min"] = criteria.area_min
+
+        if criteria.area_max is not None:
+            filters.append("AND t.excl_area <= :area_max")
+            params["area_max"] = criteria.area_max
+
+        filter_sql = "\n".join(filters)
+
+        stmt = text(
+            f"""
+            SELECT
+                ROW_NUMBER() OVER (
+                    ORDER BY
+                        {deal_date_expr} {date_order},
+                        t.id {date_order}
+                ) AS rank,
+                :region_name AS region_name,
+                c.id AS complex_id,
+                c.name AS complex_name,
+                c.trade_name AS trade_name,
+                c.address AS address,
+                t.id AS trade_id,
+                t.deal_date AS deal_date,
+                t.deal_amount AS deal_amount,
+                t.excl_area AS excl_area,
+                t.floor AS floor,
+                t.apt_dong AS apt_dong
+            FROM trades t
+            JOIN complexes c
+                ON c.id = t.complex_id
+            WHERE {self._region_trade_filter(region_obj)}
+            {filter_sql}
+            ORDER BY
+                {deal_date_expr} {date_order},
+                t.id {date_order}
+            LIMIT :limit
+            """
+        )
+
+        rows = list(
+            self.session.execute(stmt, params)
+            .mappings()
+            .all()
+        )
+
+        if not rows:
+            raise SimpleLookupError(
+                "no_result",
+                "조건에 맞는 지역 실거래 내역이 없습니다.",
+            )
+
+        return rows
+
+    def _region_trade_filter(self, region_obj: Region) -> str:
+        if region_obj.type == "neighborhood":
+            if self._dialect_name() == "sqlite":
+                return "substr(c.pnu, 1, 8) = :region_id_text"
+            return "left(c.pnu, 8) = :region_id_text"
+
+        return "c.region_id = :region_id"
+
     def _resolve_complex(self, target_name: str) -> Complex:
         search_steps = [
             (Complex.name, True),
@@ -268,7 +366,12 @@ class SimpleLookupDao:
             select(Region)
             .where(
                 Region.name.like(f"%{target}%"),
-                Region.type == "district",
+                Region.type.in_(("district", "neighborhood")),
+            )
+            .order_by(
+                (Region.name == target).desc(),
+                (Region.type == "district").desc(),
+                Region.id.asc(),
             )
             .limit(1)
         ).first()

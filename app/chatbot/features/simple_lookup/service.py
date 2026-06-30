@@ -14,6 +14,7 @@ from app.chatbot.features.simple_lookup.dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
     RegionRankingData,
     SimpleLookupCriteria,
@@ -86,6 +87,10 @@ class SimpleLookupService:
 
         if criteria.query_type == QUERY_REGION_PRICE_RANKING:
             rows = self.dao.find_region_price_ranking(criteria)
+            return [RegionRankingData.from_row(row) for row in rows]
+
+        if criteria.query_type == QUERY_REGION_TRADE_HISTORY:
+            rows = self.dao.find_region_trade_history(criteria)
             return [RegionRankingData.from_row(row) for row in rows]
 
         raise SimpleLookupError(

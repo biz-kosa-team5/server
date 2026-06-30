@@ -13,6 +13,7 @@ from app.chatbot.features.simple_lookup.dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
     SORT_LATEST,
     SimpleLookupCriteria,
@@ -228,7 +229,7 @@ class SimpleLookupPolicy:
         if value is not None:
             return min(value, MAX_LIMIT)
 
-        if query_type == QUERY_TRADE_HISTORY:
+        if query_type in {QUERY_TRADE_HISTORY, QUERY_REGION_TRADE_HISTORY}:
             return DEFAULT_TRADE_HISTORY_LIMIT
 
         if query_type == QUERY_COMPLEX_PRICE_RECORD:

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # query_type 상수
 QUERY_LOCATION = "location"
 QUERY_TRADE_HISTORY = "trade_history"
+QUERY_REGION_TRADE_HISTORY = "region_trade_history"
 QUERY_COMPLEX_PRICE_RECORD = "complex_price_record"
 QUERY_REGION_PRICE_RANKING = "region_price_ranking"
 
@@ -22,11 +23,18 @@ SORT_OLDEST = "oldest"
 PRICE_HIGHEST = "highest"
 PRICE_LOWEST = "lowest"
 
+DEFAULT_LOOKUP_UNITS: dict[str, str] = {
+    "deal_amount": "만원",
+    "excl_area": "㎡",
+    "price_per_m2": "만원/㎡",
+}
+
 
 # 허용 query_type
 QueryType: TypeAlias = Literal[
     "location",
     "trade_history",
+    "region_trade_history",
     "complex_price_record",
     "region_price_ranking",
 ]
@@ -222,6 +230,7 @@ class SimpleLookupObservation(BaseModel):
     success: Literal[True] = True
     query_type: QueryType
     criteria: dict[str, Any] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOOKUP_UNITS))
     data: list[LookupItemData] = Field(default_factory=list)
 
 

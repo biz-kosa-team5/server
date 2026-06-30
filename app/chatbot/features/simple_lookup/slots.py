@@ -7,8 +7,12 @@ from .dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
 )
+
+
+REGION_TARGET_PATTERN = r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파|[가-힣]+동"
 
 
 def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
@@ -21,6 +25,10 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
 
     if query_type == QUERY_LOCATION:
         target_name = _extract_location_target_name(text)
+        if target_name is not None:
+            slots["target_name"] = target_name
+    elif query_type in {QUERY_REGION_PRICE_RANKING, QUERY_REGION_TRADE_HISTORY}:
+        target_name = _extract_region_target_name(text)
         if target_name is not None:
             slots["target_name"] = target_name
 
@@ -71,6 +79,9 @@ def infer_query_type(text: str) -> str:
 
         return QUERY_COMPLEX_PRICE_RECORD
 
+    if _looks_like_region_trade_history(text):
+        return QUERY_REGION_TRADE_HISTORY
+
     return QUERY_TRADE_HISTORY
 
 def _extract_location_target_name(text: str) -> str | None:
@@ -86,6 +97,20 @@ def _extract_location_target_name(text: str) -> str | None:
         return None
 
     return target
+
+
+def _extract_region_target_name(text: str) -> str | None:
+    matched = re.search(REGION_TARGET_PATTERN, text)
+    if matched is None:
+        return None
+    name = "".join(matched.group(0).split())
+    aliases = {
+        "강남": "강남구",
+        "서초": "서초구",
+        "송파": "송파구",
+        "강남삼구": "강남3구",
+    }
+    return aliases.get(name, name)
 
 def _extract_year_duration_range(text: str) -> tuple[str, str] | None:
     matched = re.search(
@@ -166,13 +191,20 @@ def _has_price_record_expression(text: str) -> bool:
 
 
 def _looks_like_region_ranking(text: str) -> bool:
-    has_region = any(
-        region in text
-        for region in ("강남구", "서초구", "송파구", "강남", "서초", "송파")
-    )
+    has_region = re.search(REGION_TARGET_PATTERN, text) is not None
     has_ranking_word = any(
         token in text
         for token in ("TOP", "Top", "top", "순위", "랭킹", "아파트", "단지")
     )
 
     return has_region and has_ranking_word
+
+
+def _looks_like_region_trade_history(text: str) -> bool:
+    has_region = re.search(REGION_TARGET_PATTERN, text) is not None
+    has_trade_history_word = any(
+        token in text
+        for token in ("실거래", "거래내역", "거래 내역", "최근 거래", "거래")
+    )
+
+    return has_region and has_trade_history_word

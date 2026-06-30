@@ -163,8 +163,8 @@ class PriceTrendDao:
                 """
             )
         else:
-            target_filter = "c.region_id IN :region_ids"
-            params["region_ids"] = target["region_ids"]
+            target_filter = self._region_filter_sql(target, dialect_name)
+            params.update(self._region_filter_params(target))
             statement = text(
                 f"""
                 SELECT
@@ -179,7 +179,8 @@ class PriceTrendDao:
                 GROUP BY period_start
                 ORDER BY period_start
                 """
-            ).bindparams(bindparam("region_ids", expanding=True))
+            )
+            statement = self._bind_region_filter_params(statement, target)
 
         rows = session.execute(statement, params).mappings().all()
 
@@ -215,10 +216,9 @@ class PriceTrendDao:
         month_expr = self._monthly_expression(dialect_name)
         date_area_filter = self._date_area_filter(dialect_name)
 
-        params: dict[str, Any] = {
-            "region_ids": target["region_ids"],
-            "limit": limit,
-        }
+        target_filter = self._region_filter_sql(target, dialect_name)
+        params: dict[str, Any] = {"limit": limit}
+        params.update(self._region_filter_params(target))
         params.update(self._criteria_params(criteria, dialect_name))
 
         if rank_by == RANK_BY_CHANGE_RATE:
@@ -241,7 +241,7 @@ class PriceTrendDao:
                         COUNT(t.id) AS trade_count
                     FROM trades t
                     JOIN complexes c ON c.id = t.complex_id
-                    WHERE c.region_id IN :region_ids
+                    WHERE {target_filter}
                     {date_area_filter}
                     GROUP BY
                         c.id,
@@ -325,7 +325,8 @@ class PriceTrendDao:
                 ORDER BY rank
                 LIMIT :limit
                 """
-            ).bindparams(bindparam("region_ids", expanding=True))
+            )
+            statement = self._bind_region_filter_params(statement, target)
 
             rows = session.execute(statement, params).mappings().all()
 
@@ -443,7 +444,7 @@ class PriceTrendDao:
 
             statement = text(
                 """
-                SELECT id, name
+                SELECT id, name, type
                 FROM regions
                 WHERE name IN :region_names
                 ORDER BY id
@@ -467,10 +468,61 @@ class PriceTrendDao:
             return {
                 "target_type": TARGET_REGION,
                 "complex_id": None,
-                "region_ids": [row["id"] for row in rows],
+                "region_ids": [
+                    row["id"]
+                    for row in rows
+                    if row["type"] != "neighborhood"
+                ],
+                "region_pnu_prefixes": [
+                    str(row["id"])
+                    for row in rows
+                    if row["type"] == "neighborhood"
+                ],
             }
 
         raise TrendError(
             "invalid_condition",
             "지원하지 않는 조회 대상 유형입니다.",
         )
+
+    def _region_filter_sql(self, target: dict[str, Any], dialect_name: str) -> str:
+        clauses: list[str] = []
+
+        if target.get("region_ids"):
+            clauses.append("c.region_id IN :region_ids")
+
+        if target.get("region_pnu_prefixes"):
+            pnu_prefix_expr = (
+                "substr(c.pnu, 1, 8)"
+                if dialect_name == "sqlite"
+                else "left(c.pnu, 8)"
+            )
+            clauses.append(f"{pnu_prefix_expr} IN :region_pnu_prefixes")
+
+        if not clauses:
+            raise TrendError(
+                "target_not_found",
+                "입력한 이름과 일치하는 지역을 찾지 못했습니다.",
+            )
+
+        return "(" + " OR ".join(clauses) + ")"
+
+    def _region_filter_params(self, target: dict[str, Any]) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+
+        if target.get("region_ids"):
+            params["region_ids"] = target["region_ids"]
+
+        if target.get("region_pnu_prefixes"):
+            params["region_pnu_prefixes"] = target["region_pnu_prefixes"]
+
+        return params
+
+    def _bind_region_filter_params(self, statement: Any, target: dict[str, Any]) -> Any:
+        if target.get("region_ids"):
+            statement = statement.bindparams(bindparam("region_ids", expanding=True))
+
+        if target.get("region_pnu_prefixes"):
+            statement = statement.bindparams(bindparam("region_pnu_prefixes", expanding=True))
+
+        return statement
