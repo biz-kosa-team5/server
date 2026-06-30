@@ -80,9 +80,33 @@ class TrendService:
         criteria: TrendCriteria,
         rows: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        return {
+        metrics: dict[str, Any] = {
             "row_count": len(rows),
         }
+
+        if criteria["analysis_type"] != ANALYSIS_TIMESERIES or not rows:
+            return metrics
+
+        first = rows[0]
+        last = rows[-1]
+        metrics.update(
+            {
+                "first_period": first.get("period_start"),
+                "last_period": last.get("period_start"),
+                "first_avg_deal_amount": first.get("avg_deal_amount"),
+                "last_avg_deal_amount": last.get("avg_deal_amount"),
+                "first_avg_price_per_sqm": first.get("avg_price_per_sqm"),
+                "last_avg_price_per_sqm": last.get("avg_price_per_sqm"),
+                "first_trade_count": first.get("trade_count"),
+                "last_trade_count": last.get("trade_count"),
+                "total_trade_count": sum(
+                    int(row.get("trade_count") or 0)
+                    for row in rows
+                ),
+            }
+        )
+
+        return metrics
 
 
 def run_price_trend(session: Session, slots: dict[str, Any]) -> dict[str, Any]:

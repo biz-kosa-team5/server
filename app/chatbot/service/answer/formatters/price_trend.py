@@ -13,6 +13,7 @@ from .common import (
   format_number,
   format_percent,
   format_price,
+  format_candidates,
   list_value,
 )
 
@@ -80,7 +81,15 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
         f"{prefix}{first_period} 평균 {first_amount}에서 "
         f"{last_period} 평균 {last_amount}{summary_change_particle(unit)} 확인됩니다."
       )
-  return clean_text(result.get("message"))
+  return format_failure_with_candidates(result)
+
+
+def format_failure_with_candidates(result: dict[str, Any]) -> str:
+  message = clean_text(result.get("message"))
+  candidates = format_candidates(result)
+  if message and candidates:
+    return f"{message} {candidates}"
+  return message or candidates
 
 
 def price_trend_target_name(result: dict[str, Any]) -> str:

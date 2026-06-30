@@ -232,9 +232,12 @@ def int_or_zero(value: Any) -> int:
 def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
   # 최종 답변에서 내부 용어(handler/tool 등)와 좌표 문장을 제거하고, 추천 답변은 목록형으로 고정한다.
   text = normalize_answer_whitespace(answer)
+  text = remove_markdown_formatting(text)
   text = remove_coordinate_text(text)
   if has_forbidden_answer_terms(text):
-    fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+    fallback = remove_coordinate_text(
+      remove_markdown_formatting(normalize_answer_whitespace(fallback_answer(context)))
+    )
     if has_forbidden_answer_terms(fallback):
       fallback = remove_forbidden_sentences(fallback)
     text = fallback
@@ -263,6 +266,19 @@ def normalize_answer_whitespace(answer: str) -> str:
   text = re.sub(r"\n{3,}", "\n\n", text)
   text = re.sub(r"[ \t]+", " ", text)
   return text
+
+
+def remove_markdown_formatting(answer: str) -> str:
+  text = str(answer or "")
+  text = re.sub(r"(?m)^\s{0,3}#{1,6}\s*", "", text)
+  text = re.sub(r"(?m)^\s*[-*+]\s+", "", text)
+  text = re.sub(r"(?m)^\s*(\d+)\.\s+", r"\1) ", text)
+  text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)
+  text = re.sub(r"__([^_\n]+)__", r"\1", text)
+  text = re.sub(r"`([^`\n]+)`", r"\1", text)
+  text = re.sub(r"\*([^*\n]+)\*", r"\1", text)
+  text = re.sub(r"_([^_\n]+)_", r"\1", text)
+  return normalize_answer_whitespace(text)
 
 
 def remove_coordinate_text(answer: str) -> str:

@@ -773,12 +773,20 @@ def simple_lookup_sub_query(text: str) -> str | None:
   overrides = simple_lookup_slot_overrides(text)
   target_name = overrides.get("target_name")
   query_type = overrides.get("query_type")
+  lookup_clause = clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+  if (
+    isinstance(target_name, str)
+    and query_type in {"trade_history", "region_trade_history", "complex_price_record"}
+    and lookup_clause
+    and target_name not in lookup_clause
+  ):
+    return lookup_clause
   if isinstance(target_name, str) and query_type == "location":
     return f"{target_name} 위치 알려줘"
   if isinstance(target_name, str) and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     return f"{target_name} 최근 실거래 알려줘"
   if target_name is None and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
-    return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+    return lookup_clause
   return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
 

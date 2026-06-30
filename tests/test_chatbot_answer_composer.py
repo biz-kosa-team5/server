@@ -59,6 +59,7 @@ def test_chatbot_answer_composer_sends_detailed_answer_policy(monkeypatch):
   assert "복합 질문이면 fragments의 index 순서를 유지" in system_prompt
   assert "내부 처리 용어를 사용자에게 노출하지 마세요" in system_prompt
   assert "도메인별 요약 방식" in system_prompt
+  assert "Markdown 문법을 사용하지 마세요" in system_prompt
 
 
 def test_chatbot_answer_composer_sends_structured_llm_context(monkeypatch):
@@ -182,6 +183,24 @@ def test_chatbot_answer_composer_removes_coordinate_text(monkeypatch):
   assert "경도" not in answer
   assert "37.5124" not in answer
   assert answer == "잠실엘스 위치를 확인했습니다. 지도에 표시했습니다."
+
+
+def test_chatbot_answer_composer_removes_markdown_formatting(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(
+    content=(
+      "대치동에서 많이 오른 아파트 TOP 5입니다.\n\n"
+      "1. **대치효성**: `31.81%` 상승했습니다.\n"
+      "- 제공된 데이터 기준입니다."
+    )
+  )
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
+
+  assert "**" not in answer
+  assert "`" not in answer
+  assert "- 제공" not in answer
+  assert "1) 대치효성: 31.81% 상승했습니다." in answer
 
 
 def test_chatbot_answer_composer_falls_back_when_forbidden_term_is_returned(monkeypatch):
@@ -336,7 +355,7 @@ def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendat
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
 
-  assert answer.startswith("조건에 맞는 추천 후보입니다.\n1. 개포우성1")
+  assert answer.startswith("조건에 맞는 추천 후보입니다.\n1) 개포우성1")
   assert "도곡역 382m" in answer
   assert "생활편의 연치과병원 300m" in answer
   assert "재건축/정비사업 정보 없음" in answer

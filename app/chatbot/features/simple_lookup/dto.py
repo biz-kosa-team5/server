@@ -23,6 +23,12 @@ SORT_OLDEST = "oldest"
 PRICE_HIGHEST = "highest"
 PRICE_LOWEST = "lowest"
 
+DEFAULT_LOOKUP_UNITS: dict[str, str] = {
+    "deal_amount": "만원",
+    "excl_area": "㎡",
+    "price_per_m2": "만원/㎡",
+}
+
 
 # 허용 query_type
 QueryType: TypeAlias = Literal[
@@ -225,6 +231,7 @@ class SimpleLookupObservation(BaseModel):
     success: Literal[True] = True
     query_type: QueryType
     criteria: dict[str, Any] = Field(default_factory=dict)
+    units: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOOKUP_UNITS))
     data: list[LookupItemData] = Field(default_factory=list)
 
 

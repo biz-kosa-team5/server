@@ -84,6 +84,27 @@ def list_value(value: Any) -> list[Any]:
   return value if isinstance(value, list) else []
 
 
+def format_candidates(result: dict[str, Any], *, limit: int = 5) -> str:
+  candidates = list_value(result.get("candidates"))
+  labels = []
+  for candidate in candidates[:limit]:
+    if not isinstance(candidate, dict):
+      continue
+    name = first_non_empty([
+      clean_text(candidate.get("complex_name")),
+      clean_text(candidate.get("name")),
+      clean_text(candidate.get("trade_name")),
+    ])
+    address = clean_text(candidate.get("address"))
+    if name and address:
+      labels.append(f"{name}({address})")
+    elif name:
+      labels.append(name)
+  if not labels:
+    return ""
+  return "후보: " + ", ".join(labels) + "."
+
+
 def first_non_empty(values: list[str]) -> str:
   for value in values:
     if value:
