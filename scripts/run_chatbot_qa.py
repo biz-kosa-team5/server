@@ -9,6 +9,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 
@@ -51,11 +52,15 @@ class QaResult:
   actual_agents: list[str]
   actual_handlers: list[str]
   actual_status: str
+  elapsed_ms: int
+  token_check: str
   answer_ok: bool
+  answer: str
   answer_excerpt: str
   nested_answer_absent: bool
   passed: bool
   notes: str = ""
+  expected_handler_options: list[list[str]] = field(default_factory=list)
   payload: dict[str, Any] = field(default_factory=dict)
 
 
@@ -236,10 +241,12 @@ def main() -> int:
   selected_cases = filter_cases(load_cases(args), args.case)
   run_date = datetime.now().strftime("%Y-%m-%d")
   with SessionLocal() as session:
-    results = [
-      asyncio.run(run_case(session, case, run_date))
-      for case in selected_cases
-    ]
+    results = asyncio.run(run_cases(
+      session,
+      selected_cases,
+      run_date,
+      strict_supervisor_first=args.live_llm,
+    ))
 
   output_dir = Path(args.output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
@@ -594,10 +601,36 @@ def filter_cases(cases: tuple[QaCase, ...], case_ids: list[str]) -> tuple[QaCase
   return tuple(case for case in cases if case.id in wanted)
 
 
-async def run_case(session: Any, case: QaCase, run_date: str) -> QaResult:
+async def run_cases(
+  session: Any,
+  cases: tuple[QaCase, ...],
+  run_date: str,
+  *,
+  strict_supervisor_first: bool,
+) -> list[QaResult]:
+  results = []
+  for case in cases:
+    results.append(await run_case(
+      session,
+      case,
+      run_date,
+      strict_supervisor_first=strict_supervisor_first,
+    ))
+  return results
+
+
+async def run_case(
+  session: Any,
+  case: QaCase,
+  run_date: str,
+  *,
+  strict_supervisor_first: bool = False,
+) -> QaResult:
   from app.chatbot.service.chatbot_service import handle_chatbot_query
 
+  started_at = perf_counter()
   payload = await handle_chatbot_query(session, {"question": case.question})
+  elapsed_ms = round((perf_counter() - started_at) * 1000)
   actual_plan_types = collect_plan_types(payload)
   actual_path = actual_execution_path(payload)
   actual_agents = collect_agents(payload)
@@ -605,7 +638,16 @@ async def run_case(session: Any, case: QaCase, run_date: str) -> QaResult:
   answer = payload.get("answer") if isinstance(payload.get("answer"), str) else ""
   nested_answer_absent = nested_answer_paths(payload) == [["answer"]]
   answer_ok = validate_answer(answer, case, nested_answer_absent)
-  notes = result_notes(case, payload, actual_plan_types, actual_path, actual_handlers, answer_ok, nested_answer_absent)
+  notes = result_notes(
+    case,
+    payload,
+    actual_plan_types,
+    actual_path,
+    actual_handlers,
+    answer_ok,
+    nested_answer_absent,
+    strict_supervisor_first=strict_supervisor_first,
+  )
   passed = not notes
 
   return QaResult(
@@ -617,13 +659,20 @@ async def run_case(session: Any, case: QaCase, run_date: str) -> QaResult:
     expected_plan_type=case.expected_plan_type,
     expected_execution_path=case.expected_execution_path,
     expected_handlers=list(case.expected_handlers),
+    expected_handler_options=[
+      list(option)
+      for option in expected_handler_options(case)
+    ],
     expected_status=list(case.expected_status),
     actual_plan_types=actual_plan_types,
     actual_execution_path=actual_path,
     actual_agents=actual_agents,
     actual_handlers=actual_handlers,
     actual_status=str(payload.get("status", "")),
+    elapsed_ms=elapsed_ms,
+    token_check=collect_token_check(payload),
     answer_ok=answer_ok,
+    answer=answer,
     answer_excerpt=excerpt(answer),
     nested_answer_absent=nested_answer_absent,
     passed=passed,
@@ -640,6 +689,8 @@ def result_notes(
   actual_handlers: list[str],
   answer_ok: bool,
   nested_answer_absent: bool,
+  *,
+  strict_supervisor_first: bool = False,
 ) -> list[str]:
   notes = []
   status = str(payload.get("status", ""))
@@ -648,8 +699,14 @@ def result_notes(
   plan_options = expected_plan_options(case)
   if not any(plan_type_matches(expected, actual_plan_types, payload) for expected in plan_options):
     notes.append(f"plan expected one of {plan_options}, got {actual_plan_types}")
-  path_options = expected_path_options(case)
-  if not any(execution_path_matches(expected, actual_path, payload) for expected in path_options):
+  if not execution_path_ok(
+    case,
+    actual_path,
+    actual_handlers,
+    payload,
+    strict_supervisor_first=strict_supervisor_first,
+  ):
+    path_options = expected_path_options(case)
     notes.append(f"path expected one of {path_options}, got {actual_path}")
   handler_options = expected_handler_options(case)
   if not any(handler_prefix_matches(expected, actual_handlers) for expected in handler_options):
@@ -683,6 +740,75 @@ def execution_path_matches(expected: str, actual_path: str, payload: dict[str, A
   if expected == "fragmented":
     return len(payload.get("fragments", [])) > 1
   return expected in actual_path.split(",")
+
+
+def execution_path_ok(
+  case: QaCase,
+  actual_path: str,
+  actual_handlers: list[str],
+  payload: dict[str, Any],
+  *,
+  strict_supervisor_first: bool = False,
+) -> bool:
+  if strict_supervisor_first:
+    return strict_supervisor_first_path_matches(case, actual_path, actual_handlers, payload)
+  path_options = expected_path_options(case)
+  if any(execution_path_matches(expected, actual_path, payload) for expected in path_options):
+    return True
+  return supervisor_first_path_matches(case, actual_path, actual_handlers)
+
+
+def strict_supervisor_first_path_matches(
+  case: QaCase,
+  actual_path: str,
+  actual_handlers: list[str],
+  payload: dict[str, Any],
+) -> bool:
+  handler_options = expected_handler_options(case)
+  if all(option == ("no_matching_tool",) for option in handler_options):
+    return any(
+      execution_path_matches(expected, actual_path, payload)
+      for expected in expected_path_options(case)
+    )
+  paths = set(filter(None, actual_path.split(",")))
+  if paths & direct_data_paths():
+    return False
+  if case.expected_plan_type == "fragmented" and len(payload.get("fragments", [])) > 1:
+    return True
+  return supervisor_first_path_matches(case, actual_path, actual_handlers)
+
+
+def direct_data_paths() -> set[str]:
+  return {
+    "direct_feature",
+    "direct_ambiguous_features",
+    "direct_supported_unsupported_features",
+    "direct_same_tool_features",
+    "direct_independent_features",
+    "direct_dependent_features",
+    "hybrid_independent_features",
+  }
+
+
+def supervisor_first_path_matches(
+  case: QaCase,
+  actual_path: str,
+  actual_handlers: list[str],
+) -> bool:
+  paths = set(filter(None, actual_path.split(",")))
+  if not paths & {"specialist_tool", "supervisor_aggregate"}:
+    return False
+  handler_options = tuple(
+    option
+    for option in expected_handler_options(case)
+    if option != ("no_matching_tool",)
+  )
+  if not handler_options:
+    return False
+  return any(
+    handler_prefix_matches(expected_handlers, actual_handlers)
+    for expected_handlers in handler_options
+  )
 
 
 def handler_prefix_matches(expected_handlers: tuple[str, ...], actual_handlers: list[str]) -> bool:
@@ -731,6 +857,10 @@ def collect_agents(payload: dict[str, Any]) -> list[str]:
 def collect_handlers(payload: dict[str, Any]) -> list[str]:
   handlers: list[str] = []
   for execution in fragment_executions(payload):
+    handler_calls = execution.get("handlerCalls")
+    if isinstance(handler_calls, list):
+      handlers.extend(str(handler) for handler in handler_calls)
+      continue
     execution_handlers = execution.get("handlers")
     if isinstance(execution_handlers, list):
       handlers.extend(str(handler) for handler in execution_handlers)
@@ -741,6 +871,46 @@ def collect_handlers(payload: dict[str, Any]) -> list[str]:
   if handlers:
     return handlers
   return collect_result_handlers(payload.get("result"))
+
+
+def collect_token_check(payload: dict[str, Any]) -> str:
+  usage = first_usage_metadata(payload)
+  if not usage:
+    return "not_captured"
+
+  prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+  completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+  total_tokens = usage.get("total_tokens")
+  parts = []
+  if prompt_tokens is not None:
+    parts.append(f"prompt={prompt_tokens}")
+  if completion_tokens is not None:
+    parts.append(f"completion={completion_tokens}")
+  if total_tokens is not None:
+    parts.append(f"total={total_tokens}")
+  return ", ".join(parts) if parts else "metadata_present"
+
+
+def first_usage_metadata(value: Any) -> dict[str, Any] | None:
+  if isinstance(value, list):
+    for item in value:
+      usage = first_usage_metadata(item)
+      if usage:
+        return usage
+    return None
+  if not isinstance(value, dict):
+    return None
+
+  for key in ("usage", "usage_metadata", "token_usage", "tokenUsage"):
+    usage = value.get(key)
+    if isinstance(usage, dict):
+      return usage
+
+  for item in value.values():
+    usage = first_usage_metadata(item)
+    if usage:
+      return usage
+  return None
 
 
 def collect_result_handlers(value: Any) -> list[str]:
@@ -825,8 +995,8 @@ def render_markdown(results: list[QaResult], *, live_llm: bool) -> str:
     "",
     "## Results",
     "",
-    "| id | package | status | expected path | actual path | expected handlers | actual handlers | answer ok | nested answer absent | notes |",
-    "|---|---|---|---|---|---|---|---|---|---|",
+    "| id | package | status | expected path | actual path | expected handlers | actual handlers | elapsed ms | token check | answer ok | nested answer absent | answer | notes |",
+    "|---|---|---|---|---|---|---|---:|---|---|---|---|---|",
   ]
   for result in results:
     lines.append(
@@ -837,17 +1007,20 @@ def render_markdown(results: list[QaResult], *, live_llm: bool) -> str:
         "PASS" if result.passed else "FAIL",
         result.expected_execution_path,
         result.actual_execution_path or "-",
-        ", ".join(result.expected_handlers) or "-",
+        expected_handlers_label(result),
         ", ".join(result.actual_handlers) or "-",
+        str(result.elapsed_ms),
+        escape_table(result.token_check),
         "Y" if result.answer_ok else "N",
         "Y" if result.nested_answer_absent else "N",
+        escape_table(result.answer or "-"),
         escape_table(result.notes or "-"),
       ])
       + " |"
     )
   lines.extend([
     "",
-    "## Answer Excerpts",
+    "## Full Answers",
     "",
   ])
   for result in results:
@@ -855,14 +1028,29 @@ def render_markdown(results: list[QaResult], *, live_llm: bool) -> str:
       f"### {result.id}",
       "",
       f"- question: {result.question}",
-      f"- answer: {result.answer_excerpt or '-'}",
+      "",
+      result.answer or "-",
       "",
     ])
   return "\n".join(lines)
 
 
 def escape_table(value: str) -> str:
-  return value.replace("|", "\\|").replace("\n", " ")
+  return value.replace("|", "\\|").replace("\r\n", "\n").replace("\n", "<br>")
+
+
+def expected_handlers_label(result: QaResult) -> str:
+  if result.expected_handler_options:
+    return format_handler_options(result.expected_handler_options)
+  return ", ".join(result.expected_handlers) or "-"
+
+
+def format_handler_options(options: list[list[str]]) -> str:
+  formatted = [
+    ", ".join(option) if option else "-"
+    for option in options
+  ]
+  return " 또는 ".join(formatted) if formatted else "-"
 
 
 def write_jsonl(path: Path, results: list[QaResult]) -> None:

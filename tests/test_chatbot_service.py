@@ -296,14 +296,7 @@ def test_chatbot_query_uses_supervisor_for_single_lookup_question(monkeypatch):
 
   def fake_run_simple_lookup(_session, slots, text):
     calls.append((slots, text))
-    return {
-      "success": True,
-      "handler": "simple_lookup",
-      "query_type": "location",
-      "criteria": {
-        "target_name": slots["target_name"],
-      },
-    }
+    raise AssertionError("direct fallback should not run when supervisor selects a tool")
 
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
   monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
@@ -408,7 +401,38 @@ def test_chatbot_query_initializes_supervisor_for_lookup(monkeypatch):
   assert response.json()["fragments"][0]["execution"]["path"] == "specialist_tool"
 
 
-def test_chatbot_query_marks_direct_feature_execution(monkeypatch):
+def test_chatbot_query_uses_direct_lookup_when_supervisor_initialization_fails(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      raise RuntimeError("boom")
+
+  def fake_run_simple_lookup(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "simple_lookup",
+      "query_type": "location",
+      "criteria": {
+        "target_name": slots["target_name"],
+      },
+      "message": "단지 위치를 조회했습니다.",
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 위치 알려줘"},
+  )
+
+  assert response.status_code == 200
+  assert response.json()["success"] is True
+  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
+  assert response.json()["fragments"][0]["execution"]["fallbackFrom"] == "supervisor"
+  assert response.json()["fragments"][0]["execution"]["fallbackReason"] == "supervisor_initialization_failed"
+
+
+def test_chatbot_query_uses_direct_fallback_when_supervisor_selects_no_tool(monkeypatch):
   supervisor_calls = []
 
   class FakeChatbotSupervisor:
@@ -419,7 +443,7 @@ def test_chatbot_query_marks_direct_feature_execution(monkeypatch):
       supervisor_calls.append(question)
       return {
         "success": False,
-        "reason": "should_not_call_supervisor",
+        "reason": "no_matching_tool",
       }
 
   def fake_run_recommendation(_session, slots, text):
@@ -440,13 +464,91 @@ def test_chatbot_query_marks_direct_feature_execution(monkeypatch):
 
   assert response.status_code == 200
   payload = response.json()
-  assert supervisor_calls == []
+  assert supervisor_calls == ["송파구 30억 이하 아파트 추천해줘"]
   assert payload["result"]["handler"] == "recommendation"
   assert payload["fragments"][0]["execution"] == {
     "path": "direct_feature",
     "planType": "single_feature",
     "selectedAgent": "recommendation_agent",
     "handler": "recommendation",
+    "fallbackFrom": "supervisor",
+    "fallbackReason": "supervisor_no_tool",
+  }
+
+
+def test_chatbot_query_does_not_use_direct_fallback_when_selected_tool_fails(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, _question):
+      return {
+        "success": False,
+        "handler": "simple_lookup",
+        "reason": "target_not_found",
+        "message": "조건에 맞는 단지를 찾지 못했습니다.",
+      }
+
+  def fake_run_simple_lookup(_session, _slots, _text):
+    raise AssertionError("direct fallback should only run when supervisor cannot select a tool")
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "없는단지 위치 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is False
+  assert payload["result"]["reason"] == "target_not_found"
+  assert payload["fragments"][0]["execution"] == {
+    "path": "specialist_tool",
+    "planType": "single_feature",
+    "selectedAgent": "lookup_agent",
+    "handler": "simple_lookup",
+  }
+
+
+def test_chatbot_query_does_not_use_direct_fallback_when_selected_tool_returns_no_match(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run_with_trace(self, _question):
+      return (
+        {
+          "success": False,
+          "reason": "no_matching_tool",
+          "message": "선택된 전문 agent가 처리할 수 없습니다.",
+        },
+        {
+          "path": "specialist_tool",
+          "selectedAgent": "lookup_agent",
+        },
+      )
+
+  def fake_run_simple_lookup(_session, _slots, _text):
+    raise AssertionError("direct fallback should not run after a selected specialist tool returns no match")
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "없는단지 위치 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["success"] is False
+  assert payload["result"]["reason"] == "no_matching_tool"
+  assert payload["fragments"][0]["execution"] == {
+    "path": "specialist_tool",
+    "planType": "single_feature",
+    "selectedAgent": "lookup_agent",
   }
 
 
@@ -459,7 +561,10 @@ def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
       pass
 
     async def run(self, _question):
-      raise AssertionError("direct recommendation should not call supervisor")
+      return {
+        "success": False,
+        "reason": "no_matching_tool",
+      }
 
   def fake_run_recommendation(_session, slots, text):
     return {
@@ -505,11 +610,12 @@ def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
 
   assert response.status_code == 200
   payload = response.json()
-  assert payload["answer"].startswith("조회된 데이터 기준으로는 다음 후보를 우선 검토할 수 있습니다.")
+  assert payload["answer"].startswith("조건에 맞는 추천 후보입니다.")
   assert "잠실엘스" in payload["answer"]
   assert "28억원" in payload["answer"]
   assert "잠실역" in payload["answer"]
   assert payload["fragments"][0]["execution"]["path"] == "direct_feature"
+  assert payload["fragments"][0]["execution"]["fallbackFrom"] == "supervisor"
   assert nested_answer_paths(payload) == [["answer"]]
 
 

@@ -11,8 +11,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
-from .orchestrator import execute_plan
-from .planner import build_execution_plan
+from .orchestrator import OrchestrationResult, execute_plan
+from .planner import ExecutionPlan, build_execution_plan
 from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
@@ -211,51 +211,36 @@ async def execute_task(
 ) -> TaskExecutionResult:
   execution: dict[str, Any] | None = None
   try:
-    plan = build_execution_plan(task.text)
-    orchestration_result = await execute_plan(
-      session,
+    plan = None
+
+    def fallback_plan():
+      nonlocal plan
+      if plan is None:
+        plan = build_execution_plan(task.text)
+      return plan
+
+    result, execution = await run_supervisor_first(
       task.text,
-      plan,
-      supervisor=supervisor,
+      supervisor,
       supervisor_provider=supervisor_provider,
       supervisor_initialization_failed=supervisor_initialization_failed,
     )
-    if orchestration_result is not None:
-      result = orchestration_result.result
-      execution = enrich_execution_trace(orchestration_result.execution, result)
-    else:
-      if supervisor is None and supervisor_provider is not None:
-        supervisor = supervisor_provider()
-        supervisor_initialization_failed = (
-          supervisor_initialization_failed
-          or supervisor_provider.initialization_failed
-        )
-      if supervisor is None:
-        result = (
-          agent_initialization_failed_result()
-          if supervisor_initialization_failed
-          else agent_execution_failed_result()
-        )
-        execution = {
-          "path": "supervisor_initialization_failed"
-          if supervisor_initialization_failed
-          else "supervisor_unavailable",
-        }
-      else:
-        run_with_trace = getattr(supervisor, "run_with_trace", None)
-        if callable(run_with_trace):
-          result, execution = await run_with_trace(task.text)
-          if execution is not None:
-            execution = enrich_execution_trace(execution, result)
-        else:
-          result = await supervisor.run(task.text)
-        if execution is None:
-          execution = infer_supervisor_execution(result)
-      if execution is not None and "planType" not in execution:
-        execution = {
-          **execution,
-          "planType": plan.plan_type,
-        }
+    if should_run_direct_fallback(result, execution):
+      orchestration_result = await run_direct_fallback(
+        session,
+        task.text,
+        fallback_plan(),
+        fallback_reason=fallback_reason_from_supervisor(result, execution),
+      )
+      if orchestration_result is not None:
+        result = orchestration_result.result
+        execution = orchestration_result.execution
+
+    if execution is not None and "planType" not in execution:
+      execution = {
+        **execution,
+        "planType": fallback_plan().plan_type,
+      }
   except Exception:
     logger.exception("Failed to run chatbot task %s", task.index)
     result = agent_execution_failed_result()
@@ -264,9 +249,120 @@ async def execute_task(
   return TaskExecutionResult(task=task, result=result, execution=execution)
 
 
+async def run_supervisor_first(
+  text: str,
+  supervisor: ChatbotSupervisor | None,
+  *,
+  supervisor_provider: LazySupervisorProvider | None,
+  supervisor_initialization_failed: bool,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+  if supervisor is None and supervisor_provider is not None:
+    supervisor = supervisor_provider()
+    supervisor_initialization_failed = (
+      supervisor_initialization_failed
+      or supervisor_provider.initialization_failed
+    )
+
+  if supervisor is None:
+    result = (
+      agent_initialization_failed_result()
+      if supervisor_initialization_failed
+      else agent_execution_failed_result()
+    )
+    execution = {
+      "path": "supervisor_initialization_failed"
+      if supervisor_initialization_failed
+      else "supervisor_unavailable",
+    }
+    return result, execution
+
+  try:
+    run_with_trace = getattr(supervisor, "run_with_trace", None)
+    if callable(run_with_trace):
+      result, execution = await run_with_trace(text)
+      if execution is not None:
+        execution = enrich_execution_trace(execution, result)
+    else:
+      result = await supervisor.run(text)
+      execution = None
+    if execution is None:
+      execution = infer_supervisor_execution(result)
+    return result, execution
+  except Exception:
+    logger.exception("Failed to run chatbot supervisor")
+    return agent_execution_failed_result(), {"path": "supervisor_execution_failed"}
+
+
+async def run_direct_fallback(
+  session: Session,
+  text: str,
+  plan: ExecutionPlan,
+  *,
+  fallback_reason: str,
+) -> OrchestrationResult | None:
+  try:
+    orchestration_result = await execute_plan(
+      session,
+      text,
+      plan,
+      supervisor=None,
+      supervisor_provider=None,
+      supervisor_initialization_failed=False,
+      allow_lookup_trend_direct=True,
+    )
+  except Exception:
+    logger.exception("Failed to run direct chatbot fallback")
+    return None
+
+  if orchestration_result is None:
+    return None
+
+  execution = enrich_execution_trace(
+    orchestration_result.execution,
+    orchestration_result.result,
+  )
+  return OrchestrationResult(
+    result=orchestration_result.result,
+    execution={
+      **execution,
+      "fallbackFrom": "supervisor",
+      "fallbackReason": fallback_reason,
+    },
+  )
+
+
+def should_run_direct_fallback(
+  result: dict[str, Any],
+  execution: dict[str, Any] | None,
+) -> bool:
+  path = execution.get("path") if execution else None
+  return path in {
+    "supervisor_no_tool",
+    "supervisor_unavailable",
+    "supervisor_initialization_failed",
+    "supervisor_execution_failed",
+  }
+
+
+def fallback_reason_from_supervisor(
+  result: dict[str, Any],
+  execution: dict[str, Any] | None,
+) -> str:
+  if execution and execution.get("path"):
+    return str(execution["path"])
+  if result.get("reason"):
+    return str(result["reason"])
+  return "supervisor_unhandled"
+
+
 def infer_supervisor_execution(result: dict[str, Any]) -> dict[str, Any]:
-  if result.get("reason") == "no_matching_tool":
+  reason = result.get("reason")
+  if reason == "no_matching_tool":
     return {"path": "supervisor_no_tool"}
+  if reason == "agent_execution_failed":
+    return {"path": "supervisor_execution_failed"}
+  if reason == "agent_initialization_failed":
+    return {"path": "supervisor_initialization_failed"}
   if isinstance(result.get("results"), list):
     return enrich_execution_trace(
       {
@@ -292,10 +388,13 @@ def enrich_execution_trace(trace: dict[str, Any], result: dict[str, Any]) -> dic
   }
   handler = first_handler(result)
   handlers = handlers_from_result(result)
+  handler_calls = handler_calls_from_result(result)
   if handler:
     enriched["handler"] = handler
   if len(handlers) > 1:
     enriched["handlers"] = handlers
+  if len(handler_calls) > 1:
+    enriched["handlerCalls"] = handler_calls
   selected_agents = selected_agents_from_result(result)
   if selected_agents and "selectedAgents" not in enriched and "selectedAgent" not in enriched:
     if len(selected_agents) == 1:
@@ -332,6 +431,28 @@ def handlers_from_result(result: Any) -> list[str]:
       return
     handler = value.get("handler")
     if isinstance(handler, str) and handler not in handlers:
+      handlers.append(handler)
+    if "result" in value:
+      visit(value.get("result"))
+    if "results" in value:
+      visit(value.get("results"))
+
+  visit(result)
+  return handlers
+
+
+def handler_calls_from_result(result: Any) -> list[str]:
+  handlers: list[str] = []
+
+  def visit(value: Any) -> None:
+    if isinstance(value, list):
+      for item in value:
+        visit(item)
+      return
+    if not isinstance(value, dict):
+      return
+    handler = value.get("handler")
+    if isinstance(handler, str):
       handlers.append(handler)
     if "result" in value:
       visit(value.get("result"))
