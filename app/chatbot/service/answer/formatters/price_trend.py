@@ -86,8 +86,9 @@ def format_ranking_result(result: dict[str, Any], rows: list[dict[str, Any]]) ->
   target_name = price_trend_target_name(result)
   title = f"{target_name} 가격 변화율 순위는 다음과 같습니다." if target_name else "가격 변화율 순위는 다음과 같습니다."
   lines = [title]
+  display_limit = ranking_display_limit(result, rows)
 
-  for index, row in enumerate(rows[:5], start=1):
+  for index, row in enumerate(rows[:display_limit], start=1):
     name = clean_text(row.get("complex_name")) or clean_text(row.get("trade_name")) or f"{index}위"
     rank = row.get("rank") or index
     if lines[-1] != "":
@@ -112,6 +113,17 @@ def format_ranking_result(result: dict[str, Any], rows: list[dict[str, Any]]) ->
       lines.append(f"주소: {address}")
 
   return "\n".join(lines)
+
+
+def ranking_display_limit(result: dict[str, Any], rows: list[dict[str, Any]]) -> int:
+  criteria = dict_value(result.get("criteria"))
+  try:
+    limit = int(criteria.get("limit"))
+  except (TypeError, ValueError):
+    limit = 0
+  if limit <= 0:
+    return min(len(rows), 5)
+  return min(len(rows), limit)
 
 
 def timeseries_summary(result: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
