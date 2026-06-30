@@ -225,6 +225,28 @@ def test_chatbot_stream_uses_supervisor_aggregate_for_recommendation_then_compar
     async def compose(self, _context):
       return "먼저 조건에 맞는 추천 후보를 확인했고, 이어서 위 추천 후보를 비교했습니다. 종합하면 후보별 장단점을 같이 보면 됩니다."
 
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", lambda *_: {
+    "handler": "recommendation",
+    "success": True,
+    "results": [
+      {"complexId": 1001, "complexName": "서초그랑자이"},
+      {"complexId": 1002, "complexName": "래미안서초에스티지"},
+      {"complexId": 1003, "complexName": "반포자이"},
+    ],
+  })
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", lambda _session, slots, _text: {
+    "handler": "comparison",
+    "success": True,
+    "criteria": {
+      "apartment_names": slots["apartment_names"],
+      "apartment_complex_ids": slots["apartment_complex_ids"],
+    },
+    "results": [
+      {"complexName": "서초그랑자이"},
+      {"complexName": "래미안서초에스티지"},
+      {"complexName": "반포자이"},
+    ],
+  })
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", FakeChatbotAnswerComposer)
 
@@ -265,6 +287,11 @@ def test_chatbot_stream_uses_supervisor_aggregate_for_recommendation_then_compar
     "서초그랑자이",
     "래미안서초에스티지",
     "반포자이",
+  ]
+  assert final["result"]["results"][1]["result"]["criteria"]["apartment_complex_ids"] == [
+    1001,
+    1002,
+    1003,
   ]
   for forbidden in ("전문 에이전트", "handler", "tool", "execution", "planType", "raw JSON", "latitude", "longitude", "좌표"):
     assert forbidden not in streamed_answer

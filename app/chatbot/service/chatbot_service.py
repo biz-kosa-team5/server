@@ -422,6 +422,10 @@ async def execute_task(
 
 
 def should_run_direct_plan_first(plan: ExecutionPlan, text: str) -> bool:
+  if plan.plan_type == "dependent_multi_feature":
+    handlers = [step.handler for step in plan.steps]
+    return handlers == ["recommendation", "comparison"]
+
   if plan.plan_type != "single_feature":
     return False
   if len(plan.steps) != 1 or plan.steps[0].handler != "recommendation":

@@ -119,6 +119,36 @@ def test_orchestrator_extracts_candidate_names_from_supported_fields(monkeypatch
   assert comparison_calls[0]["apartment_names"] == ["A아파트", "B아파트", "C아파트"]
 
 
+def test_orchestrator_passes_recommendation_candidate_ids_to_comparison(monkeypatch):
+  comparison_calls = []
+
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", lambda *_: {
+    "handler": "recommendation",
+    "success": True,
+    "results": [
+      {"complexId": 101, "complexName": "A아파트"},
+      {"complexId": 102, "complexName": "우성아파트"},
+      {"complexId": 103, "complexName": "C아파트"},
+    ],
+  })
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", lambda _session, slots, _text: (
+    comparison_calls.append(slots) or {
+      "handler": "comparison",
+      "success": True,
+      "criteria": {
+        "apartment_names": slots["apartment_names"],
+        "apartment_complex_ids": slots["apartment_complex_ids"],
+      },
+      "results": [],
+    }
+  ))
+
+  run_plan("서초구 아파트 추천하고 그 3개 비교해줘")
+
+  assert comparison_calls[0]["apartment_names"] == ["A아파트", "우성아파트", "C아파트"]
+  assert comparison_calls[0]["apartment_complex_ids"] == [101, 102, 103]
+
+
 def test_orchestrator_does_not_run_comparison_for_reference_only_comparison(monkeypatch):
   comparison_calls = []
 

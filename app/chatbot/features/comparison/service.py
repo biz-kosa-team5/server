@@ -44,36 +44,42 @@ class ComparisonService:
   def compare_apartments_by_metrics(self, session: Session, slots: dict[str, Any]) -> dict[str, Any]:
     """아파트명 목록과 비교 항목에 맞춰 비교 결과를 만든다."""
     normalized = normalize_slots(slots)
+    complex_ids = normalize_complex_ids(normalized.get("apartment_complex_ids"))
     names = normalized.get("apartment_names")
-    if not isinstance(names, list) or len(names) < 2:
+    if len(complex_ids) < 2 and (not isinstance(names, list) or len(names) < 2):
       # 쉼표나 "랑"으로 못 나눈 경우, 원문에서 DB 단지명을 직접 스캔해 다시 찾는다.
       names = infer_apartment_names_from_text(session, str(normalized.get("_original_query") or ""))
       if names:
         normalized["apartment_names"] = names
-    if not isinstance(names, list) or len(names) < 2:
+    if len(complex_ids) < 2 and (not isinstance(names, list) or len(names) < 2):
       return empty_result("comparison", "missing_apartment_names", "비교할 아파트명을 2개 이상 입력해야 합니다.", normalized)
 
     infra_preferences = requested_infra(normalized)
     metrics = self._resolve_metrics(normalized, infra_preferences)
     rows, missing, candidate_groups, resolved_names, resolution_notes = self._build_rows(
       session,
-      names,
+      names if isinstance(names, list) else [],
       metrics,
       normalized,
       infra_preferences,
+      complex_ids=complex_ids,
     )
     success = len(rows) >= 2 and not missing and not candidate_groups
+
+    criteria = {
+      "apartment_names": names if isinstance(names, list) else resolved_names,
+      "metrics": metrics,
+      "school_type": normalized.get("school_type"),
+      "school_name": normalized.get("school_name"),
+      "infra_preferences": sorted(infra_preferences),
+    }
+    if complex_ids:
+      criteria["apartment_complex_ids"] = complex_ids
 
     response = {
       "handler": "comparison",
       "success": success,
-      "criteria": {
-        "apartment_names": names,
-        "metrics": metrics,
-        "school_type": normalized.get("school_type"),
-        "school_name": normalized.get("school_name"),
-        "infra_preferences": sorted(infra_preferences),
-      },
+      "criteria": criteria,
       "results": rows,
       "missingApartmentNames": missing,
       "candidateGroups": candidate_groups,
@@ -99,9 +105,17 @@ class ComparisonService:
     metrics: list[str],
     slots: dict[str, Any],
     infra_preferences: set[str],
+    complex_ids: list[int] | None = None,
   ) -> tuple[list[dict[str, Any]], list[Any], list[dict[str, Any]], list[str], list[str]]:
     """각 아파트명을 공통 resolver로 찾고 비교용 item으로 변환한다."""
-    resolved, missing, candidate_groups, resolution_notes = self._resolve_complexes(session, names)
+    if complex_ids:
+      resolved, missing, candidate_groups, resolution_notes = self._resolve_complexes_by_ids(
+        session,
+        complex_ids,
+        names,
+      )
+    else:
+      resolved, missing, candidate_groups, resolution_notes = self._resolve_complexes(session, names)
     rows = []
     for _name, complex_row in resolved:
       item = comparison_item(complex_row, latest_trade_for_complex(session, complex_row.id), metrics)
@@ -114,6 +128,23 @@ class ComparisonService:
       )
       rows.append(item)
     return rows, missing, candidate_groups, [row.name for _name, row in resolved], resolution_notes
+
+  def _resolve_complexes_by_ids(
+    self,
+    session: Session,
+    complex_ids: list[int],
+    names: list[Any],
+  ) -> tuple[list[tuple[str, Complex]], list[Any], list[dict[str, Any]], list[str]]:
+    resolved: list[tuple[str, Complex]] = []
+    missing: list[Any] = []
+    for index, complex_id in enumerate(complex_ids):
+      complex_row = session.get(Complex, complex_id)
+      label = str(names[index]) if index < len(names) and names[index] else str(complex_id)
+      if complex_row is None:
+        missing.append(label)
+        continue
+      resolved.append((label, complex_row))
+    return resolved, missing, [], []
 
   def _resolve_complexes(
     self,
@@ -183,6 +214,20 @@ def compare_apartments_by_metrics(session: Session, slots: dict[str, Any]) -> di
 def run_comparison(session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
   """chatbot comparison tool에서 호출하는 기존 진입점이다."""
   return ComparisonService().run(session, slots, text)
+
+
+def normalize_complex_ids(value: Any) -> list[int]:
+  if not isinstance(value, list):
+    return []
+  ids: list[int] = []
+  for item in value:
+    try:
+      complex_id = int(item)
+    except (TypeError, ValueError):
+      continue
+    if complex_id not in ids:
+      ids.append(complex_id)
+  return ids
 
 
 def comparison_message(

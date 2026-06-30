@@ -580,47 +580,38 @@ def test_chatbot_query_accepts_ai_selected_find_location_lookup(monkeypatch):
   assert payload["answer"] == "질문을 처리했습니다."
 
 
-def test_chatbot_query_keeps_supervisor_partial_aggregate_without_direct_repair(monkeypatch):
+def test_chatbot_query_runs_direct_dependent_recommendation_comparison_before_supervisor(monkeypatch):
   class FakeChatbotSupervisor:
     def __init__(self, _):
       pass
 
     async def run_with_trace(self, _question):
-      return (
-        {
-          "success": True,
-          "status": "partial_success",
-          "results": [
-            {
-              "agent": "recommendation_agent",
-              "success": True,
-              "result": {
-                "success": True,
-                "handler": "recommendation",
-                "results": [{"complexName": "잠실엘스"}],
-              },
-            },
-            {
-              "agent": "comparison_agent",
-              "success": False,
-              "result": {
-                "success": False,
-                "reason": "no_matching_tool",
-              },
-            },
-          ],
-        },
-        {
-          "path": "supervisor_aggregate",
-          "selectedAgents": ["recommendation_agent", "comparison_agent"],
-        },
-      )
+      raise AssertionError("dependent recommendation comparison should run through direct graph first")
 
   def fake_run_recommendation(_session, _slots, _text):
-    raise AssertionError("server should not repair a supervisor-selected partial aggregate")
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "results": [
+        {"complexId": 1001, "complexName": "잠실엘스"},
+        {"complexId": 1002, "complexName": "리센츠"},
+        {"complexId": 1003, "complexName": "트리지움"},
+      ],
+    }
 
-  def fake_run_comparison(_session, _slots, _text):
-    raise AssertionError("server should not repair a supervisor-selected partial aggregate")
+  comparison_calls = []
+
+  def fake_run_comparison(_session, slots, _text):
+    comparison_calls.append(slots)
+    return {
+      "success": True,
+      "handler": "comparison",
+      "criteria": {
+        "apartment_names": slots["apartment_names"],
+        "apartment_complex_ids": slots["apartment_complex_ids"],
+      },
+      "results": [{"complexName": name} for name in slots["apartment_names"]],
+    }
 
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
   monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
@@ -634,11 +625,12 @@ def test_chatbot_query_keeps_supervisor_partial_aggregate_without_direct_repair(
   assert response.status_code == 200
   payload = response.json()
   execution = payload["fragments"][0]["execution"]
-  assert execution["path"] == "supervisor_aggregate"
+  assert execution["path"] == "direct_dependent_features"
   assert execution["selectedAgents"] == ["recommendation_agent", "comparison_agent"]
-  assert "fallbackFrom" not in execution
-  assert payload["result"]["status"] == "partial_success"
-  assert payload["result"]["results"][1]["result"]["reason"] == "no_matching_tool"
+  assert execution["planType"] == "dependent_multi_feature"
+  assert comparison_calls[0]["apartment_names"] == ["잠실엘스", "리센츠"]
+  assert comparison_calls[0]["apartment_complex_ids"] == [1001, 1002]
+  assert payload["result"]["status"] == "success"
 
 
 def test_chatbot_query_keeps_recommendation_reference_question_as_one_dependent_task(monkeypatch):
@@ -647,55 +639,27 @@ def test_chatbot_query_keeps_recommendation_reference_question_as_one_dependent_
       pass
 
     async def run_with_trace(self, _question):
-      return (
-        {
-          "success": True,
-          "status": "success",
-          "message": "여러 전문 에이전트 결과를 처리했습니다.",
-          "results": [
-            {
-              "agent": "recommendation_agent",
-              "success": True,
-              "result": {
-                "success": True,
-                "handler": "recommendation",
-                "results": [
-                  {"complexName": "서초그랑자이"},
-                  {"complexName": "래미안서초에스티지"},
-                  {"complexName": "반포자이"},
-                ],
-              },
-            },
-            {
-              "agent": "comparison_agent",
-              "success": True,
-              "dependsOn": "recommendation_agent",
-              "result": {
-                "success": True,
-                "handler": "comparison",
-                "criteria": {
-                  "apartment_names": [
-                    "서초그랑자이",
-                    "래미안서초에스티지",
-                    "반포자이",
-                  ]
-                },
-                "results": [
-                  {"complexName": "서초그랑자이"},
-                  {"complexName": "래미안서초에스티지"},
-                  {"complexName": "반포자이"},
-                ],
-              },
-            },
-          ],
-        },
-        {
-          "path": "supervisor_aggregate",
-          "selectedAgents": ["recommendation_agent", "comparison_agent"],
-        },
-      )
+      raise AssertionError("dependent recommendation comparison should run through direct graph first")
 
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", lambda *_: {
+    "success": True,
+    "handler": "recommendation",
+    "results": [
+      {"complexId": 1001, "complexName": "서초그랑자이"},
+      {"complexId": 1002, "complexName": "래미안서초에스티지"},
+      {"complexId": 1003, "complexName": "반포자이"},
+    ],
+  })
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", lambda _session, slots, _text: {
+    "success": True,
+    "handler": "comparison",
+    "criteria": {
+      "apartment_names": slots["apartment_names"],
+      "apartment_complex_ids": slots["apartment_complex_ids"],
+    },
+    "results": [{"complexName": name} for name in slots["apartment_names"]],
+  })
 
   response = client.post(
     "/api/v1/chatbot/query",
@@ -710,11 +674,16 @@ def test_chatbot_query_keeps_recommendation_reference_question_as_one_dependent_
     "failed": 0,
   }
   assert len(payload["fragments"]) == 1
-  assert payload["fragments"][0]["execution"]["path"] == "supervisor_aggregate"
+  assert payload["fragments"][0]["execution"]["path"] == "direct_dependent_features"
   assert payload["result"]["results"][1]["result"]["criteria"]["apartment_names"] == [
     "서초그랑자이",
     "래미안서초에스티지",
     "반포자이",
+  ]
+  assert payload["result"]["results"][1]["result"]["criteria"]["apartment_complex_ids"] == [
+    1001,
+    1002,
+    1003,
   ]
 
 
@@ -820,7 +789,83 @@ def test_chatbot_query_composes_dependent_recommendation_comparison_answer(monke
         },
       )
 
+  def fake_run_recommendation(_session, _slots, _text):
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "results": [
+        {
+          "complexId": 1001,
+          "complexName": "서초그랑자이",
+          "latestDealAmount": 350000,
+          "unitCnt": 1446,
+          "useDate": "2021-06-01",
+          "infrastructure": {
+            "nearestStation": {"name": "교대역", "distanceM": 520},
+            "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+          },
+        },
+        {
+          "complexId": 1002,
+          "complexName": "래미안서초에스티지",
+          "latestDealAmount": 320000,
+          "unitCnt": 421,
+          "useDate": "2016-12-01",
+          "infrastructure": {
+            "nearestStation": {"name": "강남역", "distanceM": 610},
+            "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+          },
+        },
+        {
+          "complexId": 1003,
+          "complexName": "반포자이",
+          "latestDealAmount": 410000,
+          "unitCnt": 3410,
+          "useDate": "2009-03-01",
+          "infrastructure": {
+            "nearestStation": {"name": "고속터미널역", "distanceM": 700},
+            "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+          },
+        },
+      ],
+    }
+
+  def fake_run_comparison(_session, slots, _text):
+    return {
+      "success": True,
+      "handler": "comparison",
+      "criteria": {
+        "apartment_names": slots["apartment_names"],
+        "apartment_complex_ids": slots["apartment_complex_ids"],
+      },
+      "results": [
+        {
+          "complexName": "서초그랑자이",
+          "latestDealAmount": 350000,
+          "unitCnt": 1446,
+          "builtYear": 2021,
+          "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+        },
+        {
+          "complexName": "래미안서초에스티지",
+          "latestDealAmount": 320000,
+          "unitCnt": 421,
+          "builtYear": 2016,
+          "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+        },
+        {
+          "complexName": "반포자이",
+          "latestDealAmount": 410000,
+          "unitCnt": 3410,
+          "builtYear": 2009,
+          "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+        },
+      ],
+    }
+
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", fake_run_comparison)
 
   response = client.post(
     "/api/v1/chatbot/query",
