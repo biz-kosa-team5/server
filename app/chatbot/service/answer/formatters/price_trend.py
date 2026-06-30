@@ -9,14 +9,23 @@ from typing import Any
 from .common import (
   clean_text,
   dict_value,
+  format_candidate_selection,
   format_number,
   format_percent,
   format_price,
+  format_candidates,
   list_value,
 )
 
 
 def format_price_trend_result(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_selection(price_trend_target_name(result), list_value(result.get("candidates")))
+  if candidate_answer:
+    return candidate_answer
+
+  if clean_text(result.get("reason")) == "insufficient_query":
+    return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
+
   summary = dict_value(result.get("summary"))
   data = [
     dict_value(item)
@@ -72,7 +81,15 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
         f"{prefix}{first_period} 평균 {first_amount}에서 "
         f"{last_period} 평균 {last_amount}{summary_change_particle(unit)} 확인됩니다."
       )
-  return clean_text(result.get("message"))
+  return format_failure_with_candidates(result)
+
+
+def format_failure_with_candidates(result: dict[str, Any]) -> str:
+  message = clean_text(result.get("message"))
+  candidates = format_candidates(result)
+  if message and candidates:
+    return f"{message} {candidates}"
+  return message or candidates
 
 
 def price_trend_target_name(result: dict[str, Any]) -> str:

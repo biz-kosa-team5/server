@@ -145,3 +145,94 @@ def test_memory_patch_limits_items_to_five():
   assert len(patch["items"]) == 5
   assert patch["items"][0]["index"] == 1
   assert patch["items"][4]["complexName"] == "테스트5"
+
+
+def test_memory_patch_stores_ambiguous_candidates():
+  response = {
+    "result": {
+      "handler": "simple_lookup",
+      "success": False,
+      "query_type": "location",
+      "criteria": {"target_name": "우성아파트"},
+      "reason": "ambiguous_target",
+      "message": "여러 단지가 검색되었습니다.",
+      "candidates": [
+        {
+          "complex_id": index,
+          "complex_name": f"우성후보{index}",
+          "address": f"서울특별시 강남구 대치동 {index}",
+          "score": 100 - index,
+        }
+        for index in range(1, 7)
+      ],
+    },
+    "fragments": [],
+  }
+
+  patch = build_conversation_memory_patch(response)
+
+  assert patch["lastHandler"] == "simple_lookup"
+  assert patch["lastQueryType"] == "location"
+  assert len(patch["items"]) == 5
+  assert patch["items"][0] == {
+    "index": 1,
+    "kind": "complex",
+    "complexId": 1,
+    "complexName": "우성후보1",
+    "address": "서울특별시 강남구 대치동 1",
+  }
+  assert "score" not in patch["items"][0]
+
+
+def test_resolves_partial_item_reference_by_candidate_address():
+  context = normalize_conversation_context({
+    "version": "v1",
+    "items": [
+      {
+        "index": 1,
+        "kind": "complex",
+        "complexId": 1,
+        "complexName": "청담우성아파트",
+        "address": "서울특별시 강남구 청담동 11-25",
+      },
+      {
+        "index": 2,
+        "kind": "complex",
+        "complexId": 2,
+        "complexName": "대치우성아파트",
+        "address": "서울특별시 강남구 대치동 63",
+      },
+    ],
+  })
+
+  resolved, resolution = resolve_contextual_question("그중 대치동", context)
+
+  assert resolved == "대치우성아파트"
+  assert resolution["source"] == "partial_item_name"
+
+
+def test_resolves_context_item_mention_by_region_and_partial_name():
+  context = normalize_conversation_context({
+    "version": "v1",
+    "items": [
+      {
+        "index": 1,
+        "kind": "complex",
+        "complexId": 1,
+        "complexName": "잠실우성아파트",
+        "address": "서울특별시 송파구 잠실동 101",
+      },
+      {
+        "index": 2,
+        "kind": "complex",
+        "complexId": 2,
+        "complexName": "대치우성아파트",
+        "address": "서울특별시 강남구 대치동 63",
+      },
+    ],
+  })
+
+  resolved, resolution = resolve_contextual_question("잠실동 우성으로 봐줘", context)
+
+  assert resolved == "잠실우성아파트으로 봐줘"
+  assert resolution["source"] == "context_item_mention"

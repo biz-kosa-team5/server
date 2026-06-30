@@ -20,7 +20,19 @@ from .conversation_memory import (
   normalize_conversation_context,
   resolve_contextual_question,
 )
-from .orchestrator import OrchestrationResult, execute_plan
+from .answer.formatters.sequential import (
+  format_dependent_comparison_step_answer,
+  format_dependent_recommendation_step_answer,
+  format_dependent_sequence_summary,
+)
+from .orchestrator import (
+  OrchestrationResult,
+  SequenceStepResult,
+  aggregate_sequence_step_results,
+  execute_plan,
+  iter_recommendation_comparison_sequence,
+  requested_comparison_candidate_limit,
+)
 from .planner import ExecutionPlan, build_execution_plan
 from .supervisor import (
   ChatbotSupervisor,
@@ -29,13 +41,14 @@ from .supervisor import (
   merge_token_usage,
 )
 from .splitter import split_question
-from .streaming import chunk_answer, format_sse
+from .streaming import chunk_answer, format_sse, stream_safe_answer
 from .ui_payload import build_chatbot_ui_payload
 
 
 logger = logging.getLogger(__name__)
 STREAM_ERROR_MESSAGE = "AI 집찾기 응답을 불러오지 못했습니다."
 STREAM_TOTAL_STEPS = 5
+PROGRESSIVE_STREAM_TOTAL_STEPS = 6
 
 
 class LazySupervisorProvider:
@@ -235,9 +248,19 @@ async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> Asy
   try:
     question = str(payload.get("question", "")).strip()
     model = runtime_model_from_payload(payload)
+    tasks = ChatbotTask.from_question(question)
+    progressive_plan = progressive_plan_for_tasks(tasks)
+    if progressive_plan is not None:
+      async for event in stream_recommendation_comparison_sequence(
+        session,
+        question,
+        tasks[0],
+        progressive_plan,
+      ):
+        yield event
+      return
 
     yield stream_status("질문 분석 중", 1)
-    tasks = ChatbotTask.from_question(question)
 
     yield stream_status("작업 분리 중", 2)
     supervisor_provider = LazySupervisorProvider(session, model=model)
@@ -282,13 +305,128 @@ async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> Asy
     yield format_sse("error", {"message": STREAM_ERROR_MESSAGE})
 
 
-def stream_status(label: str, step: int) -> bytes:
+async def stream_recommendation_comparison_sequence(
+  session: Session,
+  question: str,
+  task: ChatbotTask,
+  plan: ExecutionPlan,
+) -> AsyncIterator[bytes]:
+  yield stream_status("질문 의도 파악 중", 1, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+  yield stream_status("처리 순서 정하는 중", 2, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+
+  streamed_answer_parts: list[str] = []
+  sequence: list[SequenceStepResult] = []
+  sequence_iterator = iter(iter_recommendation_comparison_sequence(session, task.text, plan))
+
+  yield stream_status("추천 후보 찾는 중", 3, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+  try:
+    recommendation_step = next(sequence_iterator)
+  except StopIteration:
+    recommendation_step = None
+
+  if recommendation_step is not None:
+    sequence.append(recommendation_step)
+    recommendation_answer = format_dependent_recommendation_step_answer(
+      recommendation_step.result,
+      max_candidates=requested_comparison_candidate_limit(task.text),
+    )
+    for event in stream_answer_delta(recommendation_answer, streamed_answer_parts):
+      yield event
+
+  comparison_step = None
+  yield stream_status("추천 후보 비교 중", 4, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+  try:
+    comparison_step = next(sequence_iterator)
+  except StopIteration:
+    comparison_step = None
+
+  if comparison_step is not None:
+    sequence.append(comparison_step)
+    recommendation_result = recommendation_step.result if recommendation_step is not None else None
+    comparison_answer = format_dependent_comparison_step_answer(
+      comparison_step.result,
+      recommendation_result,
+    )
+    for event in stream_answer_delta(comparison_answer, streamed_answer_parts):
+      yield event
+
+  yield stream_status("최종 답변 정리 중", 5, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+  if recommendation_step is not None and comparison_step is not None:
+    summary = format_dependent_sequence_summary(
+      recommendation_step.result,
+      comparison_step.result,
+    )
+    for event in stream_answer_delta(summary, streamed_answer_parts):
+      yield event
+
+  orchestration = aggregate_sequence_step_results(sequence, plan)
+  execution = enrich_execution_trace(orchestration.execution, orchestration.result)
+  chatbot_response = ChatbotQueryResponse(
+    question=question,
+    task_results=[
+      TaskExecutionResult(
+        task=task,
+        result=orchestration.result,
+        execution=execution,
+      )
+    ],
+  )
+  response_dict = chatbot_response.to_response_dict()
+
+  yield stream_status("지도/시각 자료 준비 중", 6, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
+  ui_payload = build_chatbot_ui_payload(session, response_dict)
+  response_dict.update(ui_payload)
+  yield format_sse("artifacts", ui_payload)
+
+  response_dict["answer"] = "".join(streamed_answer_parts).strip() or response_dict.get("message") or "질문을 처리했습니다."
+  usage = collect_response_usage(response_dict)
+  if usage:
+    response_dict["usage"] = usage
+  yield format_sse("final", response_dict)
+
+
+def stream_answer_delta(answer: str, streamed_answer_parts: list[str]) -> list[bytes]:
+  safe_answer = stream_safe_answer(answer)
+  if not safe_answer:
+    return []
+  prefix = "\n\n" if streamed_answer_parts else ""
+  if streamed_answer_parts:
+    safe_answer = f"\n\n{safe_answer}"
+  streamed_answer_parts.append(safe_answer)
+  chunks = chunk_answer(safe_answer.removeprefix(prefix))
+  if prefix and chunks:
+    chunks[0] = f"{prefix}{chunks[0]}"
+  return [
+    format_sse("answer_delta", {"text": chunk})
+    for chunk in chunks
+  ]
+
+
+def progressive_plan_for_tasks(tasks: list[ChatbotTask]) -> ExecutionPlan | None:
+  if len(tasks) != 1:
+    return None
+  plan = build_execution_plan(tasks[0].text)
+  if is_recommendation_comparison_sequence_plan(plan):
+    return plan
+  return None
+
+
+def is_recommendation_comparison_sequence_plan(plan: ExecutionPlan) -> bool:
+  return (
+    plan.plan_type == "dependent_multi_feature"
+    and len(plan.steps) >= 2
+    and [step.handler for step in plan.steps[:2]] == ["recommendation", "comparison"]
+    and plan.steps[1].depends_on == "recommendation_agent"
+  )
+
+
+def stream_status(label: str, step: int, *, total: int = STREAM_TOTAL_STEPS) -> bytes:
   return format_sse(
     "status",
     {
       "label": label,
       "step": step,
-      "total": STREAM_TOTAL_STEPS,
+      "total": total,
     },
   )
 

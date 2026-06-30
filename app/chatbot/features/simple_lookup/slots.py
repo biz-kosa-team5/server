@@ -12,6 +12,9 @@ from .dto import (
 )
 
 
+REGION_TARGET_PATTERN = r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파|[가-힣]+동"
+
+
 def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
     text = question.strip()
     query_type = infer_query_type(text)
@@ -197,10 +200,7 @@ def _has_price_record_expression(text: str) -> bool:
 
 
 def _looks_like_region_ranking(text: str) -> bool:
-    has_region = any(
-        region in text
-        for region in ("강남구", "서초구", "송파구", "강남", "서초", "송파")
-    )
+    has_region = re.search(REGION_TARGET_PATTERN, text) is not None
     has_ranking_word = any(
         token in text
         for token in ("TOP", "Top", "top", "순위", "랭킹", "아파트", "단지")

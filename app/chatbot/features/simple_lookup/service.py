@@ -81,19 +81,16 @@ class SimpleLookupService:
             complex_obj, trades = self.dao.find_trade_history(criteria)
             return [TradeData.from_trade(trade, complex_obj) for trade in trades]
 
-        if criteria.query_type == QUERY_REGION_TRADE_HISTORY:
-            rows = self.dao.find_region_trade_history(criteria)
-            return [
-                TradeData.from_trade(row["trade"], row["complex"])
-                for row in rows
-            ]
-
         if criteria.query_type == QUERY_COMPLEX_PRICE_RECORD:
             complex_obj, trades = self.dao.find_complex_price_record(criteria)
             return [TradeData.from_trade(trade, complex_obj) for trade in trades]
 
         if criteria.query_type == QUERY_REGION_PRICE_RANKING:
             rows = self.dao.find_region_price_ranking(criteria)
+            return [RegionRankingData.from_row(row) for row in rows]
+
+        if criteria.query_type == QUERY_REGION_TRADE_HISTORY:
+            rows = self.dao.find_region_trade_history(criteria)
             return [RegionRankingData.from_row(row) for row in rows]
 
         raise SimpleLookupError(

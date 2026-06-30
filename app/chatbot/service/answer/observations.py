@@ -11,6 +11,7 @@ from .formatters.recommendation import compact_recommendation_results
 MAX_RECOMMENDATION_RESULTS = 5
 MAX_PRICE_TREND_ROWS = 12
 MAX_SIMPLE_LOOKUP_ROWS = 3
+MAX_REGION_TRADE_HISTORY_ROWS = 5
 MAX_LEGAL_SOURCES = 7
 MAX_LEGAL_SOURCE_CONTENT_LENGTH = 12000
 
@@ -177,14 +178,27 @@ def compact_simple_lookup(result: dict[str, Any]) -> dict[str, Any]:
     "query_type",
     "observation_type",
     "criteria",
+    "units",
     "message",
     "reason",
+    "candidates",
     "suggestedQuestions",
+    "candidates",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   data = result.get("data")
   if isinstance(data, list):
-    compacted["data"] = strip_nested_answers(data[:MAX_SIMPLE_LOOKUP_ROWS])
+    row_limit = simple_lookup_row_limit(result)
+    compacted["data"] = strip_nested_answers(data[:row_limit])
   return compacted
+
+
+def simple_lookup_row_limit(result: dict[str, Any]) -> int:
+  if clean_str(result.get("query_type")) == "region_trade_history":
+    return MAX_REGION_TRADE_HISTORY_ROWS
+  return MAX_SIMPLE_LOOKUP_ROWS
 
 
 def compact_price_trend(result: dict[str, Any]) -> dict[str, Any]:
@@ -200,15 +214,33 @@ def compact_price_trend(result: dict[str, Any]) -> dict[str, Any]:
     "row_count",
     "message",
     "reason",
+    "candidates",
     "suggestedQuestions",
+    "candidates",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   rows = result.get("rows")
   if isinstance(rows, list):
-    compacted["rows"] = strip_nested_answers(rows[:MAX_PRICE_TREND_ROWS])
+    compacted["rows"] = strip_nested_answers(compact_price_trend_rows(result, rows))
   data = result.get("data")
   if isinstance(data, list):
-    compacted["data"] = strip_nested_answers(data[:MAX_PRICE_TREND_ROWS])
+    compacted["data"] = strip_nested_answers(compact_price_trend_rows(result, data))
   return compacted
+
+
+def compact_price_trend_rows(result: dict[str, Any], rows: list[Any]) -> list[Any]:
+  if len(rows) <= MAX_PRICE_TREND_ROWS:
+    return rows
+
+  observation_type = clean_str(result.get("observation_type") or result.get("query_type"))
+  if observation_type not in {"timeseries", "price_timeseries"}:
+    return rows[:MAX_PRICE_TREND_ROWS]
+
+  head_count = MAX_PRICE_TREND_ROWS // 2
+  tail_count = MAX_PRICE_TREND_ROWS - head_count
+  return rows[:head_count] + rows[-tail_count:]
 
 
 def compact_recommendation(result: dict[str, Any]) -> dict[str, Any]:
@@ -219,6 +251,9 @@ def compact_recommendation(result: dict[str, Any]) -> dict[str, Any]:
     "message",
     "reason",
     "suggestedQuestions",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   results = result.get("results")
   if isinstance(results, list):

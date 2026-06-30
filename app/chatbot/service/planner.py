@@ -62,6 +62,16 @@ DEPENDENCY_SIGNALS = (
   "추천한 다음 비교",
   "추천하고 비교",
   "추천하고 후보 비교",
+  "그 3개",
+  "그 세 개",
+  "그 후보",
+  "그 단지",
+  "위 후보",
+  "위 단지",
+  "위 3개",
+  "추천한 단지",
+  "추천한 후보",
+  "방금 추천",
 )
 LOOKUP_ONLY_SIGNALS = (
   "위치",
@@ -141,6 +151,10 @@ LEGAL_SIGNALS = (
 )
 UNSUPPORTED_SIGNALS = ("날씨", "주식", "환율", "서울 아파트", "부동산 후보", "근처 학교", "신고가", "신저가")
 REGION_PATTERN = re.compile(r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파")
+COMPARISON_REQUIRES_CANDIDATE_MESSAGE = (
+  "비교할 추천 후보를 먼저 확인하지 못했습니다. "
+  "비교할 아파트명을 직접 알려주시거나, 먼저 추천 조건을 함께 입력해 주세요."
+)
 
 
 AGENT_BY_HANDLER = {
@@ -176,6 +190,10 @@ def build_execution_plan(text: str) -> ExecutionPlan:
   dependent_plan = build_dependent_multi_feature_plan(question)
   if dependent_plan is not None:
     return dependent_plan
+
+  reference_only_comparison_plan = build_reference_only_comparison_plan(question)
+  if reference_only_comparison_plan is not None:
+    return reference_only_comparison_plan
 
   if looks_like_unsupported_dependent_chain(question):
     return supervisor_plan("unsupported_dependent_chain")
@@ -220,7 +238,7 @@ def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
     return None
   if not has_comparison_signal(text):
     return None
-  if not has_dependency_signal(text):
+  if not looks_like_dependent_recommendation_comparison(text):
     return None
 
   return ExecutionPlan(
@@ -238,7 +256,53 @@ def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
         depends_on="recommendation_agent",
       ),
     ],
-    reason="recommendation_candidates_feed_comparison",
+    reason="recommendation_result_feeds_comparison",
+  )
+
+
+def build_reference_only_comparison_plan(text: str) -> ExecutionPlan | None:
+  if not has_comparison_signal(text):
+    return None
+  if has_recommendation_signal(text):
+    return None
+  if not has_recommendation_reference_signal(text):
+    return None
+
+  return ExecutionPlan(
+    plan_type="unsupported_feature",
+    steps=[
+      FeatureStep(
+        agent="unsupported_agent",
+        handler="no_matching_tool",
+        mode="direct",
+        slot_overrides={
+          "message": COMPARISON_REQUIRES_CANDIDATE_MESSAGE,
+          "suggestedQuestions": [
+            "서초구 아파트 3개 추천해주고 그 후보를 비교해줘",
+            "래미안대치팰리스랑 잠실엘스 가격 비교해줘",
+          ],
+        },
+        query=text,
+      ),
+    ],
+    reason="missing_recommendation_candidates_for_comparison",
+  )
+
+
+def looks_like_dependent_recommendation_comparison(text: str) -> bool:
+  if has_dependency_signal(text) or has_recommendation_reference_signal(text):
+    return True
+
+  recommendation_position = signal_position(text, RECOMMENDATION_SIGNALS)
+  comparison_position = signal_position(text, COMPARISON_SIGNALS)
+  if recommendation_position < comparison_position:
+    return True
+
+  return (
+    re.search(r"\d+\s*(?:개|곳|건)\s*추천.*비교", text) is not None
+    or re.search(r"추천.*\d+\s*(?:개|곳|건).*비교", text) is not None
+    or re.search(r"세\s*(?:개|곳)\s*추천.*비교", text) is not None
+    or re.search(r"추천.*세\s*(?:개|곳).*비교", text) is not None
   )
 
 
@@ -277,6 +341,20 @@ def has_dependency_signal(text: str) -> bool:
   if any(signal in text for signal in DEPENDENCY_SIGNALS):
     return True
   return re.search(r"후보(?:\s*\d+\s*(?:개|곳|건))?\s*비교", text) is not None
+
+
+def has_recommendation_reference_signal(text: str) -> bool:
+  if any(signal in text for signal in DEPENDENCY_SIGNALS):
+    return True
+  return re.search(
+    r"그\s*\d+\s*(?:개|곳|건)"
+    r"|위\s*\d+\s*(?:개|곳|건)"
+    r"|그\s*(?:후보|단지)"
+    r"|위\s*(?:후보|단지)"
+    r"|추천(?:한)?\s*(?:후보|단지)"
+    r"|방금\s*추천",
+    text,
+  ) is not None
 
 
 def looks_like_unsupported_dependent_chain(text: str) -> bool:
@@ -695,12 +773,20 @@ def simple_lookup_sub_query(text: str) -> str | None:
   overrides = simple_lookup_slot_overrides(text)
   target_name = overrides.get("target_name")
   query_type = overrides.get("query_type")
+  lookup_clause = clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+  if (
+    isinstance(target_name, str)
+    and query_type in {"trade_history", "region_trade_history", "complex_price_record"}
+    and lookup_clause
+    and target_name not in lookup_clause
+  ):
+    return lookup_clause
   if isinstance(target_name, str) and query_type == "location":
     return f"{target_name} 위치 알려줘"
   if isinstance(target_name, str) and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     return f"{target_name} 최근 실거래 알려줘"
   if target_name is None and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
-    return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+    return lookup_clause
   return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
 

@@ -8,6 +8,7 @@ from typing import Any
 MAX_CHUNK_LENGTH = 24
 FALLBACK_STREAM_ANSWER = "질문을 처리했습니다."
 FORBIDDEN_STREAM_TERMS = (
+  "전문 에이전트",
   "handler",
   "agent",
   "tool",
@@ -15,6 +16,12 @@ FORBIDDEN_STREAM_TERMS = (
   "planType",
   "dedupe",
   "fragment",
+  "raw JSON",
+  "latitude",
+  "longitude",
+  "위도",
+  "경도",
+  "좌표",
 )
 COORDINATE_PATTERNS = (
   re.compile(

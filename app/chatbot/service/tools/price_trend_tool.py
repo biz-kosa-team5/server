@@ -44,9 +44,9 @@ def build_price_trend_tool(session: Session):
     - "은마아파트 시세추이", "반포자이 가격 흐름", "잠실엘스 최근 1년 시세추이"
     - "경덕아파트 2015년부터 시세추이", "은마아파트 2015년부터 2020년까지 월별 시세 추이"
     - "은마 월별 시세추이", "은마 분기별 시세추이", "은마 연도별 시세추이"
-    - "강남구 시세추이", "서초구 최근 1년 시세 흐름", "송파구 연도별 시세추이"
+    - "강남구 시세추이", "서초구 최근 1년 시세 흐름", "송파구 연도별 시세추이", "대치동 최근 1년 시세추이"
     - "강남 3구 시세추이"
-    - "강남구에서 많이 오른 아파트 TOP 5", "서초구 하락률 높은 아파트 5곳"
+    - "강남구에서 많이 오른 아파트 TOP 5", "대치동에서 많이 오른 아파트 TOP 5", "서초구 하락률 높은 아파트 5곳"
 
     query 규칙:
     - query에는 사용자의 원문 질문을 그대로 넣습니다.
@@ -104,6 +104,9 @@ def build_price_trend_tool(session: Session):
     - "최근 N년", "지난 N년"은 period="{N}y"로 전달합니다.
       예: "최근 1년" -> period="1y"
       예: "최근 5년" -> period="5y"
+    - "N개월간", "N개월 동안"은 period="{N}m"으로 전달합니다.
+    - "N년간", "N년 동안"은 period="{N}y"로 전달합니다.
+      예: "10년간" -> period="10y"
     - "최근 6개월"의 숫자 6, "최근 1년"의 숫자 1은 기간 숫자입니다. limit으로 전달하지 마세요.
     - "2025년"처럼 특정 연도만 말하면 start_date="2025-01-01", end_date="2025-12-31"입니다.
     - "2015년부터", "2015년 이후"처럼 시작 시점만 말하면 start_date="2015-01-01"만 넣고 end_date는 생략합니다.
@@ -139,6 +142,12 @@ def build_price_trend_tool(session: Session):
     - "강남구 최근 5년 시세추이"
       -> analysis_type="timeseries", target_type="region", target_name="강남구", period="5y"
 
+    - "서초구 10년간 시세추이"
+      -> analysis_type="timeseries", target_type="region", target_name="서초구", period="10y"
+
+    - "대치동 최근 1년 시세추이"
+      -> analysis_type="timeseries", target_type="region", target_name="대치동", period="1y"
+
     - "강남 3구 연도별 시세추이"
       -> analysis_type="timeseries", target_type="region", target_name="강남3구", interval="year"
 
@@ -153,6 +162,10 @@ def build_price_trend_tool(session: Session):
     - "강남구 최근 1년 많이 오른 아파트 TOP 5"
       -> analysis_type="ranking", target_type="region", target_name="강남구",
          period="1y", rank_by="change_rate", direction="desc", limit=5
+
+    - "대치동에서 많이 오른 아파트 TOP 5"
+      -> analysis_type="ranking", target_type="region", target_name="대치동",
+         rank_by="change_rate", direction="desc", limit=5
 
     - "서초구 하락률 높은 아파트 10곳"
       -> analysis_type="ranking", target_type="region", target_name="서초구",

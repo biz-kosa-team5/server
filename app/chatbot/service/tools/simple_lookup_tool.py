@@ -46,6 +46,9 @@ def build_simple_lookup_tool(session: Session):
         query_type 선택 규칙:
         - "어디 있어?", "주소 알려줘", "위치 알려줘", "좌표 알려줘"는 query_type="location"입니다.
         - "얼마야", "요즘 얼마야", "최근 얼마야", "최근 실거래가", "거래내역"은 query_type="trade_history"입니다.
+          - 특정 단지의 "가장 오래된 거래", "제일 오래된 거래", "최초 거래", "첫 거래", "처음 거래"는
+          query_type="trade_history", sort_order="oldest", limit=1입니다.
+          이 질문들은 최고가/최저가 질문이 아니므로 complex_price_record를 사용하지 말고 price_order도 전달하지 마세요.
           단, 대상이 "대치동", "잠실동", "강남구"처럼 동/구 지역이면 query_type="region_trade_history"입니다.
         - 특정 단지의 "최고가", "최저가", "가장 비싼 거래", "가장 싼 거래"는
           query_type="complex_price_record"입니다.
