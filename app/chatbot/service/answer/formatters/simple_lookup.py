@@ -154,14 +154,17 @@ def format_region_trade_history_result(result: dict[str, Any], data: list[Any]) 
     criteria_name(result),
   ])
   trade_summaries = [
-    format_region_trade_history_row(row)
-    for row in rows
+    row
+    for row in (format_region_trade_history_row(row) for row in rows)
+    if row
   ]
-  trade_summaries = [item for item in trade_summaries if item]
-  if region_name and trade_summaries:
-    return f"{region_name} 거래내역은 " + ", ".join(trade_summaries) + "입니다."
   if trade_summaries:
-    return "거래내역은 " + ", ".join(trade_summaries) + "입니다."
+    heading = f"{region_name}의 최근 실거래가 {len(trade_summaries)}건은 다음과 같습니다." if region_name else "최근 실거래가는 다음과 같습니다."
+    body = "\n\n".join(
+      f"{index}) {summary}"
+      for index, summary in enumerate(trade_summaries, start=1)
+    )
+    return f"{heading}\n\n{body}\n\n제공된 데이터 기준입니다."
   return clean_text(result.get("message"))
 
 
@@ -172,18 +175,27 @@ def format_region_trade_history_row(row: dict[str, Any]) -> str:
   ])
   date = clean_text(row.get("deal_date"))
   amount = format_price(row.get("deal_amount"))
-  area = format_labeled_value("전용", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
   floor = format_floor(row.get("floor"))
-  details = compact_parts([date, amount, area, floor])
+  address = clean_text(row.get("address"))
+  price_per_m2 = format_price_per_m2(row.get("price_per_m2"))
+  details = compact_parts([
+    f"거래일: {date}" if date else "",
+    f"거래금액: {amount}" if amount else "",
+    area,
+    f"㎡당 가격: {price_per_m2}" if price_per_m2 else "",
+    f"층수: {floor}" if floor else "",
+    f"주소: {address}" if address else "",
+  ])
   if name and details:
-    return f"{name} " + " ".join(details)
+    return f"{name}\n" + "\n".join(details)
   if details:
-    return " ".join(details)
+    return "\n".join(details)
   return name
 
 
 def format_region_ranking_result(result: dict[str, Any], data: list[Any]) -> str:
-  rows = [dict_value(item) for item in data[:3]]
+  rows = [dict_value(item) for item in data[:MAX_REGION_TRADE_HISTORY_ROWS]]
   region_name = first_non_empty([
     clean_text(rows[0].get("region_name")) if rows else "",
     criteria_name(result),
@@ -194,29 +206,42 @@ def format_region_ranking_result(result: dict[str, Any], data: list[Any]) -> str
   ]
   ranking_summaries = [item for item in ranking_summaries if item]
   if region_name and ranking_summaries:
-    return f"{region_name} 거래 순위는 " + ", ".join(ranking_summaries) + "입니다."
+    criteria = dict_value(result.get("criteria"))
+    price_order = clean_text(criteria.get("price_order"))
+    metric_name = "최저가" if price_order == "lowest" else "최고가"
+    heading = f"{region_name} 아파트 {metric_name} 순위는 다음과 같습니다."
+    return f"{heading}\n\n" + "\n\n".join(ranking_summaries) + "\n\n제공된 데이터 기준입니다."
   if ranking_summaries:
-    return "거래 순위는 " + ", ".join(ranking_summaries) + "입니다."
+    return "가격 순위는 다음과 같습니다.\n\n" + "\n\n".join(ranking_summaries) + "\n\n제공된 데이터 기준입니다."
   return clean_text(result.get("message"))
 
 
 def format_region_ranking_row(row: dict[str, Any]) -> str:
   rank = row.get("rank")
-  rank_label = f"{rank}위" if rank is not None else ""
+  rank_label = f"{rank})" if rank is not None else ""
   name = first_non_empty([
     clean_text(row.get("complex_name")),
     clean_text(row.get("trade_name")),
   ])
   date = clean_text(row.get("deal_date"))
   amount = format_price(row.get("deal_amount"))
-  area = format_labeled_value("전용", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  floor = format_floor(row.get("floor"))
+  address = clean_text(row.get("address"))
   price_per_m2 = format_price_per_m2(row.get("price_per_m2"))
-  details = compact_parts([date, amount, area, price_per_m2])
+  details = compact_parts([
+    f"거래일: {date}" if date else "",
+    f"거래금액: {amount}" if amount else "",
+    area,
+    f"㎡당 가격: {price_per_m2}" if price_per_m2 else "",
+    f"층수: {floor}" if floor else "",
+    f"주소: {address}" if address else "",
+  ])
   label = " ".join(compact_parts([rank_label, name]))
   if label and details:
-    return f"{label} " + " ".join(details)
+    return f"{label}\n" + "\n".join(details)
   if details:
-    return " ".join(details)
+    return "\n".join(details)
   return label
 
 
@@ -224,10 +249,10 @@ def format_price_per_m2(value: Any) -> str:
   if value is None or value == "":
     return ""
   try:
-    return f"㎡당 {float(value):,.2f}만원"
+    return f"{float(value):,.2f}만원"
   except (TypeError, ValueError):
     text = clean_text(value)
-    return f"㎡당 {text}" if text else ""
+    return text
 
 
 def criteria_name(result: dict[str, Any]) -> str:
