@@ -186,15 +186,16 @@ def test_location_matches_case_insensitive_building_suffix(pg_session: Session):
     assert result.data[0].address == "테스트동 134-22"
 
 
-def test_location_keeps_ambiguous_base_name_for_building_variants(pg_session: Session):
+def test_location_returns_primary_result_with_candidates_for_building_variants(pg_session: Session):
     service = SimpleLookupService(SimpleLookupDao(pg_session))
 
     result = service.handle(
         SimpleLookupSlots(query_type=QUERY_LOCATION, target_name="테스트해동아파트")
     )
 
-    assert result.success is False
-    assert result.reason == "ambiguous_target"
+    assert result.success is True
+    assert result.data
+    assert result.data[0].complex_id in {CASE_APT_A_ID, CASE_APT_B_ID}
     candidate_ids = {candidate["complex_id"] for candidate in result.candidates}
     assert CASE_APT_A_ID in candidate_ids
     assert CASE_APT_B_ID in candidate_ids

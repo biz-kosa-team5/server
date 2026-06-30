@@ -90,6 +90,7 @@ class SimpleLookupCriteria(BaseModel):
     query_type: QueryType
     target_name: str
     target_type: str | None = None
+    original_question: str | None = Field(default=None, exclude=True)
 
     area_min: float | None = None
     area_max: float | None = None
@@ -233,6 +234,7 @@ class SimpleLookupObservation(BaseModel):
     criteria: dict[str, Any] = Field(default_factory=dict)
     units: dict[str, str] = Field(default_factory=lambda: dict(DEFAULT_LOOKUP_UNITS))
     data: list[LookupItemData] = Field(default_factory=list)
+    candidates: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SimpleLookupFailure(BaseModel):

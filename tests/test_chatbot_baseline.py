@@ -453,6 +453,51 @@ def test_comparison_name_lookup_accepts_minor_typo():
   assert [row["complexName"] for row in result["results"]] == ["래미안대치팰리스", "잠실엘스"]
 
 
+def test_comparison_uses_complex_ids_without_name_resolution():
+  ensure_initialized()
+  with SessionLocal() as session:
+    session.add_all([
+      Complex(
+        id=990931,
+        region_id=11650,
+        parcel_id=9909301,
+        pnu="1165010800199093101",
+        name="테스트우성",
+        trade_name="테스트우성",
+        address="서초동 990-31",
+        latitude=37.49,
+        longitude=127.02,
+      ),
+      Complex(
+        id=990932,
+        region_id=11650,
+        parcel_id=9909302,
+        pnu="1165010800199093201",
+        name="테스트우성",
+        trade_name="테스트우성",
+        address="방배동 990-32",
+        latitude=37.48,
+        longitude=126.99,
+      ),
+    ])
+    session.flush()
+
+    result = run_comparison(
+      session,
+      {
+        "apartment_names": ["테스트우성", "테스트우성"],
+        "apartment_complex_ids": [990931, 990932],
+      },
+      "추천한 두 후보 비교해줘",
+    )
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["criteria"]["apartment_complex_ids"] == [990931, 990932]
+  assert [row["complexId"] for row in result["results"]] == [990931, 990932]
+  assert result["candidateGroups"] == []
+
+
 def test_comparison_name_lookup_normalizes_spacing_and_spelling_variant():
   ensure_initialized()
   with SessionLocal() as session:

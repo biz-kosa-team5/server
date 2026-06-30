@@ -24,20 +24,20 @@ MAX_REGION_TRADE_HISTORY_ROWS = 5
 
 
 def format_simple_lookup_result(result: dict[str, Any]) -> str:
-  candidate_answer = format_candidate_selection(criteria_name(result), list_value(result.get("candidates")))
-  if candidate_answer:
-    return candidate_answer
-
   if clean_text(result.get("reason")) == "insufficient_query":
     return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
 
   data = list_value(result.get("data"))
+  query_type = clean_text(result.get("query_type"))
+  if data and query_type == "location":
+    return format_location_result(
+      result,
+      dict_value(data[0]),
+      candidates=list_value(result.get("candidates")),
+    )
   if not data:
     return format_failure_with_candidates(result)
 
-  query_type = clean_text(result.get("query_type"))
-  if query_type == "location":
-    return format_location_result(result, dict_value(data[0]))
   if query_type == "region_trade_history":
     return format_region_trade_history_result(result, data)
   if query_type == "region_price_ranking":
@@ -50,6 +50,10 @@ def format_simple_lookup_result(result: dict[str, Any]) -> str:
 
 
 def format_failure_with_candidates(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_selection(criteria_name(result), list_value(result.get("candidates")))
+  if candidate_answer:
+    return candidate_answer
+
   message = clean_text(result.get("message"))
   candidates = format_candidates(result)
   if message and candidates:
@@ -57,7 +61,12 @@ def format_failure_with_candidates(result: dict[str, Any]) -> str:
   return message or candidates
 
 
-def format_location_result(result: dict[str, Any], item: dict[str, Any]) -> str:
+def format_location_result(
+  result: dict[str, Any],
+  item: dict[str, Any],
+  *,
+  candidates: list[Any] | None = None,
+) -> str:
   name = first_non_empty([
     clean_text(item.get("complex_name")),
     clean_text(item.get("trade_name")),
@@ -75,7 +84,13 @@ def format_location_result(result: dict[str, Any], item: dict[str, Any]) -> str:
     parts.append(f"{name} 위치 정보를 조회했습니다.")
   if latitude is not None and longitude is not None:
     parts.append("지도에 표시했습니다.")
-  return " ".join(parts) or clean_text(result.get("message"))
+  location_answer = " ".join(parts) or clean_text(result.get("message"))
+  candidate_answer = format_candidate_selection(
+    criteria_name(result),
+    candidates or [],
+    intro="같은 이름으로 확인되는 후보는 다음과 같습니다.",
+  )
+  return "\n".join(part for part in (location_answer, candidate_answer) if part)
 
 
 def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:

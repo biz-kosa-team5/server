@@ -226,10 +226,10 @@ def iter_recommendation_comparison_sequence(
     )
     return
 
-  candidate_names = recommendation_candidate_names(recommendation_result)
   limit = requested_comparison_candidate_limit(text)
-  candidate_names = candidate_names[:limit]
-  if len(candidate_names) < 2:
+  candidate_names = recommendation_candidate_names(recommendation_result)[:limit]
+  candidate_ids = recommendation_candidate_ids(recommendation_result)[:limit]
+  if len(candidate_names) < 2 and len(candidate_ids) < 2:
     yield SequenceStepResult(
       step=comparison_step,
       result=dependency_failed_result(
@@ -243,7 +243,10 @@ def iter_recommendation_comparison_sequence(
     return
 
   comparison_slots = extract_compare_slots(text)
-  comparison_slots["apartment_names"] = candidate_names
+  if len(candidate_names) >= 2:
+    comparison_slots["apartment_names"] = candidate_names
+  if len(candidate_ids) >= 2:
+    comparison_slots["apartment_complex_ids"] = candidate_ids
   comparison_result = run_comparison(session, comparison_slots, text)
   yield SequenceStepResult(
     step=comparison_step,
@@ -424,6 +427,21 @@ def recommendation_candidate_names(result: dict[str, Any]) -> list[str]:
     if name not in names:
       names.append(name)
   return names
+
+
+def recommendation_candidate_ids(result: dict[str, Any]) -> list[int]:
+  ids = []
+  for item in result.get("results", []):
+    if not isinstance(item, dict):
+      continue
+    raw_id = item.get("complexId") or item.get("complex_id")
+    try:
+      complex_id = int(raw_id)
+    except (TypeError, ValueError):
+      continue
+    if complex_id not in ids:
+      ids.append(complex_id)
+  return ids
 
 
 def requested_comparison_candidate_limit(text: str) -> int:

@@ -13,6 +13,8 @@ from app.chatbot.features.complex_resolver import (
     INSUFFICIENT_QUERY,
     NOT_FOUND,
     ComplexResolver,
+    ComplexResolution,
+    normalize_complex_key,
 )
 from app.chatbot.features.simple_lookup.dto import (
     PRICE_LOWEST,
@@ -20,6 +22,8 @@ from app.chatbot.features.simple_lookup.dto import (
     SimpleLookupCriteria,
     SimpleLookupError,
 )
+
+MAX_AMBIGUOUS_LOCATION_CANDIDATES = 5
 
 
 class SimpleLookupDao:
@@ -44,8 +48,22 @@ class SimpleLookupDao:
     def find_location(
         self,
         criteria: SimpleLookupCriteria,
-    ) -> Complex:
-        complex_obj = self._resolve_complex(criteria.target_name)
+    ) -> tuple[Complex, list[dict[str, Any]]]:
+        resolution = self._resolve_complex_resolution(
+            criteria.target_name,
+            criteria.original_question,
+        )
+        candidates: list[dict[str, Any]] = []
+
+        if resolution.resolved and resolution.complex is not None:
+            complex_obj = resolution.complex
+            if len(resolution.candidates) > 1 and not resolution.resolution_notes:
+                candidates = location_candidates(resolution)
+        elif resolution.status == AMBIGUOUS and resolution.candidates:
+            candidates = location_candidates(resolution)
+            complex_obj = self._complex_from_candidate(candidates[0])
+        else:
+            self._raise_complex_resolution_error(resolution)
 
         if (
             complex_obj.address is None
@@ -57,14 +75,17 @@ class SimpleLookupDao:
                 "해당 단지의 위치 정보가 없습니다.",
             )
 
-        return complex_obj
+        return complex_obj, candidates
 
     # 단지 실거래 내역 조회: Complex entity + Trade entity 목록 반환
     def find_trade_history(
         self,
         criteria: SimpleLookupCriteria,
     ) -> tuple[Complex, list[Trade]]:
-        complex_obj = self._resolve_complex(criteria.target_name)
+        complex_obj = self._resolve_complex(
+            criteria.target_name,
+            criteria.original_question,
+        )
 
         stmt = select(Trade).where(Trade.complex_id == complex_obj.id)
         stmt = self._apply_trade_filters(stmt, criteria)
@@ -92,7 +113,10 @@ class SimpleLookupDao:
         self,
         criteria: SimpleLookupCriteria,
     ) -> tuple[Complex, list[Trade]]:
-        complex_obj = self._resolve_complex(criteria.target_name)
+        complex_obj = self._resolve_complex(
+            criteria.target_name,
+            criteria.original_question,
+        )
 
         stmt = select(Trade).where(Trade.complex_id == complex_obj.id)
         stmt = self._apply_trade_filters(stmt, criteria)
@@ -313,16 +337,44 @@ class SimpleLookupDao:
 
         return "c.region_id = :region_id"
 
-    def _resolve_complex(self, target_name: str) -> Complex:
-        resolution = ComplexResolver(self.session).resolve(target_name)
+    def _resolve_complex(
+        self,
+        target_name: str,
+        original_question: str | None = None,
+    ) -> Complex:
+        resolution = self._resolve_complex_resolution(target_name, original_question)
         if resolution.resolved and resolution.complex is not None:
             return resolution.complex
 
+        self._raise_complex_resolution_error(resolution)
+
+    def _resolve_complex_resolution(
+        self,
+        target_name: str,
+        original_question: str | None = None,
+    ) -> ComplexResolution:
+        resolver = ComplexResolver(self.session)
+        resolution = resolver.resolve(target_name)
+        if resolution.resolved:
+            return resolution
+
+        contextual_resolution = self._resolve_complex_from_original_question(
+            resolver=resolver,
+            target_name=target_name,
+            original_question=original_question,
+        )
+        if contextual_resolution is not None:
+            if contextual_resolution.resolved or contextual_resolution.candidates:
+                return contextual_resolution
+
+        return resolution
+
+    def _raise_complex_resolution_error(self, resolution: ComplexResolution) -> None:
         if resolution.status == AMBIGUOUS:
             raise SimpleLookupError(
                 "ambiguous_target",
                 resolution.message or "여러 단지가 검색되었습니다. 더 구체적으로 입력해주세요.",
-                candidates=resolution.candidates,
+                candidates=resolution.candidates[:MAX_AMBIGUOUS_LOCATION_CANDIDATES],
             )
 
         if resolution.status == INSUFFICIENT_QUERY:
@@ -335,13 +387,42 @@ class SimpleLookupDao:
             raise SimpleLookupError(
                 "target_not_found",
                 resolution.message or "조회 대상 단지를 찾을 수 없습니다.",
-                candidates=resolution.candidates,
+                candidates=resolution.candidates[:MAX_AMBIGUOUS_LOCATION_CANDIDATES],
             )
 
         raise SimpleLookupError(
             "target_not_found",
             "조회 대상 단지를 찾을 수 없습니다.",
         )
+
+    def _complex_from_candidate(self, candidate: dict[str, Any]) -> Complex:
+        complex_id = candidate.get("complex_id")
+        if complex_id is not None:
+            complex_obj = self.session.get(Complex, int(complex_id))
+            if complex_obj is not None:
+                return complex_obj
+
+        raise SimpleLookupError(
+            "target_not_found",
+            "조회 대상 단지를 찾을 수 없습니다.",
+        )
+
+    def _resolve_complex_from_original_question(
+        self,
+        *,
+        resolver: ComplexResolver,
+        target_name: str,
+        original_question: str | None,
+    ) -> ComplexResolution | None:
+        if not original_question:
+            return None
+
+        target_key = normalize_complex_key(target_name)
+        question_key = normalize_complex_key(original_question)
+        if not target_key or target_key not in question_key:
+            return None
+
+        return resolver.resolve(original_question)
 
     # 지역명 확정: 지역명 정확 일치, 기존 랭킹은 구 단위 부분 일치 호환 유지
     def _resolve_region(
@@ -405,3 +486,7 @@ class SimpleLookupDao:
 
 def normalize_region_search_text(value: str) -> str:
     return "".join(str(value).split())
+
+
+def location_candidates(resolution: ComplexResolution) -> list[dict[str, Any]]:
+    return resolution.candidates[:MAX_AMBIGUOUS_LOCATION_CANDIDATES]
