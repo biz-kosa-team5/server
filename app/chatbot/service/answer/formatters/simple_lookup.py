@@ -77,7 +77,7 @@ def format_location_result(
   longitude = item.get("longitude")
   parts = []
   if name and address:
-    parts.append(f"{name} 위치는 {address}입니다.")
+    parts.append(f"{name} 위치는 {address}입니다.\n")
   elif address:
     parts.append(f"조회한 단지 위치는 {address}입니다.")
   elif name:
@@ -94,21 +94,32 @@ def format_location_result(
 
 
 def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:
+  total_count = len(data)
   rows = [dict_value(item) for item in data[:3]]
   name = first_non_empty([
     clean_text(rows[0].get("complex_name")) if rows else "",
     criteria_name(result),
   ])
   trade_summaries = [
-    format_trade_row(row)
+    format_trade_block(row)
     for row in rows
   ]
   trade_summaries = [item for item in trade_summaries if item]
-  if name and trade_summaries:
-    return f"{name} 실거래 내역은 " + ", ".join(trade_summaries) + "입니다."
-  if trade_summaries:
-    return "실거래 내역은 " + ", ".join(trade_summaries) + "입니다."
-  return clean_text(result.get("message"))
+  if not trade_summaries:
+    return clean_text(result.get("message"))
+  heading = trade_result_heading(name, total_count, len(trade_summaries))
+  body = "\n\n".join(
+    f"{index}) {summary}"
+    for index, summary in enumerate(trade_summaries, start=1)
+  )
+  return f"{heading}\n\n{body}\n\n제공된 데이터 기준입니다."
+
+
+def trade_result_heading(name: str, total_count: int, shown_count: int) -> str:
+  subject = f"{name} 거래내역" if name else "거래내역"
+  if total_count > shown_count:
+    return f"{subject}은 조회된 {total_count}건 중 {shown_count}건을 표시합니다."
+  return f"{subject} {shown_count}건은 다음과 같습니다."
 
 
 def format_region_trade_result(result: dict[str, Any], data: list[Any]) -> str:
@@ -136,8 +147,12 @@ def format_region_trade_row(row: dict[str, Any]) -> str:
 
 def format_trade_row(row: dict[str, Any]) -> str:
   date = clean_text(row.get("deal_date"))
-  amount = format_price(row.get("deal_amount"))
+  amount = first_non_empty([
+    clean_text(row.get("deal_amount_text")),
+    format_price(row.get("deal_amount")),
+  ])
   area = format_labeled_value("전용", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = prefer_area_text(area, row.get("excl_area_text"))
   floor = format_floor(row.get("floor"))
   details = compact_parts([amount, area, floor])
   if date and details:
@@ -145,6 +160,33 @@ def format_trade_row(row: dict[str, Any]) -> str:
   if details:
     return " ".join(details)
   return date
+
+
+def format_trade_block(row: dict[str, Any]) -> str:
+  date = clean_text(row.get("deal_date"))
+  amount = first_non_empty([
+    clean_text(row.get("deal_amount_text")),
+    format_price(row.get("deal_amount")),
+  ])
+  area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = prefer_area_text(area, row.get("excl_area_text"))
+  price_per_m2 = first_non_empty([
+    clean_text(row.get("price_per_m2_text")),
+    format_price_per_m2(row.get("price_per_m2")),
+  ])
+  floor = format_floor(row.get("floor"))
+  apt_dong = clean_text(row.get("apt_dong"))
+  address = clean_text(row.get("address"))
+  details = compact_parts([
+    f"거래일: {date}" if date else "",
+    f"거래금액: {amount}" if amount else "",
+    area,
+    f"㎡당 가격: {price_per_m2}" if price_per_m2 else "",
+    f"층수: {floor}" if floor else "",
+    f"동: {apt_dong}" if apt_dong else "",
+    f"주소: {address}" if address else "",
+  ])
+  return "\n".join(details)
 
 
 def format_region_trade_history_result(result: dict[str, Any], data: list[Any]) -> str:
@@ -174,11 +216,18 @@ def format_region_trade_history_row(row: dict[str, Any]) -> str:
     clean_text(row.get("trade_name")),
   ])
   date = clean_text(row.get("deal_date"))
-  amount = format_price(row.get("deal_amount"))
+  amount = first_non_empty([
+    clean_text(row.get("deal_amount_text")),
+    format_price(row.get("deal_amount")),
+  ])
   area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = prefer_area_text(area, row.get("excl_area_text"))
   floor = format_floor(row.get("floor"))
   address = clean_text(row.get("address"))
-  price_per_m2 = format_price_per_m2(row.get("price_per_m2"))
+  price_per_m2 = first_non_empty([
+    clean_text(row.get("price_per_m2_text")),
+    format_price_per_m2(row.get("price_per_m2")),
+  ])
   details = compact_parts([
     f"거래일: {date}" if date else "",
     f"거래금액: {amount}" if amount else "",
@@ -224,11 +273,18 @@ def format_region_ranking_row(row: dict[str, Any]) -> str:
     clean_text(row.get("trade_name")),
   ])
   date = clean_text(row.get("deal_date"))
-  amount = format_price(row.get("deal_amount"))
+  amount = first_non_empty([
+    clean_text(row.get("deal_amount_text")),
+    format_price(row.get("deal_amount")),
+  ])
   area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
+  area = prefer_area_text(area, row.get("excl_area_text"))
   floor = format_floor(row.get("floor"))
   address = clean_text(row.get("address"))
-  price_per_m2 = format_price_per_m2(row.get("price_per_m2"))
+  price_per_m2 = first_non_empty([
+    clean_text(row.get("price_per_m2_text")),
+    format_price_per_m2(row.get("price_per_m2")),
+  ])
   details = compact_parts([
     f"거래일: {date}" if date else "",
     f"거래금액: {amount}" if amount else "",
@@ -253,6 +309,17 @@ def format_price_per_m2(value: Any) -> str:
   except (TypeError, ValueError):
     text = clean_text(value)
     return text
+
+
+def prefer_area_text(current: str, area_text_value: Any) -> str:
+  area_text = clean_text(area_text_value)
+  if not area_text:
+    return current
+  if ":" in current:
+    return f"{current.split(':', 1)[0]}: {area_text}"
+  if " " in current:
+    return f"{current.split(' ', 1)[0]} {area_text}"
+  return area_text
 
 
 def criteria_name(result: dict[str, Any]) -> str:

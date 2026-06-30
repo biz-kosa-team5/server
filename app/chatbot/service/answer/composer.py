@@ -247,7 +247,13 @@ def stable_simple_lookup_answer(context: ChatbotAnswerContext) -> str:
     if isinstance(result, dict)
     and result.get("handler") == "simple_lookup"
     and result.get("success") is True
-    and result.get("query_type") in {"region_trade_history", "region_price_ranking"}
+    and result.get("query_type") in {
+      "location",
+      "trade_history",
+      "complex_price_record",
+      "region_trade_history",
+      "region_price_ranking",
+    }
   ]
   if len(results) != 1:
     return ""
@@ -255,7 +261,12 @@ def stable_simple_lookup_answer(context: ChatbotAnswerContext) -> str:
   answer = format_simple_lookup_result(results[0])
   if not answer:
     return ""
-  if isinstance(context.uiSummary, dict) and context.uiSummary.get("hasMapFocus") is True:
+  if (
+    isinstance(context.uiSummary, dict)
+    and context.uiSummary.get("hasMapFocus") is True
+    and "지도" not in answer
+    and "吏?꾩" not in answer
+  ):
     answer = f"{answer}\n\n지도에 표시했습니다."
   return answer
 

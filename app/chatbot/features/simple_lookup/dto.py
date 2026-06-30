@@ -115,6 +115,27 @@ def _calculate_price_per_m2(
     return round(deal_amount / excl_area, 2)
 
 
+def _format_deal_amount(value: int | float | None) -> str | None:
+    if value is None:
+        return None
+    amount = float(value)
+    if amount >= 10000:
+        return f"{amount / 10000:.1f}억원"
+    return f"{int(amount):,}만원"
+
+
+def _format_excl_area(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:g}㎡"
+
+
+def _format_price_per_m2(value: float | None) -> str | None:
+    if value is None:
+        return None
+    return f"{value:,.2f}만원/㎡"
+
+
 class LocationData(BaseModel):
     # location 응답 데이터
 
@@ -154,8 +175,11 @@ class TradeData(BaseModel):
     trade_id: int
     deal_date: date
     deal_amount: int
+    deal_amount_text: str | None = None
     excl_area: float
+    excl_area_text: str | None = None
     price_per_m2: float | None = None
+    price_per_m2_text: str | None = None
 
     floor: int | None = None
     apt_dong: str | None = None
@@ -167,6 +191,10 @@ class TradeData(BaseModel):
         complex_obj: Any,
     ) -> "TradeData":
         # Trade entity + Complex entity -> TradeData
+        price_per_m2 = _calculate_price_per_m2(
+            trade.deal_amount,
+            trade.excl_area,
+        )
 
         return cls(
             complex_id=complex_obj.id,
@@ -176,11 +204,11 @@ class TradeData(BaseModel):
             trade_id=trade.id,
             deal_date=trade.deal_date,
             deal_amount=trade.deal_amount,
+            deal_amount_text=_format_deal_amount(trade.deal_amount),
             excl_area=trade.excl_area,
-            price_per_m2=_calculate_price_per_m2(
-                trade.deal_amount,
-                trade.excl_area,
-            ),
+            excl_area_text=_format_excl_area(trade.excl_area),
+            price_per_m2=price_per_m2,
+            price_per_m2_text=_format_price_per_m2(price_per_m2),
             floor=trade.floor,
             apt_dong=trade.apt_dong,
         )
@@ -202,8 +230,11 @@ class RegionRankingData(BaseModel):
     trade_id: int
     deal_date: date
     deal_amount: int
+    deal_amount_text: str | None = None
     excl_area: float
+    excl_area_text: str | None = None
     price_per_m2: float | None = None
+    price_per_m2_text: str | None = None
 
     floor: int | None = None
     apt_dong: str | None = None
@@ -217,6 +248,9 @@ class RegionRankingData(BaseModel):
             data["deal_amount"],
             data["excl_area"],
         )
+        data["deal_amount_text"] = _format_deal_amount(data["deal_amount"])
+        data["excl_area_text"] = _format_excl_area(data["excl_area"])
+        data["price_per_m2_text"] = _format_price_per_m2(data["price_per_m2"])
 
         return cls.model_validate(data)
 
