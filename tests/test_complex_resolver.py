@@ -157,6 +157,22 @@ def test_simple_lookup_uses_neighborhood_prefix_as_address_hint():
   assert "잠실동" in result["data"][0]["address"]
 
 
+def test_simple_lookup_uses_original_question_when_ai_shortens_target_name():
+  with seeded_resolver_session() as session:
+    result = run_simple_lookup(
+      session,
+      {
+        "query_type": QUERY_LOCATION,
+        "target_name": "우성아파트",
+      },
+      "잠실동 우성아파트 찾아줘",
+    )
+
+  assert result["success"] is True
+  assert result["data"][0]["complex_id"] == JAMSIL_WOOSUNG_ID
+  assert "잠실동" in result["data"][0]["address"]
+
+
 def test_resolver_rejects_generic_apartment_query_without_db_scan():
   with seeded_resolver_session() as session:
     result = ComplexResolver(session).resolve("아파트 찾아줘")
@@ -165,7 +181,7 @@ def test_resolver_rejects_generic_apartment_query_without_db_scan():
   assert result.candidates == []
 
 
-def test_simple_lookup_returns_ambiguous_candidates_instead_of_not_found():
+def test_simple_lookup_location_returns_primary_result_with_candidates_for_ambiguous_name():
   with seeded_resolver_session() as session:
     result = run_simple_lookup(
       session,
@@ -176,9 +192,13 @@ def test_simple_lookup_returns_ambiguous_candidates_instead_of_not_found():
       "우성 아파트 찾아줘",
     )
 
-  assert result["success"] is False
-  assert result["reason"] == "ambiguous_target"
-  assert result["reason"] != "target_not_found"
+  assert result["success"] is True
+  assert result["data"]
+  assert result["data"][0]["complex_id"] in {
+    DAECHI_WOOSUNG_ID,
+    CHEONGDAM_WOOSUNG_ID,
+    JAMSIL_WOOSUNG_ID,
+  }
   assert len(result["candidates"]) >= 3
   assert all("complex_id" in item and "complex_name" in item for item in result["candidates"])
 

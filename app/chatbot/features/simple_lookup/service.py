@@ -46,7 +46,7 @@ class SimpleLookupService:
 
         try:
             criteria = self.policy.build_criteria(slots)
-            data = self._fetch_data(criteria)
+            data, extras = self._fetch_data(criteria)
 
             return SimpleLookupObservation(
                 query_type=criteria.query_type,
@@ -55,6 +55,7 @@ class SimpleLookupService:
                     exclude_none=True,
                 ),
                 data=data,
+                **extras,
             )
 
         except SimpleLookupError as error:
@@ -72,26 +73,30 @@ class SimpleLookupService:
             )
 
     # query_type별 DAO 호출 및 응답 데이터 변환
-    def _fetch_data(self, criteria: SimpleLookupCriteria) -> list[LookupItemData]:
+    def _fetch_data(
+        self,
+        criteria: SimpleLookupCriteria,
+    ) -> tuple[list[LookupItemData], dict[str, Any]]:
         if criteria.query_type == QUERY_LOCATION:
-            complex_obj = self.dao.find_location(criteria)
-            return [LocationData.from_complex(complex_obj)]
+            complex_obj, candidates = self.dao.find_location(criteria)
+            extras = {"candidates": candidates} if candidates else {}
+            return [LocationData.from_complex(complex_obj)], extras
 
         if criteria.query_type == QUERY_TRADE_HISTORY:
             complex_obj, trades = self.dao.find_trade_history(criteria)
-            return [TradeData.from_trade(trade, complex_obj) for trade in trades]
+            return [TradeData.from_trade(trade, complex_obj) for trade in trades], {}
 
         if criteria.query_type == QUERY_COMPLEX_PRICE_RECORD:
             complex_obj, trades = self.dao.find_complex_price_record(criteria)
-            return [TradeData.from_trade(trade, complex_obj) for trade in trades]
+            return [TradeData.from_trade(trade, complex_obj) for trade in trades], {}
 
         if criteria.query_type == QUERY_REGION_PRICE_RANKING:
             rows = self.dao.find_region_price_ranking(criteria)
-            return [RegionRankingData.from_row(row) for row in rows]
+            return [RegionRankingData.from_row(row) for row in rows], {}
 
         if criteria.query_type == QUERY_REGION_TRADE_HISTORY:
             rows = self.dao.find_region_trade_history(criteria)
-            return [RegionRankingData.from_row(row) for row in rows]
+            return [RegionRankingData.from_row(row) for row in rows], {}
 
         raise SimpleLookupError(
             "invalid_request",
@@ -103,11 +108,15 @@ class SimpleLookupService:
 def run_simple_lookup(
     session: Session,
     slots: dict[str, Any],
-    _: str = "",
+    text: str = "",
 ) -> dict[str, Any]:
 
     try:
-        request = SimpleLookupSlots(**slots)
+        slot_payload = dict(slots)
+        if text and not slot_payload.get("original_question"):
+            slot_payload["original_question"] = text
+
+        request = SimpleLookupSlots(**slot_payload)
 
     except ValidationError:
         return SimpleLookupFailure(

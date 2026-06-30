@@ -54,6 +54,7 @@ class SimpleLookupPolicy:
             return SimpleLookupCriteria(
                 query_type=slots.query_type,
                 target_name=target_name,
+                original_question=slots.original_question,
             )
 
         start_date, end_date = self._normalize_date_range(slots)
@@ -62,6 +63,7 @@ class SimpleLookupPolicy:
         return SimpleLookupCriteria(
             query_type=slots.query_type,
             target_name=target_name,
+            original_question=slots.original_question,
             target_type=self._normalize_target_type(
                 query_type=slots.query_type,
                 target_name=target_name,

@@ -46,6 +46,34 @@ def test_simple_lookup_formatter_uses_location_dto_shape():
   )
 
 
+def test_simple_lookup_formatter_renders_primary_location_with_candidates():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": True,
+    "query_type": QUERY_LOCATION,
+    "criteria": {"target_name": "우성아파트"},
+    "data": [
+      {
+        "complex_id": 1,
+        "complex_name": "우성아파트",
+        "address": "잠실동 101-1",
+        "latitude": 37.5,
+        "longitude": 127.1,
+      },
+    ],
+    "candidates": [
+      {"complex_id": 1, "complex_name": "우성아파트", "address": "잠실동 101-1"},
+      {"complex_id": 2, "complex_name": "우성아파트", "address": "서초동 1326-17"},
+    ],
+  })
+
+  assert "우성아파트 위치는 잠실동 101-1입니다." in answer
+  assert "지도에 표시했습니다." in answer
+  assert "같은 이름으로 확인되는 후보는 다음과 같습니다." in answer
+  assert "1. 잠실동 우성아파트" in answer
+  assert "2. 서초동 우성아파트" in answer
+
+
 def test_simple_lookup_formatter_uses_trade_dto_shape():
   result = SimpleLookupObservation(
     query_type=QUERY_TRADE_HISTORY,
