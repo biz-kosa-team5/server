@@ -19,6 +19,7 @@ from app.config import load_environment
 
 from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
+from .formatters.sequential import format_dependent_recommendation_comparison_answer
 from .observations import build_answer_observations
 from .prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
 
@@ -27,8 +28,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
 MAX_FINAL_ANSWER_LENGTH = 1000
+MAX_SEQUENCE_ANSWER_LENGTH = 5000
 MAX_RECOMMENDATION_ANSWER_LENGTH = 1000
 FORBIDDEN_ANSWER_TERMS = (
+  "전문 에이전트",
   "handler",
   "agent",
   "tool",
@@ -36,6 +39,12 @@ FORBIDDEN_ANSWER_TERMS = (
   "planType",
   "dedupe",
   "fragment",
+  "raw JSON",
+  "latitude",
+  "longitude",
+  "위도",
+  "경도",
+  "좌표",
 )
 COORDINATE_PATTERNS = (
   re.compile(
@@ -68,6 +77,9 @@ class ChatbotAnswerComposer:
   async def compose(self, context: ChatbotAnswerContext) -> str:
     # tool 결과가 실패했거나 LLM을 사용할 수 없으면 fallback 답변으로 안전하게 내려간다.
     self.last_usage = None
+    sequence_answer = format_dependent_recommendation_comparison_answer(context.result)
+    if sequence_answer:
+      return finalize_sequence_answer_text(sequence_answer, context)
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -233,6 +245,16 @@ def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
     return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
   text = truncate_answer(text)
   text = ensure_required_recommendation_notes(text, context)
+  return text or context.message or "질문을 처리했습니다."
+
+
+def finalize_sequence_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
+  text = normalize_answer_whitespace(answer)
+  text = remove_coordinate_text(text)
+  if has_forbidden_answer_terms(text):
+    fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+    text = remove_forbidden_sentences(fallback) if has_forbidden_answer_terms(fallback) else fallback
+  text = truncate_answer(text, MAX_SEQUENCE_ANSWER_LENGTH)
   return text or context.message or "질문을 처리했습니다."
 
 

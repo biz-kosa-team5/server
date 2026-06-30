@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -168,6 +168,13 @@ def execute_dependent_multi_feature(
   plan: ExecutionPlan,
 ) -> OrchestrationResult:
   sequence = list(iter_recommendation_comparison_sequence(session, text, plan))
+  return aggregate_sequence_step_results(sequence, plan)
+
+
+def aggregate_sequence_step_results(
+  sequence: list[SequenceStepResult],
+  plan: ExecutionPlan,
+) -> OrchestrationResult:
   wrappers = [
     SpecialistAgentResult(
       agent=item.step.agent,
@@ -187,11 +194,11 @@ def iter_recommendation_comparison_sequence(
   session: Session,
   text: str,
   plan: ExecutionPlan,
-) -> list[SequenceStepResult]:
+) -> Iterator[SequenceStepResult]:
   # 추천 결과를 먼저 만들고, 그 추천 후보 이름들을 다시 comparison 입력으로 넘기는 흐름이다.
   # 예: "잠실역 근처 아파트 추천하고 후보 비교해줘".
   if len(plan.steps) < 2:
-    return []
+    return
 
   recommendation_step = plan.steps[0]
   comparison_step = plan.steps[1]
@@ -200,16 +207,14 @@ def iter_recommendation_comparison_sequence(
     "recommendation_not_executable",
     "조건에 맞는 추천 후보를 찾지 못했습니다. 지역, 반경, 가격, 생활편의 조건을 조금 완화해 보세요.",
   )
-  sequence = [
-    SequenceStepResult(
-      step=recommendation_step,
-      result=recommendation_result,
-      status_label="추천 후보 찾는 중",
-    )
-  ]
+  yield SequenceStepResult(
+    step=recommendation_step,
+    result=recommendation_result,
+    status_label="추천 후보 찾는 중",
+  )
 
   if recommendation_result.get("success") is not True:
-    sequence.append(SequenceStepResult(
+    yield SequenceStepResult(
       step=comparison_step,
       result=dependency_failed_result(
         "comparison",
@@ -218,14 +223,14 @@ def iter_recommendation_comparison_sequence(
       ),
       depends_on=recommendation_step.agent,
       status_label="추천 후보 비교 중",
-    ))
-    return sequence
+    )
+    return
 
   candidate_names = recommendation_candidate_names(recommendation_result)
   limit = requested_comparison_candidate_limit(text)
   candidate_names = candidate_names[:limit]
   if len(candidate_names) < 2:
-    sequence.append(SequenceStepResult(
+    yield SequenceStepResult(
       step=comparison_step,
       result=dependency_failed_result(
         "comparison",
@@ -234,19 +239,18 @@ def iter_recommendation_comparison_sequence(
       ),
       depends_on=recommendation_step.agent,
       status_label="추천 후보 비교 중",
-    ))
-    return sequence
+    )
+    return
 
   comparison_slots = extract_compare_slots(text)
   comparison_slots["apartment_names"] = candidate_names
   comparison_result = run_comparison(session, comparison_slots, text)
-  sequence.append(SequenceStepResult(
+  yield SequenceStepResult(
     step=comparison_step,
     result=comparison_result,
     depends_on=recommendation_step.agent,
     status_label="추천 후보 비교 중",
-  ))
-  return sequence
+  )
 
 
 def execute_direct_multi_feature(
