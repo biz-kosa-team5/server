@@ -9,6 +9,7 @@ from typing import Any
 from .common import (
   clean_text,
   dict_value,
+  format_candidate_selection,
   format_number,
   format_percent,
   format_price,
@@ -17,6 +18,13 @@ from .common import (
 
 
 def format_price_trend_result(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_selection(price_trend_target_name(result), list_value(result.get("candidates")))
+  if candidate_answer:
+    return candidate_answer
+
+  if clean_text(result.get("reason")) == "insufficient_query":
+    return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
+
   summary = dict_value(result.get("summary"))
   data = [
     dict_value(item)

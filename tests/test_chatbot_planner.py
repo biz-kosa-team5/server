@@ -20,6 +20,31 @@ def test_planner_routes_candidate_comparison_as_dependent_multi_feature():
   assert plan.steps[1].depends_on == "recommendation_agent"
 
 
+def test_planner_routes_recommendation_reference_comparison_as_dependent_multi_feature():
+  plan = build_execution_plan("근처에 대형마트가 있는 서초구 아파트를 추천해주라 3개 정도 그리고 그 3개를 비교까지 해주면 좋겠어")
+
+  assert plan.plan_type == "dependent_multi_feature"
+  assert handlers(plan) == ["recommendation", "comparison"]
+  assert plan.steps[1].mode == "dependent"
+  assert plan.steps[1].depends_on == "recommendation_agent"
+
+
+def test_planner_routes_recommendation_then_comparison_order_as_dependent_multi_feature():
+  plan = build_execution_plan("서초구 아파트 3개 추천하고 그 후보 가격이랑 교통 비교해줘")
+
+  assert plan.plan_type == "dependent_multi_feature"
+  assert handlers(plan) == ["recommendation", "comparison"]
+  assert plan.steps[1].depends_on == "recommendation_agent"
+
+
+def test_planner_does_not_route_reference_only_comparison_to_comparison():
+  plan = build_execution_plan("그 3개 비교해줘")
+
+  assert plan.plan_type == "unsupported_feature"
+  assert handlers(plan) == ["no_matching_tool"]
+  assert plan.reason == "missing_recommendation_candidates_for_comparison"
+
+
 def test_planner_routes_nearby_station_apartment_comparison_as_dependent_multi_feature():
   plan = build_execution_plan("잠실역이랑 가까운 아파트들을 비교해줘")
 

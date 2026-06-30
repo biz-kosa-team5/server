@@ -11,6 +11,7 @@ from .comparison import format_comparison_result
 from .legal_contract import format_legal_contract_result
 from .price_trend import format_price_trend_result
 from .recommendation import format_recommendation_result
+from .sequential import format_dependent_recommendation_comparison_answer
 from .simple_lookup import format_simple_lookup_result
 
 
@@ -23,6 +24,10 @@ def format_result_messages(result: Any) -> list[str]:
 
   if not isinstance(result, dict):
     return []
+
+  sequence_answer = format_dependent_recommendation_comparison_answer(result)
+  if sequence_answer:
+    return [sequence_answer]
 
   if is_specialist_wrapper(result):
     nested_messages = format_result_messages(result.get("result"))
