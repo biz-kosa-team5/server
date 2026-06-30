@@ -72,6 +72,21 @@ TREND_ONLY_SIGNALS = (
   "오른",
   "내린",
 )
+GENERIC_COMPLEX_PROFILE_SIGNALS = (
+  "정보",
+  "요약",
+  "개요",
+  "설명",
+  "궁금",
+  "어떤 아파트",
+  "어떤 단지",
+)
+GENERIC_COMPLEX_PROFILE_REJECT_TARGETS = {
+  "부동산",
+  "부동산시장",
+  "시장",
+  "요즘부동산시장",
+}
 AMBIGUOUS_PRICE_SIGNALS = ("시세", "가격", "얼마")
 LEGAL_SIGNALS = (
   "계약",
@@ -145,6 +160,10 @@ def build_execution_plan(text: str) -> ExecutionPlan:
 
   if looks_like_unsupported_dependent_chain(question):
     return supervisor_plan("unsupported_dependent_chain")
+
+  generic_profile_plan = build_generic_complex_profile_plan(question)
+  if generic_profile_plan is not None:
+    return generic_profile_plan
 
   same_tool_plan = build_same_tool_multi_feature_plan(question)
   if same_tool_plan is not None:
@@ -441,6 +460,54 @@ def build_ambiguous_multi_feature_plan(text: str) -> ExecutionPlan | None:
   )
 
 
+def build_generic_complex_profile_plan(text: str) -> ExecutionPlan | None:
+  if not looks_like_generic_complex_profile_question(text):
+    return None
+
+  target_name = extract_generic_complex_profile_target_name(text)
+  if not target_name:
+    return None
+
+  return ExecutionPlan(
+    plan_type="ambiguous_multi_feature",
+    steps=[
+      FeatureStep(
+        agent="lookup_agent",
+        handler="simple_lookup",
+        mode="ambiguous",
+        query=f"{target_name} 위치 알려줘",
+        slot_overrides={
+          "query_type": "location",
+          "target_name": target_name,
+        },
+      ),
+      FeatureStep(
+        agent="lookup_agent",
+        handler="simple_lookup",
+        mode="ambiguous",
+        query=f"{target_name} 최근 실거래 알려줘",
+        slot_overrides={
+          "query_type": "trade_history",
+          "target_name": target_name,
+        },
+      ),
+      FeatureStep(
+        agent="price_trend_agent",
+        handler="price_trend",
+        mode="ambiguous",
+        query=f"{target_name} 최근 1년 가격 흐름 알려줘",
+        slot_overrides={
+          "analysis_type": "timeseries",
+          "target_type": "complex",
+          "target_name": target_name,
+          "period": "1y",
+        },
+      ),
+    ],
+    reason="generic_complex_profile_needs_location_trade_and_trend",
+  )
+
+
 def build_independent_multi_feature_plan(text: str) -> ExecutionPlan | None:
   handlers = detected_handlers(text)
   if len(handlers) < 2:
@@ -712,6 +779,36 @@ def looks_like_ambiguous_complex_price_question(text: str) -> bool:
   return bool(extract_complex_target_name(text))
 
 
+def looks_like_generic_complex_profile_question(text: str) -> bool:
+  if not has_generic_complex_profile_signal(text):
+    return False
+  if (
+    has_recommendation_signal(text)
+    or has_comparison_signal(text)
+    or has_legal_signal(text)
+    or has_price_trend_signal(text)
+    or any(signal in text for signal in AMBIGUOUS_PRICE_SIGNALS)
+    or any(signal in text for signal in UNSUPPORTED_SIGNALS)
+  ):
+    return False
+  if any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
+    return False
+  if extract_region_name(text) is not None:
+    return False
+  target_name = extract_generic_complex_profile_target_name(text)
+  return target_name is not None and is_valid_generic_complex_profile_target(target_name)
+
+
+def has_generic_complex_profile_signal(text: str) -> bool:
+  if any(signal in text for signal in GENERIC_COMPLEX_PROFILE_SIGNALS):
+    return True
+  match = re.search(r"(?P<target>.+?)\s*알려", text)
+  if match is None:
+    return False
+  raw_target = match.group("target").strip()
+  return "아파트" in raw_target or "단지" in raw_target
+
+
 def is_region_price_question(text: str) -> bool:
   return extract_region_name(text) is not None and any(signal in text for signal in ("시세", "가격", "추이", "흐름"))
 
@@ -736,6 +833,28 @@ def extract_complex_target_name(text: str) -> str | None:
     ("시세", "가격", "얼마", "요즘", "최근"),
     reject_region=True,
   )
+
+
+def extract_generic_complex_profile_target_name(text: str) -> str | None:
+  target = extract_entity_before_keywords(
+    text,
+    ("정보", "알려", "요약", "개요", "설명", "궁금"),
+    reject_region=True,
+  )
+  if not target:
+    return None
+  return normalize_generic_complex_profile_target(target)
+
+
+def is_valid_generic_complex_profile_target(value: str) -> bool:
+  target = re.sub(r"\s+", "", value.strip())
+  if not target:
+    return False
+  if target in GENERIC_COMPLEX_PROFILE_REJECT_TARGETS:
+    return False
+  if any(signal in target for signal in ("날씨", "시장", "분위기", "신고가", "신저가", "후보")):
+    return False
+  return not looks_like_region_target(target)
 
 
 def extract_lookup_target_name(text: str) -> str | None:
@@ -836,6 +955,15 @@ def clean_target_candidate(value: str) -> str:
   text = re.sub(r"\s+", "", text)
   text = text.rstrip("은는이가을를")
   return text.strip()
+
+
+def normalize_generic_complex_profile_target(value: str) -> str:
+  text = value.strip()
+  if len(text) > len("아파트") + 1 and text.endswith("아파트"):
+    return text[:-len("아파트")]
+  if len(text) > len("단지") + 1 and text.endswith("단지"):
+    return text[:-len("단지")]
+  return text
 
 
 def looks_like_find_location_question(text: str) -> bool:

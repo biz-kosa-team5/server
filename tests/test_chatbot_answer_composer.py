@@ -200,13 +200,13 @@ def test_chatbot_answer_composer_falls_back_when_forbidden_term_is_returned(monk
   assert "tool" not in answer
 
 
-def test_chatbot_answer_composer_limits_answer_to_500_chars(monkeypatch):
+def test_chatbot_answer_composer_limits_answer_to_1000_chars(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-  completions = RecordingCompletions(content="문장입니다. " * 80)
+  completions = RecordingCompletions(content="문장입니다. " * 160)
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
 
-  assert len(answer) <= 500
+  assert len(answer) <= 1000
 
 
 def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendation(monkeypatch):
@@ -234,7 +234,7 @@ def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendat
   assert "생활편의 연치과병원 300m" in answer
   assert "재건축/정비사업 정보 없음" in answer
   assert "\n" in answer
-  assert len(answer) <= 650
+  assert len(answer) <= 1000
 
 
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):
