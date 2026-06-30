@@ -19,7 +19,7 @@ from .query_text import (
 
 
 DEFAULT_TOP_K = 7
-DEFAULT_MIN_SCORE = 0.45
+DEFAULT_MIN_SCORE = 0.5
 DEFAULT_CANDIDATE_K = 70
 
 
