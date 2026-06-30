@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import logging
 from typing import Any
@@ -21,10 +22,13 @@ from .supervisor import (
   merge_token_usage,
 )
 from .splitter import split_question
+from .streaming import chunk_answer, format_sse
 from .ui_payload import build_chatbot_ui_payload
 
 
 logger = logging.getLogger(__name__)
+STREAM_ERROR_MESSAGE = "AI 집찾기 응답을 불러오지 못했습니다."
+STREAM_TOTAL_STEPS = 5
 
 
 class LazySupervisorProvider:
@@ -210,6 +214,68 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   if usage:
     response_dict["usage"] = usage
   return response_dict
+
+
+async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> AsyncIterator[bytes]:
+  try:
+    question = str(payload.get("question", "")).strip()
+    model = runtime_model_from_payload(payload)
+
+    yield stream_status("질문 분석 중", 1)
+    tasks = ChatbotTask.from_question(question)
+
+    yield stream_status("작업 분리 중", 2)
+    supervisor_provider = LazySupervisorProvider(session, model=model)
+    task_results = []
+    task_count = len(tasks)
+    for task_number, task in enumerate(tasks, start=1):
+      yield stream_status(f"작업 {task_number}/{task_count} 처리 중", 3)
+      task_results.append(await execute_task(
+        session,
+        None,
+        task,
+        supervisor_provider=supervisor_provider,
+      ))
+
+    chatbot_response = ChatbotQueryResponse(
+      question=question,
+      task_results=task_results,
+    )
+    response_dict = chatbot_response.to_response_dict()
+
+    yield stream_status("지도/시각 자료 준비 중", 4)
+    ui_payload = build_chatbot_ui_payload(session, response_dict)
+    response_dict.update(ui_payload)
+    yield stream_status("답변 문장 정리 중", 5)
+    yield format_sse("artifacts", ui_payload)
+
+    answer_context = chatbot_response.to_answer_context(response_dict)
+    answer_composer = create_answer_composer(model)
+    response_dict["answer"] = await answer_composer.compose(answer_context)
+    answer_usage = getattr(answer_composer, "last_usage", None)
+    if answer_usage:
+      response_dict["answerUsage"] = answer_usage
+    usage = collect_response_usage(response_dict)
+    if usage:
+      response_dict["usage"] = usage
+
+    for text in chunk_answer(response_dict.get("answer") or response_dict.get("message") or ""):
+      yield format_sse("answer_delta", {"text": text})
+    yield format_sse("final", response_dict)
+  except Exception:
+    logger.exception("Failed to stream chatbot query")
+    yield format_sse("error", {"message": STREAM_ERROR_MESSAGE})
+
+
+def stream_status(label: str, step: int) -> bytes:
+  return format_sse(
+    "status",
+    {
+      "label": label,
+      "step": step,
+      "total": STREAM_TOTAL_STEPS,
+    },
+  )
 
 
 def create_chatbot_supervisor(session: Session, model: str | None) -> ChatbotSupervisor:
