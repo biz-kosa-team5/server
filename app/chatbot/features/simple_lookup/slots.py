@@ -7,6 +7,7 @@ from .dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
 )
 
@@ -21,6 +22,10 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
 
     if query_type == QUERY_LOCATION:
         target_name = _extract_location_target_name(text)
+        if target_name is not None:
+            slots["target_name"] = target_name
+    else:
+        target_name = _extract_lookup_target_name(text)
         if target_name is not None:
             slots["target_name"] = target_name
 
@@ -71,6 +76,9 @@ def infer_query_type(text: str) -> str:
 
         return QUERY_COMPLEX_PRICE_RECORD
 
+    if _looks_like_region_trade_history(text):
+        return QUERY_REGION_TRADE_HISTORY
+
     return QUERY_TRADE_HISTORY
 
 def _extract_location_target_name(text: str) -> str | None:
@@ -86,6 +94,29 @@ def _extract_location_target_name(text: str) -> str | None:
         return None
 
     return target
+
+
+def _extract_lookup_target_name(text: str) -> str | None:
+    matched = re.search(
+        r"(?P<target>.+?)\s*(?:최신|최근|지난|실거래가?|거래내역|거래\s*내역|가격|시세|얼마|최고가|최저가)",
+        text,
+    )
+    if matched is not None:
+        target = _clean_target_name(matched.group("target"))
+        if target:
+            return target
+
+    trailing_match = re.search(
+        r"(?:최근\s*)?(?:실거래가?|거래내역|거래\s*내역|가격|시세)\s+(?P<target>.+?)\s*(?:알려|보여|조회|$)",
+        text,
+    )
+    if trailing_match is not None:
+        target = _clean_target_name(trailing_match.group("target"))
+        if target:
+            return target
+
+    return None
+
 
 def _extract_year_duration_range(text: str) -> tuple[str, str] | None:
     matched = re.search(
@@ -155,7 +186,7 @@ def _extract_sort_order(text: str) -> str | None:
 
 
 def _extract_limit(text: str) -> int | None:
-    matched = re.search(r"(?P<value>\d+)\s*건", text)
+    matched = re.search(r"(?P<value>\d+)\s*(?:개(?!월)|건|곳)", text)
     if matched is None:
         return None
     return int(matched.group("value"))
@@ -176,3 +207,34 @@ def _looks_like_region_ranking(text: str) -> bool:
     )
 
     return has_region and has_ranking_word
+
+
+def _looks_like_region_trade_history(text: str) -> bool:
+    if not any(token in text for token in ("실거래", "실거래가", "거래내역", "거래 내역", "최근 거래")):
+        return False
+    target = _extract_lookup_target_name(text)
+    return _looks_like_region_name(target)
+
+
+def _looks_like_region_name(value: str | None) -> bool:
+    if not value:
+        return False
+    if "아파트" in value:
+        return False
+    return re.fullmatch(r"[가-힣]{2,}(?:구|동)", value) is not None or value in {"강남", "서초", "송파"}
+
+
+def _clean_target_name(value: str) -> str:
+    text = value
+    text = re.sub(r"(?:최신|최근|지난|요즘|현재|가장)\s*", "", text)
+    text = re.sub(r"\d+\s*(?:개월|달|년|개|건|곳)", "", text)
+    text = re.sub(r"\d{4}\s*년", "", text)
+    text = re.sub(r"\d+(?:\.\d+)?\s*(?:평|평형|㎡|m2|제곱미터)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"전용\s*", "", text)
+    text = re.sub(r"\s+(?:아파트|단지)\s*$", "", text)
+    text = re.sub(r"(?:그리고|또|랑|와|과|하고)\s*$", "", text)
+    text = re.sub(r"(?:에서|부터)$", "", text)
+    text = text.strip(" ,")
+    text = re.sub(r"\s+", "", text)
+    text = text.rstrip("은는이가을를")
+    return text.strip()

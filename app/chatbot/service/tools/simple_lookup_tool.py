@@ -33,17 +33,20 @@ def build_simple_lookup_tool(session: Session):
         price_order: str | None = None,
     ) -> dict[str, Any]:
         """
-        아파트 단지의 위치, 실거래 내역, 단지 최고가/최저가, 지역 최고가/최저가 거래 랭킹을 조회합니다.
+        아파트 단지의 위치, 단지 실거래 내역, 동/구 단위 최신 실거래 내역,
+        단지 최고가/최저가, 지역 최고가/최저가 거래 랭킹을 조회합니다.
 
         지원하는 query_type:
         - location: 특정 단지의 주소, 위치, 좌표 조회
         - trade_history: 특정 단지의 실거래 내역, 최근 거래, 거래가 조회
+        - region_trade_history: 특정 동/구의 최신 실거래 내역 조회
         - complex_price_record: 특정 단지의 최고가/최저가 거래 조회
         - region_price_ranking: 특정 지역의 최고가/최저가 거래 랭킹 조회
 
         query_type 선택 규칙:
         - "어디 있어?", "주소 알려줘", "위치 알려줘", "좌표 알려줘"는 query_type="location"입니다.
         - "얼마야", "요즘 얼마야", "최근 얼마야", "최근 실거래가", "거래내역"은 query_type="trade_history"입니다.
+          단, 대상이 "대치동", "잠실동", "강남구"처럼 동/구 지역이면 query_type="region_trade_history"입니다.
         - 특정 단지의 "최고가", "최저가", "가장 비싼 거래", "가장 싼 거래"는
           query_type="complex_price_record"입니다.
         - 특정 지역의 "최고가 거래 TOP 5", "최저가 거래 5건", "가장 비싼 아파트 5곳"은
@@ -92,6 +95,12 @@ def build_simple_lookup_tool(session: Session):
         - "은마 최근 3개월 거래내역 5건 알려줘"
           -> query_type="trade_history", target_name="은마", period="3m", limit=5
 
+        - "대치동 최신 실거래가 3개 알려줘"
+          -> query_type="region_trade_history", target_name="대치동", limit=3
+
+        - "강남구 최근 실거래 10건 알려줘"
+          -> query_type="region_trade_history", target_name="강남구", limit=10
+
         - "반포자이 최근 6개월 최고가 알려줘"
           -> query_type="complex_price_record", target_name="반포자이",
              period="6m", price_order="highest"
@@ -130,6 +139,8 @@ def build_simple_lookup_tool(session: Session):
           예: "은마", "반포자이", "잠실엘스"
         - 지역 랭킹에서는 지역명을 target_name에 넣으세요.
           예: "강남구", "서초구", "송파구"
+        - 지역 조회에서는 동/구명을 target_name에 넣으세요.
+          예: "대치동", "잠실동", "강남구"
         - "강남 최고가 거래 TOP 5"처럼 "구"가 빠져도 target_name="강남"으로 전달할 수 있습니다.
 
         sort_order 해석 규칙:
@@ -137,6 +148,7 @@ def build_simple_lookup_tool(session: Session):
         - "최근", "최신", 일반 거래내역 질문은 sort_order="latest"입니다.
         - "가장 오래된", "제일 오래된", "최초", "처음" 거래 질문은 sort_order="oldest"입니다.
         - location과 region_price_ranking에서는 sort_order를 전달하지 마세요.
+        - region_trade_history는 기본적으로 최신순입니다.
         - complex_price_record에서는 가격이 같은 거래의 날짜 보조 정렬로 사용할 수 있습니다.
 
         처리하지 말아야 할 질문:
@@ -151,7 +163,7 @@ def build_simple_lookup_tool(session: Session):
             query_type:
                 필수 인자 입니다.
                 조회 유형입니다.
-                location, trade_history, complex_price_record, region_price_ranking 중 하나입니다.
+                location, trade_history, region_trade_history, complex_price_record, region_price_ranking 중 하나입니다.
             target_name:
                 조회 대상 단지명 또는 지역명을 반드시 넣어야 하는 필수 인자입니다..
                 조회 대상 이름입니다.

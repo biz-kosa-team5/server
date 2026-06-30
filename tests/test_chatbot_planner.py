@@ -212,6 +212,17 @@ def test_planner_routes_region_price_record_to_lookup_not_recommendation():
   }
 
 
+def test_planner_routes_neighborhood_latest_trades_to_region_trade_history():
+  plan = build_execution_plan("대치동 최신 실거래가 3개 뽑아줘")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["simple_lookup"]
+  assert plan.steps[0].slot_overrides == {
+    "target_name": "대치동",
+    "query_type": "region_trade_history",
+  }
+
+
 def test_planner_builds_sub_queries_for_independent_comparison_and_legal():
   plan = build_execution_plan("래미안대치팰리스랑 잠실엘스 비교하고 계약 시 주의할 법도 알려줘")
 

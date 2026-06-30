@@ -326,6 +326,61 @@ def test_chatbot_query_uses_supervisor_for_single_lookup_question(monkeypatch):
   }
 
 
+def test_chatbot_query_resolves_contextual_question_before_execution(monkeypatch):
+  supervisor_calls = []
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, question):
+      supervisor_calls.append(question)
+      return {
+        "success": True,
+        "handler": "price_trend",
+        "observation_type": "timeseries",
+        "criteria": {
+          "target_type": "complex",
+          "target_name": "래미안대치팰리스",
+        },
+        "row_count": 0,
+        "rows": [],
+      }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={
+      "question": "두 번째 거 최근 1년 흐름도 알려줘",
+      "conversationContext": {
+        "version": "v1",
+        "items": [
+          {
+            "index": 1,
+            "kind": "complex",
+            "complexId": 3810,
+            "complexName": "풍림아이원2차202동",
+          },
+          {
+            "index": 2,
+            "kind": "complex",
+            "complexId": 1001,
+            "complexName": "래미안대치팰리스",
+          },
+        ],
+      },
+    },
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert supervisor_calls == ["래미안대치팰리스 최근 1년 흐름도 알려줘"]
+  assert payload["question"] == "두 번째 거 최근 1년 흐름도 알려줘"
+  assert payload["resolvedQuestion"] == "래미안대치팰리스 최근 1년 흐름도 알려줘"
+  assert payload["conversationResolution"]["source"] == "ordinal_item"
+
+
 def test_chatbot_query_adds_ui_payload_before_composing_answer(monkeypatch):
   captured_context = {}
 

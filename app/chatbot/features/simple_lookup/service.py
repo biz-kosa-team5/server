@@ -14,6 +14,7 @@ from app.chatbot.features.simple_lookup.dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
     RegionRankingData,
     SimpleLookupCriteria,
@@ -79,6 +80,13 @@ class SimpleLookupService:
         if criteria.query_type == QUERY_TRADE_HISTORY:
             complex_obj, trades = self.dao.find_trade_history(criteria)
             return [TradeData.from_trade(trade, complex_obj) for trade in trades]
+
+        if criteria.query_type == QUERY_REGION_TRADE_HISTORY:
+            rows = self.dao.find_region_trade_history(criteria)
+            return [
+                TradeData.from_trade(row["trade"], row["complex"])
+                for row in rows
+            ]
 
         if criteria.query_type == QUERY_COMPLEX_PRICE_RECORD:
             complex_obj, trades = self.dao.find_complex_price_record(criteria)
