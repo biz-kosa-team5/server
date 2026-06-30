@@ -29,6 +29,8 @@ POSTGRES_TEST_DATABASE_URL = (
 REGION_ID = 990001
 ALPHA_ID = 990101
 BETA_ID = 990102
+CASE_APT_A_ID = 990201
+CASE_APT_B_ID = 990202
 
 
 @pytest.fixture()
@@ -79,6 +81,26 @@ def seed_h1_data(session: Session) -> None:
                 address="Seoul H1 Beta",
                 latitude=37.6,
                 longitude=127.2,
+            ),
+            Complex(
+                id=CASE_APT_A_ID,
+                region_id=REGION_ID,
+                parcel_id=9902001,
+                name="테스트해동아파트A동(134-5)",
+                trade_name="테스트해동아파트A동(134-5)",
+                address="테스트동 134-5",
+                latitude=37.51064,
+                longitude=127.1197312,
+            ),
+            Complex(
+                id=CASE_APT_B_ID,
+                region_id=REGION_ID,
+                parcel_id=9902002,
+                name="테스트해동아파트B동(134-22)",
+                trade_name="테스트해동아파트B동(134-22)",
+                address="테스트동 134-22",
+                latitude=37.5105058,
+                longitude=127.1196477,
             ),
         ]
     )
@@ -149,6 +171,32 @@ def test_h1_location_uses_postgresql(pg_session: Session):
     assert result.success is True
     assert result.data[0].complex_id == ALPHA_ID
     assert result.data[0].address == "Seoul H1 Alpha"
+
+
+def test_location_matches_case_insensitive_building_suffix(pg_session: Session):
+    service = SimpleLookupService(SimpleLookupDao(pg_session))
+
+    result = service.handle(
+        SimpleLookupSlots(query_type=QUERY_LOCATION, target_name="테스트해동아파트b동")
+    )
+
+    assert result.success is True
+    assert result.data[0].complex_id == CASE_APT_B_ID
+    assert result.data[0].address == "테스트동 134-22"
+
+
+def test_location_keeps_ambiguous_base_name_for_building_variants(pg_session: Session):
+    service = SimpleLookupService(SimpleLookupDao(pg_session))
+
+    result = service.handle(
+        SimpleLookupSlots(query_type=QUERY_LOCATION, target_name="테스트해동아파트")
+    )
+
+    assert result.success is False
+    assert result.reason == "ambiguous_target"
+    candidate_ids = {candidate["complex_id"] for candidate in result.candidates}
+    assert CASE_APT_A_ID in candidate_ids
+    assert CASE_APT_B_ID in candidate_ids
 
 
 def test_h1_trade_history_period_filter_and_latest_oldest(pg_session: Session):
