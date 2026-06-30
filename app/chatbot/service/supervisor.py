@@ -167,7 +167,10 @@ def specialist_system_prompt(role: str, responsibility: str, tool_name: str) -> 
 SPECIALIST_AGENT_SPECS = [
   SpecialistAgentSpec(
     name="lookup_agent",
-    description="단지 위치, 주소, 실거래 내역, 최고가 조회 담당",
+    description=(
+      "단지 위치, 주소, 실거래 내역, 최고가 조회 담당, "
+      "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함"
+    ),
     tool_builders=(build_simple_lookup_tool,),
     system_prompt=specialist_system_prompt(
       "단순 조회",
@@ -197,7 +200,10 @@ SPECIALIST_AGENT_SPECS = [
   ),
   SpecialistAgentSpec(
     name="price_trend_agent",
-    description="시세 추이, 가격 변화율, 가격 순위 분석 담당",
+    description=(
+      "시세 추이, 가격 변화율, 가격 순위 분석 담당, "
+      "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함"
+    ),
     tool_builders=(build_price_trend_tool,),
     system_prompt=specialist_system_prompt(
       "시세 추이",
