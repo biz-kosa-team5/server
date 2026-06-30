@@ -97,6 +97,16 @@ def build_price_trend_tool(session: Session):
     - "TOP 10", "10곳", "10개"는 limit=10입니다.
     - 개수를 말하지 않으면 limit은 생략합니다.
     - "최근 1년 많이 오른 아파트 TOP 5"에서 1은 period 숫자이고, 5는 limit 숫자입니다.
+    - ranking 질문의 "최근 N년", "지난 N년", "최근 N개월", "지난 N개월"은 반드시 period로 전달하고 start_date/end_date로 바꾸지 마세요.
+      예: "최근 3년 상승률 높은 아파트" -> period="3y"
+      예: "최근 6개월 많이 내린 단지 TOP 7" -> period="6m", limit=7
+    - ranking 질문에 "30평대", "84㎡" 같은 면적/평형 조건이 있으면 반드시 pyeong/pyeong_min/pyeong_max 또는 area로 전달합니다.
+      예: "반포동 30평대 최근 2년 상승률 TOP 10" -> pyeong_min=30, pyeong_max=39, period="2y", limit=10
+    - ranking 질문에서도 기간/날짜 표현은 반드시 period 또는 start_date/end_date로 전달합니다.
+    - "2024년 상승률 순위"처럼 특정 연도만 말하면 start_date="2024-01-01", end_date="2024-12-31"입니다.
+    - "2020년까지 하락률 순위"처럼 종료 연도만 말하면 end_date="2020-12-31"입니다.
+    - "2018년부터 많이 오른 아파트"처럼 시작 연도만 말하면 start_date="2018-01-01"입니다.
+    - "2018년부터 2020년까지 상승률 TOP 5"처럼 시작/종료가 모두 있으면 start_date="2018-01-01", end_date="2020-12-31"입니다.
 
     기간/면적 규칙:
     - "최근 N개월", "지난 N개월"은 period="{N}m"으로 전달합니다.
@@ -118,7 +128,11 @@ def build_price_trend_tool(session: Session):
     - "30평대"는 pyeong_min=30, pyeong_max=39입니다.
     - "25~30평", "25평에서 30평"은 pyeong_min=25, pyeong_max=30입니다.
     - "84㎡", "84제곱", "84제곱미터"는 area=84입니다.
+    - "59㎡", "84㎡"처럼 단일 면적은 area로만 전달하고 area_min/area_max로 전달하지 마세요.
+      예: "강남구 59㎡ 2023년부터 많이 오른 단지 4개" -> area=59
+      예: "대치동 84제곱 최근 3년 상승률 높은 아파트" -> area=84
     - "59~84㎡", "59에서 84제곱"은 area_min=59, area_max=84입니다.
+    - area_min/area_max는 사용자가 "59~84㎡", "59에서 84제곱"처럼 명시적으로 범위를 말한 경우에만 사용합니다.
     - area와 pyeong을 동시에 전달하지 마세요.
 
     주요 예시:
@@ -170,6 +184,16 @@ def build_price_trend_tool(session: Session):
     - "서초구 하락률 높은 아파트 10곳"
       -> analysis_type="ranking", target_type="region", target_name="서초구",
          rank_by="change_rate", direction="asc", limit=10
+
+    - "대치동 84㎡ 2024년 상승률 순위 3개만"
+      -> analysis_type="ranking", target_type="region", target_name="대치동",
+         area=84, start_date="2024-01-01", end_date="2024-12-31",
+         rank_by="change_rate", direction="desc", limit=3
+
+    - "송파구 2018년부터 2020년까지 많이 내린 단지 TOP 7"
+      -> analysis_type="ranking", target_type="region", target_name="송파구",
+         start_date="2018-01-01", end_date="2020-12-31",
+         rank_by="change_rate", direction="asc", limit=7
 
     simple_lookup으로 보내야 하는 질문:
     - "은마 최근 실거래가", "은마 거래내역", "은마 위치", "은마 주소"는 단순조회입니다.
