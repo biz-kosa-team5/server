@@ -31,6 +31,18 @@ def test_chatbot_splitter_separates_explicit_connectors():
   ]
 
 
+def test_chatbot_splitter_merges_dependent_recommendation_comparison_clause():
+  assert split_question("서초구 아파트 3개 추천해줘 그리고 그 3개 비교해줘") == [
+    "서초구 아파트 3개 추천해줘 그리고 그 3개 비교해줘",
+  ]
+  assert split_question("강남구 아파트 추천해줘 그리고 그 후보 가격 비교해줘") == [
+    "강남구 아파트 추천해줘 그리고 그 후보 가격 비교해줘",
+  ]
+  assert split_question("대형마트 근처 서초구 아파트 추천해주라 3개 정도 그리고 그 3개 비교까지 해줘") == [
+    "대형마트 근처 서초구 아파트 추천해주라 3개 정도 그리고 그 3개 비교까지 해줘",
+  ]
+
+
 def test_chatbot_splitter_keeps_intent_verbs_inside_fragment():
   assert split_question("30억 이하 아파트 추천하고 매매 계약 법률 알려줘") == [
     "30억 이하 아파트 추천하고 매매 계약 법률 알려줘",
@@ -608,6 +620,182 @@ def test_chatbot_query_uses_direct_fallback_when_supervisor_misses_multi_handler
   assert execution["handlerCalls"] == ["recommendation", "comparison"]
   assert payload["result"]["results"][1]["dependsOn"] == "recommendation_agent"
   assert payload["result"]["results"][1]["result"]["handler"] == "comparison"
+
+
+def test_chatbot_query_keeps_recommendation_reference_question_as_one_dependent_task(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run_with_trace(self, _question):
+      return (
+        {
+          "success": True,
+          "handler": "recommendation",
+          "results": [{"complexName": "잠실엘스"}],
+        },
+        {
+          "path": "specialist_tool",
+          "selectedAgent": "recommendation_agent",
+        },
+      )
+
+  def fake_run_recommendation(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "question": text,
+      "results": [
+        {"complexName": "서초그랑자이"},
+        {"complexName": "래미안서초에스티지"},
+        {"complexName": "반포자이"},
+      ],
+    }
+
+  def fake_run_comparison(_session, slots, _text):
+    return {
+      "success": True,
+      "handler": "comparison",
+      "criteria": {"apartment_names": slots["apartment_names"]},
+      "results": [
+        {"name": name}
+        for name in slots["apartment_names"]
+      ],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", fake_run_comparison)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "근처에 대형마트가 있는 서초구 아파트를 추천해주라 3개 정도 그리고 그 3개를 비교까지 해주면 좋겠어"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert payload["executionSummary"] == {
+    "total": 1,
+    "succeeded": 1,
+    "failed": 0,
+  }
+  assert len(payload["fragments"]) == 1
+  assert payload["fragments"][0]["execution"]["path"] == "direct_dependent_features"
+  assert payload["result"]["results"][1]["result"]["criteria"]["apartment_names"] == [
+    "서초그랑자이",
+    "래미안서초에스티지",
+    "반포자이",
+  ]
+
+
+def test_chatbot_query_composes_dependent_recommendation_comparison_answer(monkeypatch):
+  monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", ChatbotAnswerComposer)
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run_with_trace(self, _question):
+      return (
+        {
+          "success": True,
+          "handler": "recommendation",
+          "results": [{"complexName": "서초그랑자이"}],
+        },
+        {
+          "path": "specialist_tool",
+          "selectedAgent": "recommendation_agent",
+        },
+      )
+
+  def fake_run_recommendation(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "question": text,
+      "results": [
+        {
+          "complexName": "서초그랑자이",
+          "latestDealAmount": 350000,
+          "unitCnt": 1446,
+          "useDate": "2021-06-01",
+          "infrastructure": {
+            "nearestStation": {"name": "교대역", "distanceM": 520},
+            "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+          },
+        },
+        {
+          "complexName": "래미안서초에스티지",
+          "latestDealAmount": 320000,
+          "unitCnt": 421,
+          "useDate": "2016-12-01",
+          "infrastructure": {
+            "nearestStation": {"name": "강남역", "distanceM": 610},
+            "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+          },
+        },
+        {
+          "complexName": "반포자이",
+          "latestDealAmount": 410000,
+          "unitCnt": 3410,
+          "useDate": "2009-03-01",
+          "infrastructure": {
+            "nearestStation": {"name": "고속터미널역", "distanceM": 700},
+            "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+          },
+        },
+      ],
+    }
+
+  def fake_run_comparison(_session, slots, _text):
+    return {
+      "success": True,
+      "handler": "comparison",
+      "criteria": {"apartment_names": slots["apartment_names"]},
+      "results": [
+        {
+          "complexName": "서초그랑자이",
+          "latestDealAmount": 350000,
+          "unitCnt": 1446,
+          "builtYear": 2021,
+          "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+        },
+        {
+          "complexName": "래미안서초에스티지",
+          "latestDealAmount": 320000,
+          "unitCnt": 421,
+          "builtYear": 2016,
+          "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+        },
+        {
+          "complexName": "반포자이",
+          "latestDealAmount": 410000,
+          "unitCnt": 3410,
+          "builtYear": 2009,
+          "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+        },
+      ],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", fake_run_comparison)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "근처에 대형마트가 있는 서초구 아파트를 추천해주라 3개 정도 그리고 그 3개를 비교까지 해주면 좋겠어"},
+  )
+
+  assert response.status_code == 200
+  answer = response.json()["answer"]
+  assert "먼저 조건에 맞는 추천 후보 3개입니다." in answer
+  assert "이어서 위 추천 후보 3개를 비교하면 다음과 같습니다." in answer
+  assert "종합하면" in answer
+  for forbidden in ("전문 에이전트", "handler", "tool", "execution", "planType", "좌표"):
+    assert forbidden not in answer
 
 
 def test_chatbot_query_uses_direct_fallback_when_supervisor_misses_ambiguous_price_trend(monkeypatch):

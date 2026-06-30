@@ -28,6 +28,22 @@ ORDINAL_PATTERNS: tuple[tuple[re.Pattern[str], int], ...] = (
   (re.compile(r"(세\s*번째\s*(?:거|것|단지)?|3\s*번\s*(?:거|것|단지)?)"), 3),
 )
 PARTIAL_PATTERN = re.compile(r"그중\s+(?P<name>[가-힣A-Za-z0-9()]+?)(?P<particle>만|은|는|이|가|을|를)?(?=\s|$)")
+CONTEXT_ITEM_MENTION_PATTERN = re.compile(
+  r"^(?P<mention>.+?)(?P<particle>으로|로|은|는|이|가|을|를)?(?P<rest>\s*(?:봐줘|해줘|알려줘|보여줘|비교해줘|비교|최근.*|시세.*|위치.*|실거래.*))$"
+)
+MENTION_STOPWORDS = {
+  "그중",
+  "그거",
+  "거기",
+  "단지",
+  "아파트",
+  "봐줘",
+  "해줘",
+  "알려줘",
+  "보여줘",
+  "비교",
+  "비교해줘",
+}
 
 
 def normalize_conversation_context(value: Any) -> dict[str, Any] | None:
@@ -137,6 +153,10 @@ def resolve_contextual_question(question: str, context: dict[str, Any] | None) -
   if partial is not None:
     return partial
 
+  mention = resolve_context_item_mention(text, context)
+  if mention is not None:
+    return mention
+
   active_region = resolve_active_region_reference(text, context)
   if active_region is not None:
     return active_region
@@ -183,6 +203,7 @@ def resolve_partial_name_reference(question: str, context: dict[str, Any]) -> tu
     item
     for item in items
     if partial in normalize_match_text(item.get("complexName"))
+    or partial in normalize_match_text(item.get("address"))
   ]
   if len(matches) != 1:
     reason = "partial_name_ambiguous" if len(matches) > 1 else "partial_name_not_found"
@@ -194,6 +215,42 @@ def resolve_partial_name_reference(question: str, context: dict[str, Any]) -> tu
   return (
     f"{question[:match.start()]}{target}{particle}{question[match.end():]}",
     applied_resolution("partial_item_name", match.group(0), target),
+  )
+
+
+def resolve_context_item_mention(question: str, context: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+  items = context.get("items") if isinstance(context.get("items"), list) else []
+  if not items:
+    return None
+  if any(token in question for token in ACTIVE_COMPLEX_REFERENCES + REGION_REFERENCES + ("거기", "그중")):
+    return None
+
+  match = CONTEXT_ITEM_MENTION_PATTERN.search(question)
+  if match is None:
+    return None
+
+  mention = clean_text(match.group("mention"))
+  tokens = mention_tokens(mention)
+  if not tokens:
+    return None
+
+  matches = [
+    item
+    for item in items
+    if item_matches_tokens(item, tokens)
+  ]
+  if len(matches) != 1:
+    return None
+
+  target = clean_text(matches[0].get("complexName"))
+  if not target:
+    return question, inactive_resolution("context_item_mention_not_found")
+
+  particle = match.group("particle") or ""
+  rest = match.group("rest") or ""
+  return (
+    f"{target}{particle}{rest}",
+    applied_resolution("context_item_mention", mention, target),
   )
 
 
@@ -276,6 +333,34 @@ def item_by_index(items: list[Any], ordinal: int) -> dict[str, Any] | None:
   return None
 
 
+def mention_tokens(value: str) -> list[str]:
+  tokens = []
+  for raw_token in re.findall(r"[가-힣A-Za-z0-9()]+", value):
+    token = normalize_match_text(strip_particle(raw_token))
+    if len(token) < 2 or token in MENTION_STOPWORDS:
+      continue
+    tokens.append(token)
+  return tokens
+
+
+def item_matches_tokens(item: dict[str, Any], tokens: list[str]) -> bool:
+  combined = normalize_match_text(
+    " ".join([
+      clean_text(item.get("complexName")),
+      clean_text(item.get("address")),
+    ])
+  )
+  return bool(combined) and all(token in combined for token in tokens)
+
+
+def strip_particle(value: str) -> str:
+  text = clean_text(value)
+  for particle in ("으로", "로", "은", "는", "이", "가", "을", "를", "만"):
+    if text.endswith(particle) and len(text) > len(particle) + 1:
+      return text.removesuffix(particle)
+  return text
+
+
 def build_conversation_memory_patch(response_dict: dict[str, Any]) -> dict[str, Any] | None:
   domain_results = [
     result
@@ -314,6 +399,8 @@ def build_conversation_memory_patch(response_dict: dict[str, Any]) -> dict[str, 
 
 
 def is_memory_result(result: dict[str, Any]) -> bool:
+  if result_candidate_rows(result):
+    return True
   if result.get("success") is not True:
     return False
   handler = clean_text(result.get("handler"))
@@ -376,6 +463,13 @@ def active_complex_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def memory_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
+  candidates = result_candidate_rows(result)
+  if candidates:
+    return [
+      memory_item_from_row(row, index)
+      for index, row in enumerate(candidates[:MAX_MEMORY_ITEMS], start=1)
+    ]
+
   handler = clean_text(result.get("handler"))
   if handler == "simple_lookup":
     query_type = clean_text(result.get("query_type"))
@@ -394,6 +488,18 @@ def memory_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
     if active_complex:
       return [compact_dict({"index": 1, "kind": "complex", **active_complex})]
   return []
+
+
+def result_candidate_rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+  rows = list_rows(result.get("candidates"))
+  if rows:
+    return rows
+
+  candidate_groups = list_rows(result.get("candidateGroups"))
+  candidates: list[dict[str, Any]] = []
+  for group in candidate_groups:
+    candidates.extend(list_rows(group.get("candidates")))
+  return candidates
 
 
 def first_complex_from_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:

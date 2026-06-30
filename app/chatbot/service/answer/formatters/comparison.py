@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .common import clean_text, dict_value, first_non_empty, format_price, list_value
+from .common import clean_text, dict_value, first_non_empty, format_candidate_groups, format_price, list_value
 from .recommendation import format_poi, format_poi_list, format_search_results, has_search_results
 
 
@@ -30,6 +30,22 @@ def compact_comparison_results(results: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def format_comparison_result(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_groups(
+    list_value(result.get("candidateGroups")),
+    resolved_names=[
+      clean_text(name)
+      for name in list_value(result.get("resolvedApartmentNames"))
+      if clean_text(name)
+    ],
+    resolution_notes=[
+      clean_text(note)
+      for note in list_value(result.get("resolutionNotes"))
+      if clean_text(note)
+    ],
+  )
+  if candidate_answer:
+    return candidate_answer
+
   results = [dict_value(item) for item in list_value(result.get("results"))]
   missing_names = [str(name) for name in list_value(result.get("missingApartmentNames")) if str(name)]
   prefix_lines = []

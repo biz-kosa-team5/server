@@ -10,6 +10,10 @@ from typing import Any
 def format_failure_reason(result: Any) -> str:
   if not isinstance(result, dict):
     return ""
+  candidates = list_value(result.get("candidates"))
+  if candidates:
+    target = result_target_name(result)
+    return format_candidate_selection(target, candidates)
   message = clean_text(result.get("message"))
   if message:
     return message
@@ -170,3 +174,104 @@ def dedupe(values: list[str]) -> list[str]:
     seen.add(value)
     result.append(value)
   return result
+
+
+def format_candidate_selection(
+  target_name: str,
+  candidates: list[Any],
+  *,
+  intro: str | None = None,
+) -> str:
+  rows = [
+    dict_value(item)
+    for item in candidates[:5]
+    if isinstance(item, dict)
+  ]
+  if not rows:
+    return ""
+
+  target = clean_text(target_name) or "입력한 단지명"
+  lines = [
+    intro or f"{target}로 검색되는 단지가 여러 개 있습니다.",
+  ]
+  for index, row in enumerate(rows, start=1):
+    lines.append(f"{index}. {format_candidate_row(row)}")
+  lines.append("어느 단지인지 번호나 동/구를 함께 알려주세요.")
+  return "\n".join(lines)
+
+
+def format_candidate_groups(
+  groups: list[Any],
+  *,
+  resolved_names: list[str] | None = None,
+  resolution_notes: list[str] | None = None,
+) -> str:
+  valid_groups = [
+    dict_value(group)
+    for group in groups
+    if isinstance(group, dict)
+  ]
+  if not valid_groups:
+    return ""
+
+  lines: list[str] = []
+  for note in resolution_notes or []:
+    note_text = clean_text(note)
+    if note_text:
+      lines.append(note_text)
+
+  if resolved_names:
+    names = ", ".join(name for name in resolved_names if name)
+    if names:
+      lines.append(f"{names}는 단지로 확인했습니다.")
+
+  for group in valid_groups:
+    candidates = list_value(group.get("candidates"))
+    target = clean_text(group.get("input")) or "입력한 단지명"
+    if candidates:
+      lines.append(format_candidate_selection(target, candidates))
+      continue
+    message = clean_text(group.get("message"))
+    if message:
+      lines.append(f"{target}: {message}")
+
+  lines.append("비교를 진행하려면 모호한 단지를 먼저 골라주세요.")
+  return "\n".join(dedupe(lines))
+
+
+def format_candidate_row(row: dict[str, Any]) -> str:
+  name = candidate_name(row)
+  address = clean_text(row.get("address"))
+  if address:
+    label = address_label(address)
+    prefix = f"{label} " if label else ""
+    return f"{prefix}{name} - {address}"
+  return name or "이름 미상"
+
+
+def candidate_name(row: dict[str, Any]) -> str:
+  return first_non_empty([
+    clean_text(row.get("complex_name")),
+    clean_text(row.get("complexName")),
+    clean_text(row.get("name")),
+    clean_text(row.get("trade_name")),
+    clean_text(row.get("tradeName")),
+  ])
+
+
+def address_label(address: str) -> str:
+  parts = address.split()
+  for part in reversed(parts):
+    if part.endswith("동") or part.endswith("구"):
+      return part
+  return parts[-1] if parts else ""
+
+
+def result_target_name(result: dict[str, Any]) -> str:
+  criteria = dict_value(result.get("criteria"))
+  slots = dict_value(result.get("slots"))
+  return first_non_empty([
+    clean_text(criteria.get("target_name")),
+    clean_text(criteria.get("complex_name")),
+    clean_text(slots.get("target_name")),
+  ])

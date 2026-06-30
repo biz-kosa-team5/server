@@ -19,6 +19,7 @@ from app.config import load_environment
 
 from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
+from .formatters.sequential import format_dependent_recommendation_comparison_answer
 from .observations import build_answer_observations
 from .prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
 
@@ -27,8 +28,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
 MAX_FINAL_ANSWER_LENGTH = 1000
+MAX_SEQUENCE_ANSWER_LENGTH = 5000
 MAX_RECOMMENDATION_ANSWER_LENGTH = 1000
 FORBIDDEN_ANSWER_TERMS = (
+  "전문 에이전트",
   "handler",
   "agent",
   "tool",
@@ -36,6 +39,12 @@ FORBIDDEN_ANSWER_TERMS = (
   "planType",
   "dedupe",
   "fragment",
+  "raw JSON",
+  "latitude",
+  "longitude",
+  "위도",
+  "경도",
+  "좌표",
 )
 COORDINATE_PATTERNS = (
   re.compile(
@@ -68,6 +77,9 @@ class ChatbotAnswerComposer:
   async def compose(self, context: ChatbotAnswerContext) -> str:
     # tool 결과가 실패했거나 LLM을 사용할 수 없으면 fallback 답변으로 안전하게 내려간다.
     self.last_usage = None
+    sequence_answer = format_dependent_recommendation_comparison_answer(context.result)
+    if sequence_answer:
+      return finalize_sequence_answer_text(sequence_answer, context)
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -229,14 +241,23 @@ def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
     if has_forbidden_answer_terms(fallback):
       fallback = remove_forbidden_sentences(fallback)
     text = fallback
-  recommendation_text = readable_recommendation_answer(context)
-  if recommendation_text:
-    return truncate_answer(
-      remove_markdown_formatting(recommendation_text),
-      MAX_RECOMMENDATION_ANSWER_LENGTH,
-    )
+  candidate_fallback = candidate_selection_fallback(context)
+  if candidate_fallback and should_replace_with_candidate_fallback(text, context):
+    return truncate_answer(candidate_fallback)
+  if not candidate_fallback and (recommendation_text := readable_recommendation_answer(context)):
+    return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
   text = truncate_answer(text)
   text = ensure_required_recommendation_notes(text, context)
+  return text or context.message or "질문을 처리했습니다."
+
+
+def finalize_sequence_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
+  text = normalize_answer_whitespace(answer)
+  text = remove_coordinate_text(text)
+  if has_forbidden_answer_terms(text):
+    fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+    text = remove_forbidden_sentences(fallback) if has_forbidden_answer_terms(fallback) else fallback
+  text = truncate_answer(text, MAX_SEQUENCE_ANSWER_LENGTH)
   return text or context.message or "질문을 처리했습니다."
 
 
@@ -280,6 +301,97 @@ def remove_forbidden_sentences(answer: str) -> str:
     if not has_forbidden_answer_terms(sentence)
   ]
   return normalize_answer_whitespace(" ".join(kept))
+
+
+def candidate_selection_fallback(context: ChatbotAnswerContext) -> str:
+  if not context_has_candidates(context):
+    return ""
+  fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+  if has_forbidden_answer_terms(fallback):
+    fallback = remove_forbidden_sentences(fallback)
+  return fallback
+
+
+def should_replace_with_candidate_fallback(answer: str, context: ChatbotAnswerContext) -> bool:
+  candidates = candidate_rows_from_context(context)
+  if not candidates:
+    return False
+  if is_missing_only_candidate_answer(answer):
+    return True
+  if context_has_candidate_groups(context) and looks_like_confirmed_comparison(answer):
+    return True
+  return not enough_candidate_names_in_answer(answer, candidates)
+
+
+def context_has_candidates(context: ChatbotAnswerContext) -> bool:
+  return bool(candidate_rows_from_context(context))
+
+
+def context_has_candidate_groups(context: ChatbotAnswerContext) -> bool:
+  return any(
+    isinstance(result, dict)
+    and isinstance(result.get("candidateGroups"), list)
+    and bool(result.get("candidateGroups"))
+    for result in iter_results(context.result)
+  )
+
+
+def candidate_rows_from_context(context: ChatbotAnswerContext) -> list[dict[str, Any]]:
+  rows: list[dict[str, Any]] = []
+  for result in iter_results(context.result):
+    if not isinstance(result, dict):
+      continue
+    rows.extend([
+      item
+      for item in result.get("candidates", [])
+      if isinstance(item, dict)
+    ] if isinstance(result.get("candidates"), list) else [])
+    groups = result.get("candidateGroups")
+    if isinstance(groups, list):
+      for group in groups:
+        if not isinstance(group, dict):
+          continue
+        rows.extend([
+          item
+          for item in group.get("candidates", [])
+          if isinstance(item, dict)
+        ] if isinstance(group.get("candidates"), list) else [])
+  return rows
+
+
+def is_missing_only_candidate_answer(answer: str) -> bool:
+  if any(token in answer for token in ("여러", "후보", "어느", "선택", "골라")):
+    return False
+  return any(token in answer for token in ("찾을 수 없습니다", "찾지 못했습니다", "없습니다", "데이터가 부족합니다"))
+
+
+def looks_like_confirmed_comparison(answer: str) -> bool:
+  if any(token in answer for token in ("여러", "후보", "어느", "선택", "골라")):
+    return False
+  return any(token in answer for token in ("비교하면", "비교 결과", "기준으로 비교", "더 가깝", "더 비싸", "더 저렴"))
+
+
+def enough_candidate_names_in_answer(answer: str, candidates: list[dict[str, Any]]) -> bool:
+  names = dedupe_candidate_names(candidates)
+  if not names:
+    return True
+  required = min(2, len(names))
+  mentioned = sum(1 for name in names[:5] if name and name in answer)
+  return mentioned >= required
+
+
+def dedupe_candidate_names(candidates: list[dict[str, Any]]) -> list[str]:
+  names = []
+  seen = set()
+  for candidate in candidates:
+    for key in ("complex_name", "complexName", "name", "trade_name", "tradeName"):
+      name = str(candidate.get(key) or "").strip()
+      if not name or name in seen:
+        continue
+      seen.add(name)
+      names.append(name)
+      break
+  return names
 
 
 def truncate_answer(answer: str, max_length: int = MAX_FINAL_ANSWER_LENGTH) -> str:
