@@ -41,7 +41,14 @@ EDUCATION_RECOMMENDATION_SIGNALS = (
   "아이 키우",
   "자녀",
   "육아",
+  "학군",
   "학군 좋은",
+  "학교 근처",
+  "학교근처",
+  "초등학교 근처",
+  "초등학교근처",
+  "초등 근처",
+  "초등근처",
   "초등학교 도보권",
   "학교 도보권",
   "초품아",
@@ -145,6 +152,8 @@ def build_execution_plan(text: str) -> ExecutionPlan:
   if not question:
     return supervisor_plan("empty_question")
 
+  # 발표 흐름 기준: 여기서 사용자 질문을 추천/비교/조회/RAG 중 어느 기능으로 보낼지 결정한다.
+  # 구체적인 복합 질문을 먼저 잡고, 마지막에 단일 기능 질문을 판단한다.
   nearby_comparison_plan = build_nearby_candidate_comparison_plan(question)
   if nearby_comparison_plan is not None:
     return nearby_comparison_plan
@@ -187,6 +196,7 @@ def build_execution_plan(text: str) -> ExecutionPlan:
 
 
 def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
+  # "추천 후보를 비교"처럼 앞 단계 결과가 뒤 단계 입력이 되는 질문 처리.
   if not has_recommendation_signal(text):
     return None
   if not has_comparison_signal(text):
@@ -476,6 +486,7 @@ def build_independent_multi_feature_plan(text: str) -> ExecutionPlan | None:
 
 
 def build_single_feature_plan(text: str) -> ExecutionPlan | None:
+  # 가장 일반적인 흐름: 추천이면 recommendation, 비교면 comparison처럼 handler 하나만 선택한다.
   handlers = detected_handlers(text)
   if len(handlers) == 1:
     handler = handlers[0]
@@ -557,6 +568,8 @@ def price_trend_slot_overrides(text: str) -> dict[str, Any]:
 
 
 def detected_handlers(text: str) -> list[str]:
+  # 질문 안의 신호 단어를 보고 실행 가능한 handler 후보를 모은다.
+  # 예: "추천" -> recommendation, "비교" -> comparison, "시세 추이" -> price_trend.
   candidates: list[tuple[int, str]] = []
 
   if has_recommendation_signal(text):
@@ -575,7 +588,7 @@ def detected_handlers(text: str) -> list[str]:
     for _, handler in sorted(candidates, key=lambda item: (item[0], item[1]))
   ]
   if "comparison" in ordered:
-    ordered = [handler for handler in ordered if handler != "simple_lookup"]
+    ordered = [handler for handler in ordered if handler not in {"simple_lookup", "recommendation"}]
   return dedupe_preserve_order(ordered)
 
 
@@ -669,7 +682,12 @@ def has_recommendation_signal(text: str) -> bool:
 
 
 def has_education_recommendation_signal(text: str) -> bool:
-  return any(signal in text for signal in EDUCATION_RECOMMENDATION_SIGNALS)
+  if any(signal in text for signal in EDUCATION_RECOMMENDATION_SIGNALS):
+    return True
+  return (
+    any(keyword in text for keyword in ("초등학교", "초등", "학교", "교육"))
+    and any(keyword in text for keyword in ("근처", "주변", "인근", "가까운", "도보권"))
+  )
 
 
 def has_comparison_signal(text: str) -> bool:

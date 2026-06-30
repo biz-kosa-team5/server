@@ -447,6 +447,38 @@ def test_chatbot_query_marks_direct_feature_execution(monkeypatch):
   }
 
 
+def test_chatbot_query_routes_short_school_nearby_question_directly(monkeypatch):
+  captured = {}
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      raise AssertionError("short education recommendation should not initialize supervisor")
+
+  def fake_run_recommendation(_session, slots, text):
+    captured["slots"] = slots
+    captured["text"] = text
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "results": [],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "초등학교근처"},
+  )
+
+  assert response.status_code == 200
+  assert captured["text"] == "초등학교근처"
+  assert captured["slots"]["school_type"] == "초등학교"
+  assert captured["slots"]["sort_by"] == "school_distance_asc"
+  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
+
+
 def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
   monkeypatch.delenv("OPENAI_API_KEY", raising=False)
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", ChatbotAnswerComposer)
@@ -502,7 +534,7 @@ def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
 
   assert response.status_code == 200
   payload = response.json()
-  assert payload["answer"].startswith("조회된 데이터 기준으로는 다음 후보를 우선 검토할 수 있습니다.")
+  assert payload["answer"].startswith("조건에 맞는 추천 후보입니다.")
   assert "잠실엘스" in payload["answer"]
   assert "28억원" in payload["answer"]
   assert "잠실역" in payload["answer"]

@@ -48,6 +48,8 @@ async def execute_plan(
   supervisor_provider: SupervisorProvider | None = None,
   supervisor_initialization_failed: bool = False,
 ) -> OrchestrationResult | None:
+  # planner가 만든 ExecutionPlan을 실제 함수 호출로 바꾸는 실행 분기점이다.
+  # planner가 "무엇을 할지" 정하면, orchestrator는 "어떻게 실행할지"를 담당한다.
   if plan.plan_type == "supervisor_llm":
     return None
   if plan.plan_type == "single_feature":
@@ -146,6 +148,8 @@ def execute_dependent_multi_feature(
   text: str,
   plan: ExecutionPlan,
 ) -> OrchestrationResult:
+  # 추천 결과를 먼저 만들고, 그 추천 후보 이름들을 다시 comparison 입력으로 넘기는 흐름이다.
+  # 예: "잠실역 근처 아파트 추천하고 후보 비교해줘".
   recommendation_step = plan.steps[0]
   comparison_step = plan.steps[1]
   recommendation_result = run_direct_step(session, recommendation_step, text) or dependency_failed_result(
@@ -274,10 +278,12 @@ def run_direct_step(session: Session, step: FeatureStep, text: str) -> dict[str,
     return result
 
   if step.handler == "recommendation":
+    # 추천은 자연어를 recommendation slots로 변환한 뒤 추천 service에 넘긴다.
     slots = merge_slots(extract_recommendation_slots(query), step.slot_overrides)
     return run_recommendation(session, slots, query)
 
   if step.handler == "comparison":
+    # 비교는 자연어에서 아파트명/비교 기준을 뽑고 comparison service에 넘긴다.
     slots = merge_slots(extract_compare_slots(query), step.slot_overrides)
     return run_comparison(session, slots, query)
 

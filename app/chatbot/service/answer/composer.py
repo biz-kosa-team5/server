@@ -65,6 +65,7 @@ class ChatbotAnswerComposer:
     self._api_key = api_key
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
+    # tool 결과가 실패했거나 LLM을 사용할 수 없으면 fallback 답변으로 안전하게 내려간다.
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -170,6 +171,7 @@ def extract_response_content(response: Any) -> str:
 
 
 def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
+  # 최종 답변에서 내부 용어(handler/tool 등)와 좌표 문장을 제거하고, 추천 답변은 목록형으로 고정한다.
   text = normalize_answer_whitespace(answer)
   text = remove_coordinate_text(text)
   if has_forbidden_answer_terms(text):
@@ -250,6 +252,7 @@ def truncate_multiline_answer(answer: str, max_length: int) -> str:
 
 
 def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
+  # 추천 결과는 LLM 문단 그대로 쓰지 않고, 서버에서 번호 목록 형태로 재구성해 가독성을 맞춘다.
   recommendation_results = recommendation_observations(context)
   if not recommendation_results:
     return ""

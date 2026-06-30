@@ -30,6 +30,7 @@ class RecommendationService:
   def run(self, session: Session, slots: dict[str, Any], text: str = "") -> dict[str, Any]:
     """추천 후보 조회 observation을 챗봇 tool 응답으로 만든다."""
     slots = dict(slots)
+    # 재건축/투자 질문이면 일반 추천 결과에 공개 검색 기반 참고 정보를 추가로 붙인다.
     slots["_include_redevelopment_context"] = (
       should_search_redevelopment_context(text)
       or slots.get("redevelopment_interest") is True
@@ -40,9 +41,12 @@ class RecommendationService:
   def recommend_apartments_by_filters(self, session: Session, slots: dict[str, Any]) -> dict[str, Any]:
     """슬롯 조건에 맞는 아파트 추천 후보를 조회한다."""
     normalized = normalize_slots(slots)
+    # 1차 후보는 지역/평형/신축/세대수 같은 아파트 자체 조건으로 좁힌다.
     candidates = self._find_base_candidates(session, normalized)
+    # 최근 거래가가 있어야 가격/평형/거래가 조건을 함께 판단할 수 있다.
     filtered = self._filter_by_latest_trade(session, candidates, normalized)
 
+    # station/school/commercial/medical POI 그룹을 찾고, 이후 아파트와의 거리를 계산한다.
     poi_groups = find_poi_groups(
       session,
       clean_text(normalized.get("station_name")),
@@ -56,6 +60,7 @@ class RecommendationService:
 
     filtered = self._filter_by_poi_groups(session, filtered, poi_groups, normalized)
     if not filtered and should_expand_default_radius(normalized, poi_groups):
+      # 사용자가 반경을 직접 말하지 않은 "근처" 질문은 800m 결과가 없을 때만 한 번 확장한다.
       normalized = dict(normalized)
       normalized["radius_m"] = 1500
       expanded_items = self._filter_by_latest_trade(session, candidates, normalized)
@@ -102,6 +107,7 @@ class RecommendationService:
 
   def _build_results(self, session: Session, items: list[dict[str, Any]], slots: dict[str, Any]) -> list[dict[str, Any]]:
     """인프라 정보를 붙이고 정렬/limit을 적용해 최종 추천 결과를 만든다."""
+    # 각 후보에 가까운 역/학교/생활편의시설 정보를 붙인 뒤 정렬하고 최대 5개로 제한한다.
     enriched = [enrich_infrastructure(session, item, slots) for item in items]
     enriched = sort_query_results(enriched, clean_text(slots.get("sort_by")))
     requested_limit = optional_int(slots.get("limit"))

@@ -129,11 +129,13 @@ def test_recommendation_builds_limited_actions_and_list_artifact():
       recommendation_item(1002, "잠실엘스", 37.5124, 127.0821, "31.0억원"),
       recommendation_item(1001, "래미안대치팰리스", 37.4988, 127.0652, "43.5억원"),
       recommendation_item(1004, "강남센트럴아이파크", 37.4847, 127.0666, "25.0억원"),
-      recommendation_item(9999, "초과 후보", 37.4, 127.0, "10.0억원"),
+      recommendation_item(1005, "추천후보4", 37.4, 127.0, "10.0억원"),
+      recommendation_item(1006, "추천후보5", 37.41, 127.01, "11.0억원"),
+      recommendation_item(9999, "초과 후보", 37.42, 127.02, "12.0억원"),
     ],
   })
 
-  assert len(ui_payload["uiActions"]) == 3
+  assert len(ui_payload["uiActions"]) == 5
   assert ui_payload["uiActions"][0]["id"] == "focus_map:complex:1002"
   artifact = ui_payload["uiArtifacts"][0]
   assert artifact["type"] == "recommendation_list"
@@ -141,6 +143,8 @@ def test_recommendation_builds_limited_actions_and_list_artifact():
     "잠실엘스",
     "래미안대치팰리스",
     "강남센트럴아이파크",
+    "추천후보4",
+    "추천후보5",
   ]
   assert artifact["items"][0]["actionId"] == "focus_map:complex:1002"
 
