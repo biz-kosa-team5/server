@@ -151,7 +151,18 @@ def test_service_returns_timeseries_observation():
     assert result["observation_type"] == ANALYSIS_TIMESERIES
     assert result["criteria"]["target_name"] == "Eunma"
     assert result["row_count"] == 1
-    assert result["summary_metrics"] == {"row_count": 1}
+    assert result["summary_metrics"] == {
+        "row_count": 1,
+        "first_period": "2025-01-01",
+        "last_period": "2025-01-01",
+        "first_avg_deal_amount": 100000,
+        "last_avg_deal_amount": 100000,
+        "first_avg_price_per_sqm": 1190.48,
+        "last_avg_price_per_sqm": 1190.48,
+        "first_trade_count": 2,
+        "last_trade_count": 2,
+        "total_trade_count": 2,
+    }
     assert result["rows"][0]["trade_count"] == 2
     assert dao.calls[0][0] == "timeseries"
 

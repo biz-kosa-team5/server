@@ -34,6 +34,7 @@ def compact_recommendation_results(results: list[dict[str, Any]]) -> list[dict[s
         "notes": infrastructure.get("notes", []),
       },
       "redevelopmentInfo": item.get("redevelopmentInfo", []),
+      "investmentSignals": item.get("investmentSignals", []),
     })
   return compacted
 
@@ -60,6 +61,7 @@ def format_recommendation_result(result: dict[str, Any]) -> str:
     education = format_poi(infrastructure.get("nearestEducation"))
     lifestyle = format_poi_list(infrastructure.get("nearbyLifestyle", []))
     redevelopment = format_search_results(item.get("redevelopmentInfo", []))
+    investment = format_investment_signals(item.get("investmentSignals", []))
     reasons = []
     if price:
       reasons.append(f"최근 거래가 {price}")
@@ -73,6 +75,8 @@ def format_recommendation_result(result: dict[str, Any]) -> str:
       reasons.append("주변 인프라는 좌표/POI 데이터로 확인되지 않음")
     if redevelopment:
       reasons.append(f"재개발/정비사업 검색결과 {redevelopment}")
+    if investment:
+      reasons.append(f"투자 참고 신호 {investment}")
     if item.get("unitCnt") is not None:
       reasons.append(f"{item['unitCnt']}세대")
     if item.get("useDate"):
@@ -82,7 +86,9 @@ def format_recommendation_result(result: dict[str, Any]) -> str:
     else:
       lines.append(f"{index}. {name}: 조회 결과에 포함된 후보입니다.")
 
-  if has_search_results(results):
+  if has_investment_signals(results):
+    lines.append("투자가치는 예측하지 않고 역세권, 준공연도, 공개 검색 결과 같은 확인 가능한 참고 신호만 제시했습니다.")
+  elif has_search_results(results):
     lines.append("학군은 평판이 아니라 가까운 교육시설 거리 기준이며, 미래 가격은 예측하지 않고 웹검색된 재개발/정비사업 공개 정보만 참고로 제시했습니다.")
   else:
     lines.append("생활편의는 800m 이내 DB POI 기준이며, 현재 응답 데이터에서 확인된 재개발/정비사업 정보는 없습니다.")
@@ -140,5 +146,25 @@ def format_search_results(values: Any) -> str | None:
   return " / ".join(titles) if titles else None
 
 
+def format_investment_signals(values: Any) -> str | None:
+  if not isinstance(values, list) or not values:
+    return None
+  formatted = []
+  for value in values[:3]:
+    if not isinstance(value, dict):
+      continue
+    label = clean_text(value.get("label"))
+    detail = clean_text(value.get("detail"))
+    if label and detail:
+      formatted.append(f"{label}({detail})")
+    elif label:
+      formatted.append(label)
+  return ", ".join(formatted) if formatted else None
+
+
 def has_search_results(results: list[dict[str, Any]]) -> bool:
   return any(item.get("redevelopmentInfo") for item in results)
+
+
+def has_investment_signals(results: list[dict[str, Any]]) -> bool:
+  return any(item.get("investmentSignals") for item in results)

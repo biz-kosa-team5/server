@@ -26,6 +26,7 @@ from app.chatbot.features.simple_lookup.dto import (
 BASE_DATE = date(2026, 6, 20)
 
 DEFAULT_TRADE_HISTORY_LIMIT = 5
+DEFAULT_REGION_TRADE_HISTORY_LIMIT = 5
 DEFAULT_PRICE_RECORD_LIMIT = 1
 DEFAULT_REGION_RANKING_LIMIT = 5
 MAX_LIMIT = 20
@@ -61,6 +62,10 @@ class SimpleLookupPolicy:
         return SimpleLookupCriteria(
             query_type=slots.query_type,
             target_name=target_name,
+            target_type=self._normalize_target_type(
+                query_type=slots.query_type,
+                target_name=target_name,
+            ),
             start_date=start_date,
             end_date=end_date,
             limit=self._normalize_limit(
@@ -229,8 +234,11 @@ class SimpleLookupPolicy:
         if value is not None:
             return min(value, MAX_LIMIT)
 
-        if query_type in {QUERY_TRADE_HISTORY, QUERY_REGION_TRADE_HISTORY}:
+        if query_type == QUERY_TRADE_HISTORY:
             return DEFAULT_TRADE_HISTORY_LIMIT
+
+        if query_type == QUERY_REGION_TRADE_HISTORY:
+            return DEFAULT_REGION_TRADE_HISTORY_LIMIT
 
         if query_type == QUERY_COMPLEX_PRICE_RECORD:
             return DEFAULT_PRICE_RECORD_LIMIT
@@ -264,3 +272,15 @@ class SimpleLookupPolicy:
             return value or PRICE_HIGHEST
 
         return None
+
+    def _normalize_target_type(
+        self,
+        *,
+        query_type: str,
+        target_name: str,
+    ) -> str | None:
+        if query_type != QUERY_REGION_TRADE_HISTORY:
+            return None
+        if target_name.endswith("동"):
+            return "neighborhood"
+        return "district"

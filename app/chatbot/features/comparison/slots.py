@@ -21,6 +21,8 @@ DEFAULT_METRICS = [
 
 
 def extract_compare_slots(question: str) -> dict[str, Any]:
+  # 비교 질문의 자연어를 apartment_names, metrics, school_type 같은 비교 슬롯으로 바꾼다.
+  # 예: "A랑 B 중 초등학교가 더 가까운 곳" -> 두 단지명 + nearest_school metric.
   text = question.strip()
   slots: dict[str, Any] = {
     "apartment_names": extract_apartment_names(text),
@@ -42,6 +44,7 @@ def extract_compare_slots(question: str) -> dict[str, Any]:
 
 
 def extract_apartment_names(text: str) -> list[str]:
+  # 먼저 쉼표/vs/slash 같은 명확한 구분자를 보고, 없으면 "랑/와/과/하고" 패턴을 본다.
   comma_names = split_apartment_names_by_separator(text)
   if len(comma_names) >= 2:
     return comma_names[:3]
@@ -66,11 +69,19 @@ def split_apartment_names_by_separator(text: str) -> list[str]:
 
 def clean_apartment_name(value: str) -> str:
   text = value.strip()
-  text = re.sub(
-    r"(가격|시세|거래가|평당가|세대수|대단지|신축|준공|연식|교통|역세권|역\s*접근성|접근성|학군|학교|교육|초등학교|초등|중학교|중등|고등학교|고등|상권|생활편의|편의시설|인프라|미래\s*가격\s*전망|가격\s*전망|미래|전망|재개발|재건축|정비사업|호재|비교|비교해줘|비교해봐|알려줘|해줘|해봐|줘|이랑|랑|와|과|하고|중\s*어디|중\s*더\s*가까운\s*곳|중|더\s*가까운\s*곳|가까운\s*곳|어디가\s*더\s*좋아|어디가\s*더|어디가|가까운지|가까워|야|\?)",
-    "",
+  text = re.sub(r"^(?:그럼|그러면|그니까|그러니까|음|저기|혹시)\s*", "", text)
+  text = re.sub(r"^(?:이랑|랑|와|과|하고)\s*", "", text)
+  text = re.sub(r"\s*(?:비교해줘|비교해봐|비교|알려줘|해줘|해봐|줘)\s*$", "", text)
+  text = re.sub(r"\s*(?:중\s*)?(?:어디가\s*)?(?:더\s*)?(?:가까운지|가까워|좋아)\??\s*$", "", text)
+  text = re.sub(r"\s*(?:야|인가|일까)\??\s*$", "", text)
+  text = re.split(
+    r"\s+(?:가격|시세|거래가|평당가|세대수|대단지|규모|신축|준공|연식|교통|역세권|역\s*접근성|접근성|학군|학교|교육|초등학교|초등|중학교|중등|고등학교|고등|상권|생활편의|편의시설|인프라|미래\s*가격\s*전망|가격\s*전망|미래|전망|재개발|재건축|정비사업|호재)",
     text,
-  )
+    maxsplit=1,
+  )[0]
+  text = re.sub(r"\s*(?:중|이랑|랑|와|과|하고)\s*$", "", text)
+  text = re.sub(r"\s*중\s*어디가\s*$", "", text)
+  text = re.sub(r"\s*(?:중\s*)?어디가\s*더\s*$", "", text)
   text = text.strip()
   text = re.sub(r"\s+(이|가|은|는)$", "", text).strip()
   if text.endswith("이") and not text.endswith("자이"):
@@ -94,6 +105,8 @@ def extract_infra_preferences(text: str) -> list[str]:
 
 
 def extract_metrics(text: str) -> list[str]:
+  # 사용자가 말한 비교 기준을 metric 목록으로 변환한다.
+  # 기준이 없으면 가격/평형/세대수/연식/역/학교를 기본 비교한다.
   metrics: list[str] = []
 
   if any(keyword in text for keyword in ("가격", "시세", "거래가", "평당가")):

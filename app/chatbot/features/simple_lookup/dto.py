@@ -89,6 +89,7 @@ class SimpleLookupCriteria(BaseModel):
 
     query_type: QueryType
     target_name: str
+    target_type: str | None = None
 
     area_min: float | None = None
     area_max: float | None = None

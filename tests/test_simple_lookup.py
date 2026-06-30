@@ -11,6 +11,7 @@ from app.chatbot.features.simple_lookup.dto import (
     QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
     QUERY_REGION_PRICE_RANKING,
+    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
     SimpleLookupCriteria,
     SimpleLookupSlots,
@@ -319,6 +320,14 @@ def test_extract_simple_lookup_slots_uses_recent_count_as_limit():
     assert slots["limit"] == 5
 
 
+def test_extract_simple_lookup_slots_routes_region_trade_history_with_count_unit():
+    slots = extract_simple_lookup_slots("대치동 최신 실거래가 3개 뽑아줘")
+
+    assert slots["query_type"] == QUERY_REGION_TRADE_HISTORY
+    assert slots["target_name"] == "대치동"
+    assert slots["limit"] == 3
+
+
 def test_run_simple_lookup_period_filter_works_on_sqlite_fixture():
     ensure_initialized()
 
@@ -337,3 +346,45 @@ def test_run_simple_lookup_period_filter_works_on_sqlite_fixture():
     assert result["success"] is True
     assert result["criteria"]["target_name"] == "래미안대치팰리스"
     assert result["data"]
+
+
+def test_run_simple_lookup_returns_neighborhood_latest_trades_from_sqlite_fixture():
+    ensure_initialized()
+
+    with SessionLocal() as session:
+        result = run_simple_lookup(
+            session,
+            {
+                "query_type": QUERY_REGION_TRADE_HISTORY,
+                "target_name": "대치동",
+                "limit": 3,
+            },
+            "대치동 최신 실거래가 3개 뽑아줘",
+        )
+
+    assert result["handler"] == "simple_lookup"
+    assert result["success"] is True
+    assert result["query_type"] == QUERY_REGION_TRADE_HISTORY
+    assert result["criteria"]["target_name"] == "대치동"
+    assert result["criteria"]["target_type"] == "neighborhood"
+    assert [row["trade_id"] for row in result["data"]] == [5003, 5002, 5001]
+    assert all(row["complex_name"] == "래미안대치팰리스" for row in result["data"])
+
+
+def test_run_simple_lookup_returns_district_latest_trades_from_sqlite_fixture():
+    ensure_initialized()
+
+    with SessionLocal() as session:
+        result = run_simple_lookup(
+            session,
+            {
+                "query_type": QUERY_REGION_TRADE_HISTORY,
+                "target_name": "강남구",
+                "limit": 3,
+            },
+            "강남구 최신 실거래 3건 보여줘",
+        )
+
+    assert result["success"] is True
+    assert result["criteria"]["target_type"] == "district"
+    assert [row["trade_id"] for row in result["data"]] == [5003, 5002, 5001]

@@ -326,6 +326,61 @@ def test_chatbot_query_uses_supervisor_for_single_lookup_question(monkeypatch):
   }
 
 
+def test_chatbot_query_resolves_contextual_question_before_execution(monkeypatch):
+  supervisor_calls = []
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, question):
+      supervisor_calls.append(question)
+      return {
+        "success": True,
+        "handler": "price_trend",
+        "observation_type": "timeseries",
+        "criteria": {
+          "target_type": "complex",
+          "target_name": "래미안대치팰리스",
+        },
+        "row_count": 0,
+        "rows": [],
+      }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={
+      "question": "두 번째 거 최근 1년 흐름도 알려줘",
+      "conversationContext": {
+        "version": "v1",
+        "items": [
+          {
+            "index": 1,
+            "kind": "complex",
+            "complexId": 3810,
+            "complexName": "풍림아이원2차202동",
+          },
+          {
+            "index": 2,
+            "kind": "complex",
+            "complexId": 1001,
+            "complexName": "래미안대치팰리스",
+          },
+        ],
+      },
+    },
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  assert supervisor_calls == ["래미안대치팰리스 최근 1년 흐름도 알려줘"]
+  assert payload["question"] == "두 번째 거 최근 1년 흐름도 알려줘"
+  assert payload["resolvedQuestion"] == "래미안대치팰리스 최근 1년 흐름도 알려줘"
+  assert payload["conversationResolution"]["source"] == "ordinal_item"
+
+
 def test_chatbot_query_adds_ui_payload_before_composing_answer(monkeypatch):
   captured_context = {}
 
@@ -476,6 +531,203 @@ def test_chatbot_query_uses_direct_fallback_when_supervisor_selects_no_tool(monk
   }
 
 
+def test_chatbot_query_uses_direct_fallback_when_supervisor_misses_multi_handler(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run_with_trace(self, _question):
+      return (
+        {
+          "success": True,
+          "status": "partial_success",
+          "results": [
+            {
+              "agent": "recommendation_agent",
+              "success": True,
+              "result": {
+                "success": True,
+                "handler": "recommendation",
+                "results": [{"complexName": "잠실엘스"}],
+              },
+            },
+            {
+              "agent": "comparison_agent",
+              "success": False,
+              "result": {
+                "success": False,
+                "reason": "no_matching_tool",
+              },
+            },
+          ],
+        },
+        {
+          "path": "supervisor_aggregate",
+          "selectedAgents": ["recommendation_agent", "comparison_agent"],
+        },
+      )
+
+  def fake_run_recommendation(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "question": text,
+      "results": [
+        {"complexName": "잠실엘스"},
+        {"complexName": "래미안대치팰리스"},
+      ],
+    }
+
+  def fake_run_comparison(_session, slots, _text):
+    return {
+      "success": True,
+      "handler": "comparison",
+      "criteria": {"apartment_names": slots["apartment_names"]},
+      "results": [
+        {"name": name}
+        for name in slots["apartment_names"]
+      ],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", fake_run_comparison)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "강남구 아파트 추천하고 후보 비교도 해줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  execution = payload["fragments"][0]["execution"]
+  assert execution["path"] == "direct_dependent_features"
+  assert execution["fallbackFrom"] == "supervisor"
+  assert execution["fallbackReason"] == "supervisor_missing_required_handlers"
+  assert execution["handlerCalls"] == ["recommendation", "comparison"]
+  assert payload["result"]["results"][1]["dependsOn"] == "recommendation_agent"
+  assert payload["result"]["results"][1]["result"]["handler"] == "comparison"
+
+
+def test_chatbot_query_uses_direct_fallback_when_supervisor_misses_ambiguous_price_trend(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, _question):
+      return {
+        "success": True,
+        "handler": "simple_lookup",
+        "query_type": "trade_history",
+        "criteria": {
+          "target_name": "잠실엘스",
+        },
+      }
+
+  def fake_run_simple_lookup(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "simple_lookup",
+      "query_type": slots["query_type"],
+      "criteria": {"target_name": slots["target_name"]},
+      "question": text,
+      "data": [],
+    }
+
+  def fake_run_price_trend(_session, slots):
+    return {
+      "success": True,
+      "handler": "price_trend",
+      "criteria": slots,
+      "rows": [],
+      "row_count": 0,
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_price_trend", fake_run_price_trend)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "잠실엘스 시세 알려줘"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  execution = payload["fragments"][0]["execution"]
+  assert execution["path"] == "direct_ambiguous_features"
+  assert execution["fallbackFrom"] == "supervisor"
+  assert execution["fallbackReason"] == "supervisor_missing_required_handlers"
+  assert execution["handlerCalls"] == ["simple_lookup", "price_trend"]
+
+
+def test_chatbot_query_expands_generic_complex_profile_when_supervisor_only_returns_location(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      pass
+
+    async def run(self, _question):
+      return {
+        "success": True,
+        "handler": "simple_lookup",
+        "query_type": "location",
+        "criteria": {
+          "target_name": "은마",
+        },
+        "data": [
+          {
+            "complex_name": "은마",
+            "address": "대치동 316",
+            "latitude": 37.49,
+            "longitude": 127.06,
+          },
+        ],
+      }
+
+  def fake_run_simple_lookup(_session, slots, text):
+    return {
+      "success": True,
+      "handler": "simple_lookup",
+      "query_type": slots["query_type"],
+      "criteria": {"target_name": slots["target_name"]},
+      "question": text,
+      "data": [],
+    }
+
+  def fake_run_price_trend(_session, slots):
+    return {
+      "success": True,
+      "handler": "price_trend",
+      "criteria": slots,
+      "rows": [],
+      "row_count": 0,
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_simple_lookup", fake_run_simple_lookup)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_price_trend", fake_run_price_trend)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "은마 아파트 정보를 줘봐"},
+  )
+
+  assert response.status_code == 200
+  payload = response.json()
+  execution = payload["fragments"][0]["execution"]
+  assert execution["path"] == "direct_ambiguous_features"
+  assert execution["planType"] == "ambiguous_multi_feature"
+  assert execution["fallbackFrom"] == "supervisor"
+  assert execution["fallbackReason"] == "supervisor_missing_required_handlers"
+  assert execution["handlerCalls"] == ["simple_lookup", "simple_lookup", "price_trend"]
+  assert [
+    wrapper["result"]["query_type"]
+    for wrapper in payload["result"]["results"]
+    if wrapper["result"]["handler"] == "simple_lookup"
+  ] == ["location", "trade_history"]
+
+
 def test_chatbot_query_does_not_use_direct_fallback_when_selected_tool_fails(monkeypatch):
   class FakeChatbotSupervisor:
     def __init__(self, _):
@@ -550,6 +802,38 @@ def test_chatbot_query_does_not_use_direct_fallback_when_selected_tool_returns_n
     "planType": "single_feature",
     "selectedAgent": "lookup_agent",
   }
+
+
+def test_chatbot_query_routes_short_school_nearby_question_directly(monkeypatch):
+  captured = {}
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      raise AssertionError("short education recommendation should not initialize supervisor")
+
+  def fake_run_recommendation(_session, slots, text):
+    captured["slots"] = slots
+    captured["text"] = text
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "results": [],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "초등학교근처"},
+  )
+
+  assert response.status_code == 200
+  assert captured["text"] == "초등학교근처"
+  assert captured["slots"]["school_type"] == "초등학교"
+  assert captured["slots"]["sort_by"] == "school_distance_asc"
+  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
 
 
 def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):

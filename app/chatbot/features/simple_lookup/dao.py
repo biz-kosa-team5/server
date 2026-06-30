@@ -213,7 +213,10 @@ class SimpleLookupDao:
         self,
         criteria: SimpleLookupCriteria,
     ) -> list[Mapping[str, Any]]:
-        region_obj = self._resolve_region(criteria.target_name)
+        region_obj = self._resolve_region(
+            criteria.target_name,
+            target_type=criteria.target_type,
+        )
 
         date_order = "ASC" if criteria.sort_order == SORT_OLDEST else "DESC"
         deal_date_expr = "t.deal_date" if self._dialect_name() == "sqlite" else "t.deal_date::date"
@@ -358,23 +361,34 @@ class SimpleLookupDao:
             "조회 대상 단지를 찾을 수 없습니다.",
         )
 
-    # 지역명 확정: 구 단위 지역명 부분 일치 조회
-    def _resolve_region(self, target_name: str) -> Region:
-        target = "".join(target_name.split())
+    # 지역명 확정: 지역명 정확 일치, 기존 랭킹은 구 단위 부분 일치 호환 유지
+    def _resolve_region(
+        self,
+        target_name: str,
+        *,
+        target_type: str | None = None,
+    ) -> Region:
+        target = normalize_region_search_text(target_name)
+        candidates = [target]
+        if target in {"강남", "서초", "송파"}:
+            candidates.append(f"{target}구")
+        candidates = list(dict.fromkeys(candidates))
 
-        region = self.session.scalars(
-            select(Region)
-            .where(
-                Region.name.like(f"%{target}%"),
-                Region.type.in_(("district", "neighborhood")),
-            )
-            .order_by(
-                (Region.name == target).desc(),
-                (Region.type == "district").desc(),
-                Region.id.asc(),
-            )
-            .limit(1)
-        ).first()
+        stmt = select(Region).where(Region.name.in_(candidates))
+        if target_type in {"district", "neighborhood"}:
+            stmt = stmt.where(Region.type == target_type)
+
+        region = self.session.scalars(stmt.order_by(Region.id.asc()).limit(1)).first()
+
+        if region is None and target_type is None:
+            region = self.session.scalars(
+                select(Region)
+                .where(
+                    Region.name.like(f"%{target}%"),
+                    Region.type == "district",
+                )
+                .limit(1)
+            ).first()
 
         if region is None:
             raise SimpleLookupError(
@@ -430,3 +444,7 @@ class SimpleLookupDao:
 
 def normalize_complex_search_text(value: str) -> str:
     return "".join(str(value).split()).lower()
+
+
+def normalize_region_search_text(value: str) -> str:
+    return "".join(str(value).split())
