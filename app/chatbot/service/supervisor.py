@@ -6,7 +6,6 @@ from dataclasses import dataclass
 import json
 import logging
 import os
-import re
 from typing import Any
 
 from langchain.agents import create_agent
@@ -51,6 +50,8 @@ SUPERVISOR_AGENT_SYSTEM_PROMPT = """
 
 반드시 지켜야 할 규칙:
 - 직접 답변하지 말고, 지원 범위 안의 질문은 반드시 전문 agent tool 중 하나 이상을 호출하세요.
+- 전문 agent와 tool의 description/인자 설명을 보고 질문 전체 의미에 가장 맞는 tool을 스스로 선택하세요.
+- 특정 단어 하나만 보고 고정 라우팅하지 마세요. 예를 들어 "찾아줘"는 대상이 특정 단지면 위치/기본 조회일 수 있고, 조건이 붙은 아파트 탐색이면 추천일 수 있습니다.
 - 질문 안에 서로 다른 종류의 근거가 필요해 보이면 여러 전문 agent tool 호출을 고려하세요.
 - 특정 단지명과 함께 "정보", "알려줘", "요약", "개요"처럼 포괄적으로 묻는 질문은 단지 위치/기본 정보, 최근 거래, 최근 가격 흐름을 함께 보는 질문으로 해석하고 lookup_agent와 price_trend_agent 호출을 고려하세요.
 - 추천과 함께 시세/가격 흐름, 실거래/위치, 후보 비교, 계약/법령 근거를 함께 묻는 경우 관련 전문 agent를 추가로 호출할 수 있습니다.
@@ -65,7 +66,7 @@ SUPERVISOR_AGENT_SYSTEM_PROMPT = """
 
 전문 agent 선택 기준:
 - lookup_agent: 단지 위치, 주소, 실거래 내역, 최고가 같은 단순 조회
-- recommendation_agent: 지역, 가격, 역세권, 신축, 세대수 조건 기반 아파트 추천
+- recommendation_agent: 지역, 가격, 역세권, 학교/학군/초중고, 신축, 세대수 조건 기반 아파트 추천
 - comparison_agent: 둘 이상의 아파트 가격, 평형, 연식, 교통, 교육 비교
 - price_trend_agent: 시세 추이, 가격 변화율, 가격 순위 분석
 - legal_contract_agent: 부동산 계약, 매매, 전세, 임대차, 법령 근거 질문
@@ -81,13 +82,6 @@ class SpecialistAgentSpec:
   description: str
   tool_builders: tuple[ToolBuilder, ...]
   system_prompt: str
-
-
-@dataclass(frozen=True)
-class SupervisorRoutingRule:
-  agent: str
-  signals: tuple[str, ...]
-  reason: str
 
 
 @dataclass(frozen=True)
@@ -114,52 +108,6 @@ class SpecialistAgentResult:
     return value
 
 
-SUPERVISOR_ROUTING_RULES = (
-  SupervisorRoutingRule(
-    agent="recommendation_agent",
-    signals=("추천", "권해", "골라", "조건에 맞는", "아파트 3개", "초등학교근처", "초등학교 근처", "학교근처", "학군", "초품아"),
-    reason="지역, 가격, 역세권, 신축, 세대수 조건에 맞는 후보 추천",
-  ),
-  SupervisorRoutingRule(
-    agent="lookup_agent",
-    signals=("위치", "주소", "어디", "실거래", "최근 거래", "최고가"),
-    reason="단지 위치, 주소, 실거래, 최고가 같은 단순 조회",
-  ),
-  SupervisorRoutingRule(
-    agent="comparison_agent",
-    signals=("비교", "차이", "vs", "둘 중", "어디가 더"),
-    reason="둘 이상의 단지 비교",
-  ),
-  SupervisorRoutingRule(
-    agent="price_trend_agent",
-    signals=(
-      "시세 추이",
-      "시세추이",
-      "시세 흐름",
-      "가격 추이",
-      "가격 흐름",
-      "가격 변화",
-      "실거래가 추이",
-      "최근 가격",
-      "월별 시세",
-      "분기별 시세",
-      "연도별 시세",
-      "변화율",
-      "변동률",
-      "가격 순위",
-      "오른",
-      "내린",
-    ),
-    reason="시세 흐름, 가격 변화율, 순위 분석",
-  ),
-  SupervisorRoutingRule(
-    agent="legal_contract_agent",
-    signals=("계약", "법령", "법률", "임대차", "전세", "계약금", "해제", "위약금"),
-    reason="부동산 계약, 매매, 전세, 임대차, 법령 근거",
-  ),
-)
-
-
 def specialist_system_prompt(role: str, responsibility: str, tool_name: str) -> str:
   return (
     f"{CHATBOT_AGENT_SYSTEM_PROMPT}\n\n"
@@ -174,7 +122,7 @@ SPECIALIST_AGENT_SPECS = [
   SpecialistAgentSpec(
     name="lookup_agent",
     description=(
-      "단지 위치, 주소, 실거래 내역, 최고가 조회 담당, "
+      "특정 단지 찾기/위치/주소, 단지 실거래 내역, 동/구 최신 실거래, 최고가 조회 담당, "
       "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함"
     ),
     tool_builders=(build_simple_lookup_tool,),
@@ -186,7 +134,7 @@ SPECIALIST_AGENT_SPECS = [
   ),
   SpecialistAgentSpec(
     name="recommendation_agent",
-    description="지역, 가격, 역세권, 신축, 세대수 조건 기반 추천 담당",
+    description="지역, 가격, 역세권, 학교/학군/초중고, 생활편의, 신축, 세대수 조건 기반 아파트 탐색/추천 담당",
     tool_builders=(build_recommendation_tool,),
     system_prompt=specialist_system_prompt(
       "아파트 추천",
@@ -300,41 +248,7 @@ ChatbotAgent = ChatbotSupervisor
 
 
 def build_supervisor_user_content(question: str) -> str:
-  hinted_agents = suggest_specialist_agents(question)
-  if not hinted_agents:
-    return question
-
-  agent_reasons = {
-    rule.agent: rule.reason
-    for rule in SUPERVISOR_ROUTING_RULES
-  }
-  hint_lines = [
-    f"- {agent}: {agent_reasons[agent]}"
-    for agent in hinted_agents
-  ]
-  return (
-    f"{question}\n\n"
-    "라우팅 참고:\n"
-    "질문 신호상 아래 전문 agent를 고려할 수 있습니다.\n"
-    + "\n".join(hint_lines)
-    + "\n이 힌트는 강제가 아니며, 실제 질문 의도에 맞는 전문 agent만 호출하세요."
-  )
-
-
-def suggest_specialist_agents(question: str) -> list[str]:
-  normalized = normalize_question_signal_text(question)
-  if not normalized:
-    return []
-
-  agents = []
-  for rule in SUPERVISOR_ROUTING_RULES:
-    if any(signal in normalized for signal in rule.signals):
-      agents.append(rule.agent)
-  return agents
-
-
-def normalize_question_signal_text(question: str) -> str:
-  return re.sub(r"\s+", " ", question.strip().lower())
+  return question
 
 
 def extract_supervisor_result(result: dict[str, Any]) -> dict[str, Any]:

@@ -12,6 +12,8 @@ MAX_MEMORY_ITEMS = 5
 MEMORY_TTL_DAYS = 7
 
 ACTIVE_COMPLEX_REFERENCES = (
+  "이건",
+  "이거",
   "그거",
   "그 단지",
   "이 단지",
@@ -23,9 +25,9 @@ REGION_REFERENCES = (
   "거기 지역",
 )
 ORDINAL_PATTERNS: tuple[tuple[re.Pattern[str], int], ...] = (
-  (re.compile(r"(첫\s*번째\s*(?:거|것|단지)?|1\s*번\s*(?:거|것|단지)?)"), 1),
-  (re.compile(r"(두\s*번째\s*(?:거|것|단지)?|2\s*번\s*(?:거|것|단지)?)"), 2),
-  (re.compile(r"(세\s*번째\s*(?:거|것|단지)?|3\s*번\s*(?:거|것|단지)?)"), 3),
+  (re.compile(r"((?:그중(?:에|에서)?\s*)?(?:첫\s*번째(?:\s*(?:거|것|단지))?|1\s*번(?:\s*(?:거|것|단지))?))"), 1),
+  (re.compile(r"((?:그중(?:에|에서)?\s*)?(?:두\s*번째(?:\s*(?:거|것|단지))?|2\s*번(?:\s*(?:거|것|단지))?))"), 2),
+  (re.compile(r"((?:그중(?:에|에서)?\s*)?(?:세\s*번째(?:\s*(?:거|것|단지))?|3\s*번(?:\s*(?:거|것|단지))?))"), 3),
 )
 PARTIAL_PATTERN = re.compile(r"그중\s+(?P<name>[가-힣A-Za-z0-9()]+?)(?P<particle>만|은|는|이|가|을|를)?(?=\s|$)")
 CONTEXT_ITEM_MENTION_PATTERN = re.compile(
@@ -157,13 +159,17 @@ def resolve_contextual_question(question: str, context: dict[str, Any] | None) -
   if mention is not None:
     return mention
 
-  active_region = resolve_active_region_reference(text, context)
+  active_region = resolve_active_region_reference(text, context, allow_generic=False)
   if active_region is not None:
     return active_region
 
   active_complex = resolve_active_complex_reference(text, context)
   if active_complex is not None:
     return active_complex
+
+  active_region = resolve_active_region_reference(text, context)
+  if active_region is not None:
+    return active_region
 
   if has_reference_expression(text):
     return text, inactive_resolution("target_not_found")
@@ -254,13 +260,20 @@ def resolve_context_item_mention(question: str, context: dict[str, Any]) -> tupl
   )
 
 
-def resolve_active_region_reference(question: str, context: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+def resolve_active_region_reference(
+  question: str,
+  context: dict[str, Any],
+  *,
+  allow_generic: bool = True,
+) -> tuple[str, dict[str, Any]] | None:
   region = normalize_region(context.get("activeRegion"))
   if region is None:
     return None
   target = region["name"]
 
   for token in REGION_REFERENCES:
+    if excludes_reference(question, token):
+      continue
     position = question.find(token)
     if position >= 0:
       return replace_span(question, position, position + len(token), target), applied_resolution(
@@ -269,8 +282,13 @@ def resolve_active_region_reference(question: str, context: dict[str, Any]) -> t
         target,
       )
 
+  if not allow_generic:
+    return None
+
   match = re.search(r"거기", question)
   if match is None:
+    return None
+  if excludes_reference(question, match.group(0)):
     return None
   if not prefers_region_reference(question):
     return None
@@ -286,6 +304,8 @@ def resolve_active_complex_reference(question: str, context: dict[str, Any]) -> 
     return None
   target = complex_item["complexName"]
   for token in ACTIVE_COMPLEX_REFERENCES:
+    if excludes_reference(question, token):
+      continue
     position = question.find(token)
     if position < 0:
       continue
@@ -293,13 +313,22 @@ def resolve_active_complex_reference(question: str, context: dict[str, Any]) -> 
       replace_span(question, position, position + len(token), target),
       applied_resolution("active_complex", token, target),
     )
+
   match = re.search(r"거기", question)
   if match is None:
+    return None
+  if any(token in question for token in REGION_REFERENCES):
+    return None
+  if excludes_reference(question, match.group(0)):
     return None
   return (
     replace_match(question, match, target),
     applied_resolution("active_complex", match.group(0), target),
   )
+
+
+def excludes_reference(question: str, token: str) -> bool:
+  return re.search(rf"{re.escape(token)}\s*말고", question) is not None
 
 
 def prefers_region_reference(question: str) -> bool:
@@ -406,6 +435,7 @@ def is_memory_result(result: dict[str, Any]) -> bool:
   handler = clean_text(result.get("handler"))
   if handler == "simple_lookup":
     return clean_text(result.get("query_type")) in {
+      "location",
       "trade_history",
       "region_trade_history",
       "region_price_ranking",
@@ -448,7 +478,7 @@ def active_region_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
 
 def active_complex_from_result(result: dict[str, Any]) -> dict[str, Any] | None:
   handler = clean_text(result.get("handler"))
-  if handler == "simple_lookup" and clean_text(result.get("query_type")) == "trade_history":
+  if handler == "simple_lookup" and clean_text(result.get("query_type")) in {"location", "trade_history"}:
     return first_complex_from_rows(list_rows(result.get("data")))
   if handler == "price_trend":
     criteria = dict_value(result.get("criteria"))
@@ -473,7 +503,7 @@ def memory_items_from_result(result: dict[str, Any]) -> list[dict[str, Any]]:
   handler = clean_text(result.get("handler"))
   if handler == "simple_lookup":
     query_type = clean_text(result.get("query_type"))
-    if query_type in {"trade_history", "region_trade_history", "region_price_ranking"}:
+    if query_type in {"location", "trade_history", "region_trade_history", "region_price_ranking"}:
       return [
         memory_item_from_row(row, index)
         for index, row in enumerate(list_rows(result.get("data")), start=1)

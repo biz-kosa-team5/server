@@ -12,8 +12,6 @@ from app.chatbot.features.complex_resolver import (
   INSUFFICIENT_QUERY,
   ComplexResolution,
   ComplexResolver,
-  ComplexResolverContext,
-  neighborhood_from_address,
 )
 from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
 from app.models import Complex
@@ -128,12 +126,6 @@ class ComparisonService:
       for name in names
     ]
 
-    anchors = [
-      resolution.complex
-      for _name, resolution in first_pass
-      if resolution.resolved and resolution.complex is not None
-    ]
-
     resolved: list[tuple[str, Complex]] = []
     missing: list[Any] = []
     candidate_groups: list[dict[str, Any]] = []
@@ -141,9 +133,6 @@ class ComparisonService:
 
     for name, resolution in first_pass:
       current = resolution
-      if not current.resolved and current.status == AMBIGUOUS and anchors:
-        current = self._resolve_against_anchors(resolver, name, anchors, current)
-
       if current.resolved and current.complex is not None:
         resolved.append((name, current.complex))
         resolution_notes.extend(current.resolution_notes)
@@ -155,34 +144,6 @@ class ComparisonService:
         missing.append(name)
 
     return resolved, missing, candidate_groups, dedupe_notes(resolution_notes)
-
-  def _resolve_against_anchors(
-    self,
-    resolver: ComplexResolver,
-    name: str,
-    anchors: list[Complex],
-    fallback: ComplexResolution,
-  ) -> ComplexResolution:
-    best = fallback
-    for anchor in anchors:
-      context = ComplexResolverContext(
-        anchor_complex=anchor,
-        region_id=anchor.region_id,
-        address_keywords=tuple(
-          keyword
-          for keyword in [neighborhood_from_address(anchor.address)]
-          if keyword
-        ),
-      )
-      candidate = resolver.resolve(name, context)
-      if candidate.resolved:
-        return candidate
-      if candidate.candidates and (
-        not best.candidates
-        or int(candidate.candidates[0].get("score") or 0) > int(best.candidates[0].get("score") or 0)
-      ):
-        best = candidate
-    return best
 
   def _attach_infrastructure(
     self,

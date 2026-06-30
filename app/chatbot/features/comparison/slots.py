@@ -49,7 +49,7 @@ def extract_apartment_names(text: str) -> list[str]:
   if len(comma_names) >= 2:
     return comma_names[:3]
 
-  match = re.search(r"(.+?)(?:랑|와|과|하고)\s*(.+)", text)
+  match = re.search(r"(.+?)(?:랑|와|과|하고)(?:[이가은는]\s+|\s*)(.+)", text)
   if match is None:
     return []
   first = clean_apartment_name(match.group(1))
@@ -68,10 +68,10 @@ def split_apartment_names_by_separator(text: str) -> list[str]:
 
 
 def clean_apartment_name(value: str) -> str:
-  text = value.strip()
-  text = re.sub(r"^(?:그럼|그러면|그니까|그러니까|음|저기|혹시)\s*", "", text)
+  text = value.strip().rstrip(" .!?。")
+  text = strip_leading_discourse_markers(text)
   text = re.sub(r"^(?:이랑|랑|와|과|하고)\s*", "", text)
-  text = re.sub(r"\s*(?:비교해줘|비교해봐|비교|알려줘|해줘|해봐|줘)\s*$", "", text)
+  text = re.sub(r"\s*(?:비교\s*좀\s*해줘|비교\s*좀|비교해줘|비교해봐|비교|알려줘|해줘|해봐|줘)\s*$", "", text)
   text = re.sub(r"\s*(?:중\s*)?(?:어디가\s*)?(?:더\s*)?(?:가까운지|가까워|좋아)\??\s*$", "", text)
   text = re.sub(r"\s*(?:야|인가|일까)\??\s*$", "", text)
   text = re.split(
@@ -84,9 +84,42 @@ def clean_apartment_name(value: str) -> str:
   text = re.sub(r"\s*(?:중\s*)?어디가\s*더\s*$", "", text)
   text = text.strip()
   text = re.sub(r"\s+(이|가|은|는)$", "", text).strip()
-  if text.endswith("이") and not text.endswith("자이"):
+  text = strip_linking_i_before_rang(text)
+  return text
+
+
+def strip_leading_discourse_markers(text: str) -> str:
+  while True:
+    cleaned = re.sub(
+      r"^(?:그럼|그러면|그니까|그러니까|음|저기|혹시|그중(?:에)?|둘\s*중(?:에)?)\s*",
+      "",
+      text,
+    )
+    if cleaned == text:
+      return text
+    text = cleaned
+
+
+def strip_linking_i_before_rang(text: str) -> str:
+  if len(text) < 2 or not text.endswith("이"):
+    return text
+  previous = text[-2]
+  if has_hangul_final_consonant(previous) or is_ascii_alnum(previous):
     return text[:-1].strip()
   return text
+
+
+def is_ascii_alnum(char: str) -> bool:
+  return char.isascii() and char.isalnum()
+
+
+def has_hangul_final_consonant(char: str) -> bool:
+  code = ord(char)
+  first = ord("가")
+  last = ord("힣")
+  if code < first or code > last:
+    return False
+  return (code - first) % 28 != 0
 
 
 def extract_school_type(text: str) -> str | None:

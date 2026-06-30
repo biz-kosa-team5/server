@@ -4,7 +4,6 @@
 """
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 import logging
@@ -20,18 +19,9 @@ from .conversation_memory import (
   normalize_conversation_context,
   resolve_contextual_question,
 )
-from .answer.formatters.sequential import (
-  format_dependent_comparison_step_answer,
-  format_dependent_recommendation_step_answer,
-  format_dependent_sequence_summary,
-)
 from .orchestrator import (
   OrchestrationResult,
-  SequenceStepResult,
-  aggregate_sequence_step_results,
   execute_plan,
-  iter_recommendation_comparison_sequence,
-  requested_comparison_candidate_limit,
 )
 from .planner import ExecutionPlan, build_execution_plan
 from .supervisor import (
@@ -41,14 +31,13 @@ from .supervisor import (
   merge_token_usage,
 )
 from .splitter import split_question
-from .streaming import chunk_answer, format_sse, stream_safe_answer
+from .streaming import chunk_answer, format_sse
 from .ui_payload import build_chatbot_ui_payload
 
 
 logger = logging.getLogger(__name__)
 STREAM_ERROR_MESSAGE = "AI 집찾기 응답을 불러오지 못했습니다."
 STREAM_TOTAL_STEPS = 5
-PROGRESSIVE_STREAM_TOTAL_STEPS = 6
 
 
 class LazySupervisorProvider:
@@ -247,18 +236,13 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
 async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> AsyncIterator[bytes]:
   try:
     question = str(payload.get("question", "")).strip()
+    conversation_context = normalize_conversation_context(payload.get("conversationContext"))
+    resolved_question, conversation_resolution = resolve_contextual_question(
+      question,
+      conversation_context,
+    )
     model = runtime_model_from_payload(payload)
-    tasks = ChatbotTask.from_question(question)
-    progressive_plan = progressive_plan_for_tasks(tasks)
-    if progressive_plan is not None:
-      async for event in stream_recommendation_comparison_sequence(
-        session,
-        question,
-        tasks[0],
-        progressive_plan,
-      ):
-        yield event
-      return
+    tasks = ChatbotTask.from_question(resolved_question)
 
     yield stream_status("질문 분석 중", 1)
 
@@ -280,6 +264,8 @@ async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> Asy
       task_results=task_results,
     )
     response_dict = chatbot_response.to_response_dict()
+    response_dict["resolvedQuestion"] = resolved_question
+    response_dict["conversationResolution"] = conversation_resolution
 
     yield stream_status("지도/시각 자료 준비 중", 4)
     ui_payload = build_chatbot_ui_payload(session, response_dict)
@@ -296,6 +282,7 @@ async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> Asy
     usage = collect_response_usage(response_dict)
     if usage:
       response_dict["usage"] = usage
+    response_dict["conversationMemoryPatch"] = build_conversation_memory_patch(response_dict)
 
     for text in chunk_answer(response_dict.get("answer") or response_dict.get("message") or ""):
       yield format_sse("answer_delta", {"text": text})
@@ -303,121 +290,6 @@ async def stream_chatbot_query(session: Session, payload: dict[str, Any]) -> Asy
   except Exception:
     logger.exception("Failed to stream chatbot query")
     yield format_sse("error", {"message": STREAM_ERROR_MESSAGE})
-
-
-async def stream_recommendation_comparison_sequence(
-  session: Session,
-  question: str,
-  task: ChatbotTask,
-  plan: ExecutionPlan,
-) -> AsyncIterator[bytes]:
-  yield stream_status("질문 의도 파악 중", 1, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-  yield stream_status("처리 순서 정하는 중", 2, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-
-  streamed_answer_parts: list[str] = []
-  sequence: list[SequenceStepResult] = []
-  sequence_iterator = iter(iter_recommendation_comparison_sequence(session, task.text, plan))
-
-  yield stream_status("추천 후보 찾는 중", 3, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-  try:
-    recommendation_step = next(sequence_iterator)
-  except StopIteration:
-    recommendation_step = None
-
-  if recommendation_step is not None:
-    sequence.append(recommendation_step)
-    recommendation_answer = format_dependent_recommendation_step_answer(
-      recommendation_step.result,
-      max_candidates=requested_comparison_candidate_limit(task.text),
-    )
-    for event in stream_answer_delta(recommendation_answer, streamed_answer_parts):
-      yield event
-
-  comparison_step = None
-  yield stream_status("추천 후보 비교 중", 4, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-  try:
-    comparison_step = next(sequence_iterator)
-  except StopIteration:
-    comparison_step = None
-
-  if comparison_step is not None:
-    sequence.append(comparison_step)
-    recommendation_result = recommendation_step.result if recommendation_step is not None else None
-    comparison_answer = format_dependent_comparison_step_answer(
-      comparison_step.result,
-      recommendation_result,
-    )
-    for event in stream_answer_delta(comparison_answer, streamed_answer_parts):
-      yield event
-
-  yield stream_status("최종 답변 정리 중", 5, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-  if recommendation_step is not None and comparison_step is not None:
-    summary = format_dependent_sequence_summary(
-      recommendation_step.result,
-      comparison_step.result,
-    )
-    for event in stream_answer_delta(summary, streamed_answer_parts):
-      yield event
-
-  orchestration = aggregate_sequence_step_results(sequence, plan)
-  execution = enrich_execution_trace(orchestration.execution, orchestration.result)
-  chatbot_response = ChatbotQueryResponse(
-    question=question,
-    task_results=[
-      TaskExecutionResult(
-        task=task,
-        result=orchestration.result,
-        execution=execution,
-      )
-    ],
-  )
-  response_dict = chatbot_response.to_response_dict()
-
-  yield stream_status("지도/시각 자료 준비 중", 6, total=PROGRESSIVE_STREAM_TOTAL_STEPS)
-  ui_payload = build_chatbot_ui_payload(session, response_dict)
-  response_dict.update(ui_payload)
-  yield format_sse("artifacts", ui_payload)
-
-  response_dict["answer"] = "".join(streamed_answer_parts).strip() or response_dict.get("message") or "질문을 처리했습니다."
-  usage = collect_response_usage(response_dict)
-  if usage:
-    response_dict["usage"] = usage
-  yield format_sse("final", response_dict)
-
-
-def stream_answer_delta(answer: str, streamed_answer_parts: list[str]) -> list[bytes]:
-  safe_answer = stream_safe_answer(answer)
-  if not safe_answer:
-    return []
-  prefix = "\n\n" if streamed_answer_parts else ""
-  if streamed_answer_parts:
-    safe_answer = f"\n\n{safe_answer}"
-  streamed_answer_parts.append(safe_answer)
-  chunks = chunk_answer(safe_answer.removeprefix(prefix))
-  if prefix and chunks:
-    chunks[0] = f"{prefix}{chunks[0]}"
-  return [
-    format_sse("answer_delta", {"text": chunk})
-    for chunk in chunks
-  ]
-
-
-def progressive_plan_for_tasks(tasks: list[ChatbotTask]) -> ExecutionPlan | None:
-  if len(tasks) != 1:
-    return None
-  plan = build_execution_plan(tasks[0].text)
-  if is_recommendation_comparison_sequence_plan(plan):
-    return plan
-  return None
-
-
-def is_recommendation_comparison_sequence_plan(plan: ExecutionPlan) -> bool:
-  return (
-    plan.plan_type == "dependent_multi_feature"
-    and len(plan.steps) >= 2
-    and [step.handler for step in plan.steps[:2]] == ["recommendation", "comparison"]
-    and plan.steps[1].depends_on == "recommendation_agent"
-  )
 
 
 def stream_status(label: str, step: int, *, total: int = STREAM_TOTAL_STEPS) -> bytes:
@@ -524,7 +396,7 @@ async def execute_task(
       supervisor_provider=supervisor_provider,
       supervisor_initialization_failed=supervisor_initialization_failed,
     )
-    fallback_reason = direct_fallback_reason(result, execution, fallback_plan())
+    fallback_reason = direct_fallback_reason(result, execution)
     if fallback_reason:
       orchestration_result = await run_direct_fallback(
         session,
@@ -539,7 +411,7 @@ async def execute_task(
     if execution is not None and "planType" not in execution:
       execution = {
         **execution,
-        "planType": fallback_plan().plan_type,
+        "planType": "supervisor_llm",
       }
   except Exception:
     logger.exception("Failed to run chatbot task %s", task.index)
@@ -556,17 +428,14 @@ def should_run_direct_plan_first(plan: ExecutionPlan, text: str) -> bool:
     return False
   slots = extract_recommendation_slots(text)
   infra_preferences = slots.get("infra_preferences")
+  has_search_anchor = any(
+    slots.get(key) is not None
+    for key in ("neighborhood", "district", "station_name", "school_name")
+  )
   return (
     isinstance(infra_preferences, list)
     and bool(infra_preferences)
-    and (
-      slots.get("neighborhood") is not None
-      or slots.get("district") is not None
-      or slots.get("station_name") is not None
-      or slots.get("school_name") is not None
-      or slots.get("school_type") is not None
-      or slots.get("school_types") is not None
-    )
+    and has_search_anchor
   )
 
 
@@ -655,49 +524,16 @@ async def run_direct_fallback(
 def direct_fallback_reason(
   result: dict[str, Any],
   execution: dict[str, Any] | None,
-  plan: ExecutionPlan | None,
 ) -> str | None:
   path = execution.get("path") if execution else None
   if path in {
-    "supervisor_no_tool",
     "supervisor_unavailable",
     "supervisor_initialization_failed",
     "supervisor_execution_failed",
   }:
     return str(path)
 
-  if plan is not None and missing_required_handlers(result, execution, plan):
-    return "supervisor_missing_required_handlers"
-
   return None
-
-
-def missing_required_handlers(
-  result: dict[str, Any],
-  execution: dict[str, Any] | None,
-  plan: ExecutionPlan,
-) -> list[str]:
-  if plan.plan_type not in {
-    "independent_multi_feature",
-    "dependent_multi_feature",
-    "ambiguous_multi_feature",
-    "same_tool_multi_feature",
-  }:
-    return []
-
-  expected = Counter(
-    step.handler
-    for step in plan.steps
-    if step.handler != "no_matching_tool"
-  )
-  if not expected:
-    return []
-
-  actual = Counter(actual_handler_calls(result, execution))
-  missing = []
-  for handler, count in expected.items():
-    missing.extend([handler] * max(0, count - actual.get(handler, 0)))
-  return missing
 
 
 def actual_handler_calls(
@@ -735,6 +571,14 @@ def infer_supervisor_execution(result: dict[str, Any]) -> dict[str, Any]:
     return {"path": "supervisor_execution_failed"}
   if reason == "agent_initialization_failed":
     return {"path": "supervisor_initialization_failed"}
+  if isinstance(result.get("handler"), str):
+    return enrich_execution_trace(
+      {
+        "path": "specialist_tool",
+        "selectedAgent": agent_for_handler(result.get("handler")),
+      },
+      result,
+    )
   if isinstance(result.get("results"), list):
     return enrich_execution_trace(
       {

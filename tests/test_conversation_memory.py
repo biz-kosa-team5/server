@@ -54,6 +54,21 @@ def test_resolves_ordinal_item_reference():
   }
 
 
+def test_resolves_ordinal_item_reference_with_group_prefix_without_leaking_reference_word():
+  resolved, resolution = resolve_contextual_question(
+    "그중 첫 번째 최근 거래 보여줘",
+    memory_context(),
+  )
+
+  assert resolved == "풍림아이원2차202동 최근 거래 보여줘"
+  assert resolution == {
+    "applied": True,
+    "source": "ordinal_item",
+    "matchedText": "그중 첫 번째",
+    "resolvedTarget": "풍림아이원2차202동",
+  }
+
+
 def test_resolves_active_complex_reference():
   resolved, resolution = resolve_contextual_question(
     "그거랑 잠실엘스 비교해줘",
@@ -76,12 +91,27 @@ def test_resolves_partial_item_name_when_unique():
 
 def test_resolves_active_region_for_latest_trade_followup():
   resolved, resolution = resolve_contextual_question(
-    "거기 최신 실거래 5개 더 보여줘",
+    "거기 지역 최신 실거래 5개 더 보여줘",
     memory_context(),
   )
 
   assert resolved == "대치동 최신 실거래 5개 더 보여줘"
   assert resolution["source"] == "active_region"
+
+
+def test_generic_there_prefers_active_complex_over_stale_region():
+  resolved, resolution = resolve_contextual_question(
+    "거기 최근 거래 보여줘",
+    memory_context(),
+  )
+
+  assert resolved == "래미안대치팰리스 최근 거래 보여줘"
+  assert resolution == {
+    "applied": True,
+    "source": "active_complex",
+    "matchedText": "거기",
+    "resolvedTarget": "래미안대치팰리스",
+  }
 
 
 def test_keeps_original_without_context_candidate():
@@ -236,3 +266,93 @@ def test_resolves_context_item_mention_by_region_and_partial_name():
 
   assert resolved == "잠실우성아파트으로 봐줘"
   assert resolution["source"] == "context_item_mention"
+
+
+def test_memory_patch_stores_location_lookup_as_active_complex():
+  response = {
+    "result": {
+      "handler": "simple_lookup",
+      "success": True,
+      "query_type": "location",
+      "criteria": {"target_name": "잠실엘스"},
+      "data": [
+        {
+          "complex_id": 1002,
+          "complex_name": "잠실엘스",
+          "address": "서울특별시 송파구 잠실동 19",
+        },
+      ],
+    },
+    "fragments": [],
+  }
+
+  patch = build_conversation_memory_patch(response)
+
+  assert patch["lastHandler"] == "simple_lookup"
+  assert patch["lastQueryType"] == "location"
+  assert patch["activeComplex"] == {
+    "complexId": 1002,
+    "complexName": "잠실엘스",
+    "address": "서울특별시 송파구 잠실동 19",
+  }
+  assert patch["items"][0] == {
+    "index": 1,
+    "kind": "complex",
+    "complexId": 1002,
+    "complexName": "잠실엘스",
+    "address": "서울특별시 송파구 잠실동 19",
+  }
+
+
+def test_does_not_rewrite_weak_followup_without_explicit_reference():
+  resolved, resolution = resolve_contextual_question(
+    "그럼 최근 거래는?",
+    memory_context(),
+  )
+
+  assert resolved == "그럼 최근 거래는?"
+  assert resolution == {
+    "applied": False,
+    "reason": "no_reference",
+  }
+
+
+def test_resolves_this_reference_when_active_complex_exists():
+  resolved, resolution = resolve_contextual_question(
+    "이건 시세 어때?",
+    memory_context(),
+  )
+
+  assert resolved == "래미안대치팰리스 시세 어때?"
+  assert resolution["source"] == "active_complex"
+  assert resolution["matchedText"] == "이건"
+
+
+def test_this_reference_with_only_candidates_stays_unresolved():
+  context = normalize_conversation_context({
+    "version": "v1",
+    "items": [
+      {
+        "index": 1,
+        "kind": "complex",
+        "complexId": 1,
+        "complexName": "청담우성아파트",
+        "address": "서울특별시 강남구 청담동 11-25",
+      },
+      {
+        "index": 2,
+        "kind": "complex",
+        "complexId": 2,
+        "complexName": "대치우성아파트",
+        "address": "서울특별시 강남구 대치동 63",
+      },
+    ],
+  })
+
+  resolved, resolution = resolve_contextual_question("그럼 이건 시세 어때?", context)
+
+  assert resolved == "그럼 이건 시세 어때?"
+  assert resolution == {
+    "applied": False,
+    "reason": "target_not_found",
+  }

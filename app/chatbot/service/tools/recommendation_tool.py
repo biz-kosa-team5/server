@@ -38,7 +38,9 @@ def build_recommendation_tool(session: Session):
   ) -> dict[str, Any]:
     """
     지역, 가격, 역세권, 학교/학군, 신축 여부 같은 조건에 맞는 아파트 추천 질문을 처리합니다.
-    "초등학교근처", "학군 좋은 곳", "초품아"처럼 짧은 질문도 추천으로 처리합니다.
+    "초등학교근처", "초중고 가까운 곳", "학군 좋은 곳", "초품아"처럼 짧은 질문도 추천으로 처리합니다.
+    초중고, 초/중/고, 초·중·고처럼 복수 학교급을 말하면 school_types=["초등학교", "중학교", "고등학교"]로 해석할 수 있습니다.
+    사용자가 조건을 자연스럽게 말하면 query에는 원문을 그대로 넣고, 확실한 구조화 인자만 채우세요.
 
     Args:
       query: 사용자가 입력한 아파트 추천 질문입니다. 예: "송파구 40억 이하 아파트 추천해줘"
@@ -46,7 +48,7 @@ def build_recommendation_tool(session: Session):
       neighborhood: 추천 대상 동 이름입니다. 예: 잠실동
       station_name: 가까워야 하는 역 이름입니다. 예: 잠실역
       school_type: 가까워야 하는 단일 학교 유형입니다. 예: 초등학교
-      school_types: 가까워야 하는 복수 학교 유형입니다.
+      school_types: 가까워야 하는 복수 학교 유형입니다. 예: ["초등학교", "중학교", "고등학교"]
       radius_m: 역/학교/인프라 반경입니다. 단위는 m입니다.
       min_price: 최소 매매가입니다. 단위는 만원입니다.
       max_price: 최대 매매가입니다. 단위는 만원입니다.
@@ -58,7 +60,7 @@ def build_recommendation_tool(session: Session):
       infra_preferences: transport, education, commercial, medical 중 선호 인프라 목록입니다.
       investment_focus: 투자/호재/재건축 질문에서 참고할 관심 기준입니다. 예: investment, redevelopment, development
       redevelopment_interest: 재건축/재개발/정비사업 공개 정보를 참고해야 하는지 여부입니다.
-      sort_by: 정렬 기준입니다. 학교/학군/초품아/초등학교 근처 질문은 school_distance_asc를 사용하세요. 예: distance_asc, price_asc, price_desc, school_distance_asc
+      sort_by: 정렬 기준입니다. 학교/학군/초품아/초중고 근처 질문은 school_distance_asc를 사용하세요. 예: distance_asc, price_asc, price_desc, school_distance_asc
       limit: 반환할 최대 후보 개수입니다.
 
     Returns:

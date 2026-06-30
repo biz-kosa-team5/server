@@ -28,8 +28,6 @@ def complex_name_candidates(name: str) -> list[str]:
   candidates = [name]
   if name.endswith("아파트") and len(name) > 3:
     candidates.append(name.removesuffix("아파트"))
-  if name.endswith("이") and not name.endswith("자이") and len(name) > 1:
-    candidates.append(name[:-1])
   if "펠리스" in name:
     candidates.append(name.replace("펠리스", "팰리스"))
   return dedupe(candidates)

@@ -192,11 +192,10 @@ def format_candidate_selection(
 
   target = clean_text(target_name) or "입력한 단지명"
   lines = [
-    intro or f"{target}로 검색되는 단지가 여러 개 있습니다.",
+    intro or f"{target}로 확인되는 단지는 다음과 같습니다.",
   ]
   for index, row in enumerate(rows, start=1):
     lines.append(f"{index}. {format_candidate_row(row)}")
-  lines.append("어느 단지인지 번호나 동/구를 함께 알려주세요.")
   return "\n".join(lines)
 
 
@@ -235,7 +234,6 @@ def format_candidate_groups(
     if message:
       lines.append(f"{target}: {message}")
 
-  lines.append("비교를 진행하려면 모호한 단지를 먼저 골라주세요.")
   return "\n".join(dedupe(lines))
 
 
