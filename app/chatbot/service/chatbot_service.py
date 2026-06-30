@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 import logging
 from typing import Any
@@ -17,6 +18,7 @@ from .supervisor import (
   ChatbotSupervisor,
   agent_execution_failed_result,
   agent_initialization_failed_result,
+  merge_token_usage,
 )
 from .splitter import split_question
 from .ui_payload import build_chatbot_ui_payload
@@ -26,8 +28,9 @@ logger = logging.getLogger(__name__)
 
 
 class LazySupervisorProvider:
-  def __init__(self, session: Session):
+  def __init__(self, session: Session, model: str | None = None):
     self.session = session
+    self.model = model
     self.supervisor: ChatbotSupervisor | None = None
     self.attempted = False
     self.initialization_failed = False
@@ -37,7 +40,7 @@ class LazySupervisorProvider:
       return self.supervisor
     self.attempted = True
     try:
-      self.supervisor = ChatbotSupervisor(self.session)
+      self.supervisor = create_chatbot_supervisor(self.session, self.model)
     except Exception:
       logger.exception("Failed to initialize chatbot supervisor")
       self.initialization_failed = True
@@ -181,7 +184,8 @@ class ChatbotQueryResponse:
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
-  supervisor_provider = LazySupervisorProvider(session)
+  model = runtime_model_from_payload(payload)
+  supervisor_provider = LazySupervisorProvider(session, model=model)
   task_results = []
   for task in ChatbotTask.from_question(question):
     task_results.append(await execute_task(
@@ -197,8 +201,71 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   response_dict = chatbot_response.to_response_dict()
   response_dict.update(build_chatbot_ui_payload(session, response_dict))
   answer_context = chatbot_response.to_answer_context(response_dict)
-  response_dict["answer"] = await ChatbotAnswerComposer().compose(answer_context)
+  answer_composer = create_answer_composer(model)
+  response_dict["answer"] = await answer_composer.compose(answer_context)
+  answer_usage = getattr(answer_composer, "last_usage", None)
+  if answer_usage:
+    response_dict["answerUsage"] = answer_usage
+  usage = collect_response_usage(response_dict)
+  if usage:
+    response_dict["usage"] = usage
   return response_dict
+
+
+def create_chatbot_supervisor(session: Session, model: str | None) -> ChatbotSupervisor:
+  if model is None:
+    return ChatbotSupervisor(session)
+  try:
+    return ChatbotSupervisor(session, model=model)
+  except TypeError as exc:
+    if "unexpected keyword argument 'model'" not in str(exc):
+      raise
+    return ChatbotSupervisor(session)
+
+
+def create_answer_composer(model: str | None) -> ChatbotAnswerComposer:
+  if model is None:
+    return ChatbotAnswerComposer()
+  try:
+    return ChatbotAnswerComposer(model=model)
+  except TypeError as exc:
+    if "unexpected keyword argument 'model'" not in str(exc):
+      raise
+    return ChatbotAnswerComposer()
+
+
+def runtime_model_from_payload(payload: dict[str, Any]) -> str | None:
+  for key in ("model", "chat_model", "chatModel"):
+    value = payload.get(key)
+    if isinstance(value, str) and value.strip():
+      return value.strip()
+  return None
+
+
+def collect_response_usage(response_dict: dict[str, Any]) -> dict[str, int] | None:
+  usages = []
+  for execution in fragment_executions_from_response(response_dict):
+    usage = execution.get("usage")
+    if isinstance(usage, dict):
+      usages.append(usage)
+  answer_usage = response_dict.get("answerUsage")
+  if isinstance(answer_usage, dict):
+    usages.append(answer_usage)
+  return merge_token_usage(*usages)
+
+
+def fragment_executions_from_response(response_dict: dict[str, Any]) -> list[dict[str, Any]]:
+  fragments = response_dict.get("fragments")
+  if not isinstance(fragments, list):
+    return []
+  executions = []
+  for fragment in fragments:
+    if not isinstance(fragment, dict):
+      continue
+    execution = fragment.get("execution")
+    if isinstance(execution, dict):
+      executions.append(execution)
+  return executions
 
 
 async def execute_task(
@@ -225,12 +292,13 @@ async def execute_task(
       supervisor_provider=supervisor_provider,
       supervisor_initialization_failed=supervisor_initialization_failed,
     )
-    if should_run_direct_fallback(result, execution):
+    fallback_reason = direct_fallback_reason(result, execution, fallback_plan())
+    if fallback_reason:
       orchestration_result = await run_direct_fallback(
         session,
         task.text,
         fallback_plan(),
-        fallback_reason=fallback_reason_from_supervisor(result, execution),
+        fallback_reason=fallback_reason,
       )
       if orchestration_result is not None:
         result = orchestration_result.result
@@ -331,28 +399,79 @@ async def run_direct_fallback(
   )
 
 
-def should_run_direct_fallback(
+def direct_fallback_reason(
   result: dict[str, Any],
   execution: dict[str, Any] | None,
-) -> bool:
+  plan: ExecutionPlan | None,
+) -> str | None:
   path = execution.get("path") if execution else None
-  return path in {
+  if path in {
     "supervisor_no_tool",
     "supervisor_unavailable",
     "supervisor_initialization_failed",
     "supervisor_execution_failed",
-  }
+  }:
+    return str(path)
+
+  if plan is not None and missing_required_handlers(result, execution, plan):
+    return "supervisor_missing_required_handlers"
+
+  return None
 
 
-def fallback_reason_from_supervisor(
+def missing_required_handlers(
   result: dict[str, Any],
   execution: dict[str, Any] | None,
-) -> str:
-  if execution and execution.get("path"):
-    return str(execution["path"])
-  if result.get("reason"):
-    return str(result["reason"])
-  return "supervisor_unhandled"
+  plan: ExecutionPlan,
+) -> list[str]:
+  if plan.plan_type not in {
+    "independent_multi_feature",
+    "dependent_multi_feature",
+    "ambiguous_multi_feature",
+    "same_tool_multi_feature",
+  }:
+    return []
+
+  expected = Counter(
+    step.handler
+    for step in plan.steps
+    if step.handler != "no_matching_tool"
+  )
+  if not expected:
+    return []
+
+  actual = Counter(actual_handler_calls(result, execution))
+  missing = []
+  for handler, count in expected.items():
+    missing.extend([handler] * max(0, count - actual.get(handler, 0)))
+  return missing
+
+
+def actual_handler_calls(
+  result: dict[str, Any],
+  execution: dict[str, Any] | None,
+) -> list[str]:
+  handler_calls = handler_calls_from_result(result)
+  if handler_calls:
+    return handler_calls
+  if not execution:
+    return []
+  execution_handler_calls = execution.get("handlerCalls")
+  if isinstance(execution_handler_calls, list):
+    return [
+      str(handler)
+      for handler in execution_handler_calls
+      if handler
+    ]
+  execution_handlers = execution.get("handlers")
+  if isinstance(execution_handlers, list):
+    return [
+      str(handler)
+      for handler in execution_handlers
+      if handler
+    ]
+  handler = execution.get("handler")
+  return [str(handler)] if isinstance(handler, str) else []
 
 
 def infer_supervisor_execution(result: dict[str, Any]) -> dict[str, Any]:

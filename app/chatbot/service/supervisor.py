@@ -52,6 +52,7 @@ SUPERVISOR_AGENT_SYSTEM_PROMPT = """
 반드시 지켜야 할 규칙:
 - 직접 답변하지 말고, 지원 범위 안의 질문은 반드시 전문 agent tool 중 하나 이상을 호출하세요.
 - 질문 안에 서로 다른 종류의 근거가 필요해 보이면 여러 전문 agent tool 호출을 고려하세요.
+- 특정 단지명과 함께 "정보", "알려줘", "요약", "개요"처럼 포괄적으로 묻는 질문은 단지 위치/기본 정보, 최근 거래, 최근 가격 흐름을 함께 보는 질문으로 해석하고 lookup_agent와 price_trend_agent 호출을 고려하세요.
 - 추천과 함께 시세/가격 흐름, 실거래/위치, 후보 비교, 계약/법령 근거를 함께 묻는 경우 관련 전문 agent를 추가로 호출할 수 있습니다.
 - "추천 이유"처럼 recommendation_agent 결과만으로 설명 가능한 경우에는 recommendation_agent 하나로 충분합니다.
 - 하나의 전문 agent로 충분하면 하나만 호출하세요.
@@ -94,12 +95,13 @@ class SpecialistAgentResult:
   agent: str
   result: dict[str, Any]
   depends_on: str | None = None
+  trace: dict[str, Any] | None = None
 
   @property
   def success(self) -> bool:
     return self.result.get("success") is True
 
-  def to_dict(self) -> dict[str, Any]:
+  def to_dict(self, *, include_trace: bool = False) -> dict[str, Any]:
     value = {
       "agent": self.agent,
       "success": self.success,
@@ -107,6 +109,8 @@ class SpecialistAgentResult:
     }
     if self.depends_on:
       value["dependsOn"] = self.depends_on
+    if include_trace and self.trace:
+      value["trace"] = self.trace
     return value
 
 
@@ -228,25 +232,36 @@ class SpecialistChatbotAgent:
   def __init__(self, session: Session, spec: SpecialistAgentSpec, model: str | None = None):
     self.name = spec.name
     self.spec = spec
+    self.model = model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_AGENT_MODEL)
     self.agent = create_agent(
-      model=model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_AGENT_MODEL),
+      model=self.model,
       tools=[builder(session) for builder in spec.tool_builders],
       system_prompt=spec.system_prompt,
     )
 
   async def run(self, question: str) -> dict[str, Any]:
+    result, _trace = await self.run_with_trace(question)
+    return result
+
+  async def run_with_trace(self, question: str) -> tuple[dict[str, Any], dict[str, Any]]:
     result = await self.agent.ainvoke({
       "messages": [{"role": "user", "content": question}],
     })
-    return extract_agent_result(result)
+    return extract_agent_result(result), agent_execution_trace(result, model=self.model)
 
   def as_tool(self) -> StructuredTool:
     async def run_specialist(query: str) -> dict[str, Any]:
       """Run a specialist agent for the provided user query."""
+      if hasattr(self, "agent"):
+        result, trace = await self.run_with_trace(query)
+      else:
+        result = await self.run(query)
+        trace = {}
       return SpecialistAgentResult(
         agent=self.name,
-        result=await self.run(query),
-      ).to_dict()
+        result=result,
+        trace=trace,
+      ).to_dict(include_trace=True)
 
     return StructuredTool.from_function(
       coroutine=run_specialist,
@@ -257,12 +272,13 @@ class SpecialistChatbotAgent:
 
 class ChatbotSupervisor:
   def __init__(self, session: Session, model: str | None = None):
+    self.model = model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_AGENT_MODEL)
     self.specialists = [
-      SpecialistChatbotAgent(session, spec, model=model)
+      SpecialistChatbotAgent(session, spec, model=self.model)
       for spec in SPECIALIST_AGENT_SPECS
     ]
     self.supervisor = create_agent(
-      model=model or os.getenv("OPENAI_CHAT_MODEL", DEFAULT_AGENT_MODEL),
+      model=self.model,
       tools=[specialist.as_tool() for specialist in self.specialists],
       system_prompt=SUPERVISOR_AGENT_SYSTEM_PROMPT,
     )
@@ -331,14 +347,32 @@ def extract_supervisor_result_with_trace(result: dict[str, Any]) -> tuple[dict[s
     if getattr(message, "type", None) == "tool"
   ]
   tool_results = parse_tool_messages(tool_messages)
+  supervisor_usage = collect_usage_metadata(result)
 
   if not tool_messages:
-    return no_matching_tool_result(), {"path": "supervisor_no_tool"}
+    execution = {"path": "supervisor_no_tool"}
+    if supervisor_usage:
+      execution["usage"] = supervisor_usage
+      execution["supervisorUsage"] = supervisor_usage
+    return no_matching_tool_result(), execution
 
   specialist_results = []
   for tool_result in tool_results:
     specialist_results.append(specialist_result_from_tool_result(tool_result))
   specialist_results, deduplicated_count = dedupe_specialist_results(specialist_results)
+  specialist_traces = [
+    item.trace
+    for item in specialist_results
+    if item.trace
+  ]
+  total_usage = merge_token_usage(
+    supervisor_usage,
+    *[
+      trace.get("usage")
+      for trace in specialist_traces
+      if isinstance(trace, dict)
+    ],
+  )
 
   if len(specialist_results) == 1:
     specialist_result = specialist_results[0]
@@ -348,6 +382,12 @@ def extract_supervisor_result_with_trace(result: dict[str, Any]) -> tuple[dict[s
     }
     if deduplicated_count:
       execution["deduplicatedCount"] = deduplicated_count
+    enrich_usage_trace(
+      execution,
+      total_usage=total_usage,
+      supervisor_usage=supervisor_usage,
+      specialist_traces=specialist_traces,
+    )
     return (
       specialist_result.result,
       execution,
@@ -358,6 +398,12 @@ def extract_supervisor_result_with_trace(result: dict[str, Any]) -> tuple[dict[s
   }
   if deduplicated_count:
     execution["deduplicatedCount"] = deduplicated_count
+  enrich_usage_trace(
+    execution,
+    total_usage=total_usage,
+    supervisor_usage=supervisor_usage,
+    specialist_traces=specialist_traces,
+  )
   return (
     aggregate_specialist_results(specialist_results),
     execution,
@@ -392,14 +438,17 @@ def parse_tool_messages(tool_messages: list[Any]) -> list[dict[str, Any]]:
 def specialist_result_from_tool_result(tool_result: dict[str, Any]) -> SpecialistAgentResult:
   agent_name = tool_result.get("agent")
   specialist_result = tool_result.get("result")
+  trace = tool_result.get("trace")
   if isinstance(agent_name, str) and isinstance(specialist_result, dict):
     return SpecialistAgentResult(
       agent=agent_name,
       result=specialist_result,
+      trace=trace if isinstance(trace, dict) else None,
     )
   return SpecialistAgentResult(
     agent=agent_name if isinstance(agent_name, str) else "unknown_agent",
     result=tool_result_parse_failed_result(),
+    trace=trace if isinstance(trace, dict) else None,
   )
 
 
@@ -528,6 +577,146 @@ def parse_tool_content_text(content: str) -> dict[str, Any] | None:
     if isinstance(parsed, dict):
       return parsed
   return None
+
+
+def agent_execution_trace(result: dict[str, Any], *, model: str) -> dict[str, Any]:
+  trace: dict[str, Any] = {"model": model}
+  usage = collect_usage_metadata(result)
+  if usage:
+    trace["usage"] = usage
+  tool_names = collect_tool_names(result)
+  if tool_names:
+    trace["toolCalls"] = tool_names
+  return trace
+
+
+def collect_tool_names(result: dict[str, Any]) -> list[str]:
+  messages = result.get("messages", [])
+  names: list[str] = []
+  if not isinstance(messages, list):
+    return names
+  for message in messages:
+    if get_message_value(message, "type") != "tool":
+      continue
+    name = get_message_value(message, "name")
+    if isinstance(name, str) and name and name not in names:
+      names.append(name)
+  return names
+
+
+def collect_usage_metadata(result: dict[str, Any]) -> dict[str, int] | None:
+  messages = result.get("messages", [])
+  if not isinstance(messages, list):
+    return None
+  usages = []
+  for message in messages:
+    usage = usage_from_message(message)
+    if usage:
+      usages.append(usage)
+  return merge_token_usage(*usages)
+
+
+def usage_from_message(message: Any) -> dict[str, int] | None:
+  usage = get_message_value(message, "usage_metadata")
+  normalized = normalize_token_usage(usage)
+  if normalized:
+    return normalized
+
+  response_metadata = get_message_value(message, "response_metadata")
+  if isinstance(response_metadata, dict):
+    for key in ("token_usage", "usage", "usage_metadata"):
+      normalized = normalize_token_usage(response_metadata.get(key))
+      if normalized:
+        return normalized
+  return None
+
+
+def normalize_token_usage(value: Any) -> dict[str, int] | None:
+  if not isinstance(value, dict):
+    return None
+  input_tokens = int_or_zero(
+    value.get("input_tokens")
+    or value.get("prompt_tokens")
+  )
+  output_tokens = int_or_zero(
+    value.get("output_tokens")
+    or value.get("completion_tokens")
+  )
+  total_tokens = int_or_zero(value.get("total_tokens"))
+  if total_tokens == 0:
+    total_tokens = input_tokens + output_tokens
+
+  cached_tokens = 0
+  input_details = value.get("input_token_details")
+  if isinstance(input_details, dict):
+    cached_tokens = int_or_zero(
+      input_details.get("cache_read")
+      or input_details.get("cached_tokens")
+    )
+  prompt_details = value.get("prompt_tokens_details")
+  if isinstance(prompt_details, dict):
+    cached_tokens = max(
+      cached_tokens,
+      int_or_zero(
+        prompt_details.get("cached_tokens")
+        or prompt_details.get("cache_read")
+      ),
+    )
+
+  if input_tokens == 0 and output_tokens == 0 and total_tokens == 0:
+    return None
+  return {
+    "input_tokens": input_tokens,
+    "output_tokens": output_tokens,
+    "cached_tokens": cached_tokens,
+    "total_tokens": total_tokens,
+  }
+
+
+def merge_token_usage(*usages: dict[str, Any] | None) -> dict[str, int] | None:
+  total = {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cached_tokens": 0,
+    "total_tokens": 0,
+  }
+  found = False
+  for usage in usages:
+    normalized = normalize_token_usage(usage)
+    if not normalized:
+      continue
+    found = True
+    for key in total:
+      total[key] += normalized.get(key, 0)
+  return total if found else None
+
+
+def enrich_usage_trace(
+  execution: dict[str, Any],
+  *,
+  total_usage: dict[str, int] | None,
+  supervisor_usage: dict[str, int] | None,
+  specialist_traces: list[dict[str, Any]],
+) -> None:
+  if total_usage:
+    execution["usage"] = total_usage
+  if supervisor_usage:
+    execution["supervisorUsage"] = supervisor_usage
+  if specialist_traces:
+    execution["specialistTraces"] = specialist_traces
+
+
+def get_message_value(value: Any, key: str) -> Any:
+  if isinstance(value, dict):
+    return value.get(key)
+  return getattr(value, key, None)
+
+
+def int_or_zero(value: Any) -> int:
+  try:
+    return int(value)
+  except (TypeError, ValueError):
+    return 0
 
 
 def no_matching_tool_result() -> dict[str, Any]:
