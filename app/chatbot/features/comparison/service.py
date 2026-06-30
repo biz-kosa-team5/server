@@ -7,6 +7,14 @@ from typing import Annotated, Any
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from app.chatbot.features.complex_resolver import (
+  AMBIGUOUS,
+  INSUFFICIENT_QUERY,
+  ComplexResolution,
+  ComplexResolver,
+  ComplexResolverContext,
+  neighborhood_from_address,
+)
 from app.chatbot.features.web_search import search_redevelopment_context, should_search_redevelopment_context
 from app.models import Complex
 from app.real_estate.dao import latest_trade_for_complex, pois_by_category
@@ -18,7 +26,7 @@ from app.real_estate.support import (
   pois_within_radius_for_complex,
 )
 
-from .formatting import comparison_item, find_complex_by_name
+from .formatting import comparison_item
 from .metrics import DEFAULT_METRICS, infrastructure_notes, normalize_metrics, requested_infra
 
 
@@ -40,6 +48,7 @@ class ComparisonService:
     normalized = normalize_slots(slots)
     names = normalized.get("apartment_names")
     if not isinstance(names, list) or len(names) < 2:
+      # 쉼표나 "랑"으로 못 나눈 경우, 원문에서 DB 단지명을 직접 스캔해 다시 찾는다.
       names = infer_apartment_names_from_text(session, str(normalized.get("_original_query") or ""))
       if names:
         normalized["apartment_names"] = names
@@ -48,11 +57,18 @@ class ComparisonService:
 
     infra_preferences = requested_infra(normalized)
     metrics = self._resolve_metrics(normalized, infra_preferences)
-    rows, missing = self._build_rows(session, names, metrics, normalized, infra_preferences)
+    rows, missing, candidate_groups, resolved_names, resolution_notes = self._build_rows(
+      session,
+      names,
+      metrics,
+      normalized,
+      infra_preferences,
+    )
+    success = len(rows) >= 2 and not missing and not candidate_groups
 
-    return {
+    response = {
       "handler": "comparison",
-      "success": bool(rows) and not missing,
+      "success": success,
       "criteria": {
         "apartment_names": names,
         "metrics": metrics,
@@ -62,8 +78,14 @@ class ComparisonService:
       },
       "results": rows,
       "missingApartmentNames": missing,
-      "message": "아파트 비교 데이터를 조회했습니다." if rows and not missing else "일부 아파트를 찾지 못했습니다.",
+      "candidateGroups": candidate_groups,
+      "resolvedApartmentNames": resolved_names,
+      "resolutionNotes": resolution_notes,
+      "message": comparison_message(rows, missing, candidate_groups),
     }
+    if candidate_groups:
+      response["reason"] = "ambiguous_target"
+    return response
 
   def _resolve_metrics(self, slots: dict[str, Any], infra_preferences: set[str]) -> list[str]:
     """명시 metric이 없으면 기본 metric을 쓰고, 인프라 조건을 반영한다."""
@@ -79,16 +101,11 @@ class ComparisonService:
     metrics: list[str],
     slots: dict[str, Any],
     infra_preferences: set[str],
-  ) -> tuple[list[dict[str, Any]], list[Any]]:
-    """각 아파트명을 DB row로 찾고 비교용 item으로 변환한다."""
+  ) -> tuple[list[dict[str, Any]], list[Any], list[dict[str, Any]], list[str], list[str]]:
+    """각 아파트명을 공통 resolver로 찾고 비교용 item으로 변환한다."""
+    resolved, missing, candidate_groups, resolution_notes = self._resolve_complexes(session, names)
     rows = []
-    missing = []
-    for name in names:
-      complex_row = find_complex_by_name(session, str(name))
-      if complex_row is None:
-        missing.append(name)
-        continue
-
+    for _name, complex_row in resolved:
       item = comparison_item(complex_row, latest_trade_for_complex(session, complex_row.id), metrics)
       self._attach_infrastructure(session, item, complex_row, metrics, slots)
       item["infrastructureNotes"] = infrastructure_notes(infra_preferences)
@@ -98,7 +115,74 @@ class ComparisonService:
         else []
       )
       rows.append(item)
-    return rows, missing
+    return rows, missing, candidate_groups, [row.name for _name, row in resolved], resolution_notes
+
+  def _resolve_complexes(
+    self,
+    session: Session,
+    names: list[Any],
+  ) -> tuple[list[tuple[str, Complex]], list[Any], list[dict[str, Any]], list[str]]:
+    resolver = ComplexResolver(session)
+    first_pass: list[tuple[str, ComplexResolution]] = [
+      (str(name), resolver.resolve(str(name)))
+      for name in names
+    ]
+
+    anchors = [
+      resolution.complex
+      for _name, resolution in first_pass
+      if resolution.resolved and resolution.complex is not None
+    ]
+
+    resolved: list[tuple[str, Complex]] = []
+    missing: list[Any] = []
+    candidate_groups: list[dict[str, Any]] = []
+    resolution_notes: list[str] = []
+
+    for name, resolution in first_pass:
+      current = resolution
+      if not current.resolved and current.status == AMBIGUOUS and anchors:
+        current = self._resolve_against_anchors(resolver, name, anchors, current)
+
+      if current.resolved and current.complex is not None:
+        resolved.append((name, current.complex))
+        resolution_notes.extend(current.resolution_notes)
+        continue
+
+      if current.status in {AMBIGUOUS, INSUFFICIENT_QUERY} or current.candidates:
+        candidate_groups.append(candidate_group(name, current))
+      else:
+        missing.append(name)
+
+    return resolved, missing, candidate_groups, dedupe_notes(resolution_notes)
+
+  def _resolve_against_anchors(
+    self,
+    resolver: ComplexResolver,
+    name: str,
+    anchors: list[Complex],
+    fallback: ComplexResolution,
+  ) -> ComplexResolution:
+    best = fallback
+    for anchor in anchors:
+      context = ComplexResolverContext(
+        anchor_complex=anchor,
+        region_id=anchor.region_id,
+        address_keywords=tuple(
+          keyword
+          for keyword in [neighborhood_from_address(anchor.address)]
+          if keyword
+        ),
+      )
+      candidate = resolver.resolve(name, context)
+      if candidate.resolved:
+        return candidate
+      if candidate.candidates and (
+        not best.candidates
+        or int(candidate.candidates[0].get("score") or 0) > int(best.candidates[0].get("score") or 0)
+      ):
+        best = candidate
+    return best
 
   def _attach_infrastructure(
     self,
@@ -140,6 +224,40 @@ def run_comparison(session: Session, slots: dict[str, Any], text: str = "") -> d
   return ComparisonService().run(session, slots, text)
 
 
+def comparison_message(
+  rows: list[dict[str, Any]],
+  missing: list[Any],
+  candidate_groups: list[dict[str, Any]],
+) -> str:
+  if candidate_groups:
+    return "비교 대상 중 단지명이 모호해 후보 선택이 필요합니다."
+  if rows and not missing:
+    return "아파트 비교 데이터를 조회했습니다."
+  if missing:
+    return "일부 아파트를 찾지 못했습니다."
+  return "비교할 아파트 데이터가 부족합니다."
+
+
+def candidate_group(name: str, resolution: ComplexResolution) -> dict[str, Any]:
+  return {
+    "input": name,
+    "status": resolution.status,
+    "message": resolution.message,
+    "candidates": resolution.candidates[:5],
+  }
+
+
+def dedupe_notes(values: list[str]) -> list[str]:
+  result = []
+  seen = set()
+  for value in values:
+    if not value or value in seen:
+      continue
+    result.append(value)
+    seen.add(value)
+  return result
+
+
 def nearby_lifestyle_pois(session: Session, complex_row: Any, max_distance_m: int = 800) -> list[dict[str, Any]]:
   pois = []
   for category in ("commercial", "medical"):
@@ -148,6 +266,8 @@ def nearby_lifestyle_pois(session: Session, complex_row: Any, max_distance_m: in
 
 
 def infer_apartment_names_from_text(session: Session, text: str, limit: int = 3) -> list[str]:
+  # "다성리치빌루컴스힐더테라스"처럼 붙여 쓴 비교도 처리하기 위해
+  # 공백/조사/비교 표현을 제거한 문자열에서 DB 단지명을 찾아낸다.
   query_key = normalize_name_scan_text(text)
   if not query_key:
     return []
@@ -173,6 +293,7 @@ def infer_apartment_names_from_text(session: Session, text: str, limit: int = 3)
 
 
 def select_non_overlapping_name_matches(matches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+  # 짧은 이름이 긴 이름 안에 겹쳐 잡히는 문제를 막기 위해 긴 단지명을 우선 선택한다.
   selected = []
   occupied_spans: list[tuple[int, int]] = []
   seen_names = set()

@@ -12,11 +12,11 @@ from app.models import Complex, Region
 
 
 MAX_ACTIONS = 5
-MAX_RECOMMENDATION_ACTIONS = 3
+MAX_RECOMMENDATION_ACTIONS = 5
 MAX_COMPARISON_ACTIONS = 2
 MAX_RANKING_ACTIONS = 3
 MAX_ARTIFACTS = 3
-MAX_RECOMMENDATION_ITEMS = 3
+MAX_RECOMMENDATION_ITEMS = 5
 MAX_RANKING_ITEMS = 5
 MAX_TREND_POINTS = 18
 
@@ -37,6 +37,7 @@ ACTION_SOURCE_PRIORITY = {
   "recommendation.results": 2,
   "comparison.results": 3,
   "simple_lookup.trade_history": 4,
+  "simple_lookup.region_trade_history": 4,
   "simple_lookup.complex_price_record": 5,
   "price_trend.complex_timeseries": 6,
   "simple_lookup.region_price_ranking": 7,
@@ -226,6 +227,21 @@ def simple_lookup_actions(session: Session, result: dict[str, Any]) -> Iterable[
     )
     if action:
       yield f"simple_lookup.{query_type}", action
+    return
+
+  if query_type == "region_trade_history":
+    for row in data[:MAX_RANKING_ACTIONS]:
+      complex_row = resolve_complex_target(
+        session,
+        complex_id=to_int_or_none(row.get("complex_id")),
+        name=clean_text(row.get("complex_name")),
+      )
+      action = focus_action_from_complex(
+        merge_complex_source(row, complex_row),
+        "simple_lookup.region_trade_history",
+      )
+      if action:
+        yield "simple_lookup.region_trade_history", action
     return
 
   if query_type == "region_price_ranking":

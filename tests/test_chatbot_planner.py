@@ -20,6 +20,31 @@ def test_planner_routes_candidate_comparison_as_dependent_multi_feature():
   assert plan.steps[1].depends_on == "recommendation_agent"
 
 
+def test_planner_routes_recommendation_reference_comparison_as_dependent_multi_feature():
+  plan = build_execution_plan("근처에 대형마트가 있는 서초구 아파트를 추천해주라 3개 정도 그리고 그 3개를 비교까지 해주면 좋겠어")
+
+  assert plan.plan_type == "dependent_multi_feature"
+  assert handlers(plan) == ["recommendation", "comparison"]
+  assert plan.steps[1].mode == "dependent"
+  assert plan.steps[1].depends_on == "recommendation_agent"
+
+
+def test_planner_routes_recommendation_then_comparison_order_as_dependent_multi_feature():
+  plan = build_execution_plan("서초구 아파트 3개 추천하고 그 후보 가격이랑 교통 비교해줘")
+
+  assert plan.plan_type == "dependent_multi_feature"
+  assert handlers(plan) == ["recommendation", "comparison"]
+  assert plan.steps[1].depends_on == "recommendation_agent"
+
+
+def test_planner_does_not_route_reference_only_comparison_to_comparison():
+  plan = build_execution_plan("그 3개 비교해줘")
+
+  assert plan.plan_type == "unsupported_feature"
+  assert handlers(plan) == ["no_matching_tool"]
+  assert plan.reason == "missing_recommendation_candidates_for_comparison"
+
+
 def test_planner_routes_nearby_station_apartment_comparison_as_dependent_multi_feature():
   plan = build_execution_plan("잠실역이랑 가까운 아파트들을 비교해줘")
 
@@ -41,6 +66,40 @@ def test_planner_routes_plain_complex_price_as_ambiguous_multi_feature():
     "target_name": "잠실엘스",
     "period": "1y",
   }
+
+
+def test_planner_routes_generic_complex_profile_to_location_trade_and_trend():
+  plan = build_execution_plan("은마 아파트 정보를 줘봐")
+
+  assert plan.plan_type == "ambiguous_multi_feature"
+  assert plan.reason == "generic_complex_profile_needs_location_trade_and_trend"
+  assert handlers(plan) == ["simple_lookup", "simple_lookup", "price_trend"]
+  assert [step.query for step in plan.steps] == [
+    "은마 위치 알려줘",
+    "은마 최근 실거래 알려줘",
+    "은마 최근 1년 가격 흐름 알려줘",
+  ]
+  assert plan.steps[0].slot_overrides == {
+    "query_type": "location",
+    "target_name": "은마",
+  }
+  assert plan.steps[1].slot_overrides == {
+    "query_type": "trade_history",
+    "target_name": "은마",
+  }
+  assert plan.steps[2].slot_overrides == {
+    "analysis_type": "timeseries",
+    "target_type": "complex",
+    "target_name": "은마",
+    "period": "1y",
+  }
+
+
+def test_planner_normalizes_joined_apartment_suffix_for_generic_profile():
+  plan = build_execution_plan("은마아파트 알려줘")
+
+  assert plan.plan_type == "ambiguous_multi_feature"
+  assert [step.slot_overrides["target_name"] for step in plan.steps] == ["은마", "은마", "은마"]
 
 
 def test_planner_routes_recommendation_and_legal_as_independent_multi_feature():
@@ -90,8 +149,22 @@ def test_planner_routes_indirect_comparison_phrases_to_comparison():
   assert handlers(plan) == ["comparison"]
 
 
+def test_planner_prioritizes_comparison_over_education_recommendation_signal():
+  plan = build_execution_plan("은마아파트랑 잠실엘스 중 초등학교가 더 가까운 곳 비교")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["comparison"]
+
+
 def test_planner_routes_station_apartment_lookup_like_recommendation():
   plan = build_execution_plan("서초역 근처 아파트 알려줘")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["recommendation"]
+
+
+def test_planner_routes_short_school_nearby_question_to_recommendation():
+  plan = build_execution_plan("초등학교근처")
 
   assert plan.plan_type == "single_feature"
   assert handlers(plan) == ["recommendation"]
@@ -209,6 +282,17 @@ def test_planner_routes_region_price_record_to_lookup_not_recommendation():
     "target_name": "서초구",
     "query_type": "region_price_ranking",
     "price_order": "highest",
+  }
+
+
+def test_planner_routes_neighborhood_latest_trades_to_region_trade_history():
+  plan = build_execution_plan("대치동 최신 실거래가 3개 뽑아줘")
+
+  assert plan.plan_type == "single_feature"
+  assert handlers(plan) == ["simple_lookup"]
+  assert plan.steps[0].slot_overrides == {
+    "target_name": "대치동",
+    "query_type": "region_trade_history",
   }
 
 

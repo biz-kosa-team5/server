@@ -10,6 +10,7 @@ from app.chatbot.service.tools import (
   build_simple_lookup_tool,
 )
 from app.database import SessionLocal, ensure_initialized
+from app.models import Complex
 
 
 def test_recommendation_extractor_builds_filter_slots():
@@ -80,6 +81,15 @@ def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
   assert slots["limit"] == 3
 
 
+def test_recommendation_extractor_handles_short_school_nearby_query():
+  slots = extract_recommendation_slots("초등학교근처")
+
+  assert slots["school_type"] == "초등학교"
+  assert slots["radius_m"] == 800
+  assert slots["sort_by"] == "school_distance_asc"
+  assert slots["infra_preferences"] == ["education"]
+
+
 def test_recommendation_extractor_keeps_district_and_price_words_distinct():
   cheap_slots = extract_recommendation_slots("서초구 20억 이하 저렴한 아파트 4곳 추천해줘")
   expensive_slots = extract_recommendation_slots("청담역 주변 비싼 아파트 3개 추천해줘")
@@ -105,6 +115,17 @@ def test_comparison_extractor_accepts_comma_separated_names():
   assert slots["apartment_names"] == ["잠실엘스", "래미안대치펠리스"]
 
 
+def test_comparison_extractor_removes_leading_discourse_marker():
+  assert extract_compare_slots("그럼은마아파트랑 선경 아파트 비교해줘")["apartment_names"] == [
+    "은마아파트",
+    "선경 아파트",
+  ]
+  assert extract_compare_slots("그러면 은마아파트랑 선경 아파트 비교해줘")["apartment_names"] == [
+    "은마아파트",
+    "선경 아파트",
+  ]
+
+
 def test_comparison_extractor_cleans_metric_words_from_names():
   assert extract_compare_slots("반포자이랑 래미안퍼스티지 초등학교 접근성 비교해줘")["apartment_names"] == [
     "반포자이",
@@ -126,6 +147,10 @@ def test_comparison_extractor_cleans_metric_words_from_names():
     "잠실엘스",
     "리센츠",
   ]
+  assert extract_compare_slots("래미안대치팰리스랑 잠실엘스 중 어디가 초등학교에 가까워?")["apartment_names"] == [
+    "래미안대치팰리스",
+    "잠실엘스",
+  ]
 
 
 def test_comparison_name_lookup_accepts_palace_spelling_variant():
@@ -140,6 +165,49 @@ def test_comparison_name_lookup_accepts_palace_spelling_variant():
   assert result["success"] is True, result
   assert result["missingApartmentNames"] == []
   assert [row["complexName"] for row in result["results"]] == ["잠실엘스", "래미안대치팰리스"]
+
+
+def test_comparison_name_lookup_accepts_minor_typo():
+  ensure_initialized()
+  with SessionLocal() as session:
+    result = run_comparison(
+      session,
+      extract_compare_slots("레미안대치팰리스랑 잠실엘스 비교해줘"),
+      "레미안대치팰리스랑 잠실엘스 비교해줘",
+    )
+
+  assert result["success"] is True, result
+  assert result["missingApartmentNames"] == []
+  assert [row["complexName"] for row in result["results"]] == ["래미안대치팰리스", "잠실엘스"]
+
+
+def test_comparison_name_lookup_normalizes_spacing_and_spelling_variant():
+  ensure_initialized()
+  with SessionLocal() as session:
+    session.add(
+      Complex(
+        id=990901,
+        region_id=11680,
+        parcel_id=9909001,
+        pnu="1168010600199090001",
+        name="테스트 레이크 팰리스",
+        trade_name="테스트 레이크 팰리스",
+        address="서울특별시 강남구 대치동 990",
+        latitude=37.4984,
+        longitude=127.0632,
+      )
+    )
+    session.flush()
+
+    question = "테스트레이크펠리스랑 잠실엘스 중 어디가 초등학교에 가까워?"
+    result = run_comparison(session, extract_compare_slots(question), question)
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["missingApartmentNames"] == []
+  assert result["criteria"]["school_type"] == "초등학교"
+  assert [row["complexName"] for row in result["results"]] == ["테스트 레이크 팰리스", "잠실엘스"]
+  assert all(row["nearestSchool"] is not None for row in result["results"])
 
 
 def test_comparison_infers_names_without_explicit_separator():

@@ -25,9 +25,11 @@ def test_orchestrator_skips_direct_lookup_and_trend():
 
 
 def test_orchestrator_passes_recommendation_candidates_to_comparison(monkeypatch):
+  call_order = []
   comparison_calls = []
 
   def fake_recommendation(_session, slots, text):
+    call_order.append("recommendation")
     return {
       "handler": "recommendation",
       "success": True,
@@ -41,6 +43,7 @@ def test_orchestrator_passes_recommendation_candidates_to_comparison(monkeypatch
     }
 
   def fake_comparison(_session, slots, text):
+    call_order.append("comparison")
     comparison_calls.append((slots, text))
     return {
       "handler": "comparison",
@@ -55,6 +58,7 @@ def test_orchestrator_passes_recommendation_candidates_to_comparison(monkeypatch
 
   orchestration = run_plan("강남구 아파트 추천하고 후보 비교도 해줘")
 
+  assert call_order == ["recommendation", "comparison"]
   assert comparison_calls[0][0]["apartment_names"] == ["잠실엘스", "래미안대치팰리스"]
   assert orchestration.result["status"] == "success"
   assert orchestration.execution["path"] == "direct_dependent_features"
@@ -86,6 +90,46 @@ def test_orchestrator_compares_three_candidates_when_requested(monkeypatch):
   run_plan("강남구 아파트 추천하고 후보 3개 비교도 해줘")
 
   assert comparison_calls[0]["apartment_names"] == ["잠실엘스", "래미안대치팰리스", "반포자이"]
+
+
+def test_orchestrator_extracts_candidate_names_from_supported_fields(monkeypatch):
+  comparison_calls = []
+
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", lambda *_: {
+    "handler": "recommendation",
+    "success": True,
+    "results": [
+      {"name": "A아파트"},
+      {"complex_name": "B아파트"},
+      {"complexName": "A아파트"},
+      {"complexName": "C아파트"},
+    ],
+  })
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", lambda _session, slots, _text: (
+    comparison_calls.append(slots) or {
+      "handler": "comparison",
+      "success": True,
+      "criteria": {"apartment_names": slots["apartment_names"]},
+      "results": [],
+    }
+  ))
+
+  run_plan("서초구 아파트 추천하고 그 3개 비교해줘")
+
+  assert comparison_calls[0]["apartment_names"] == ["A아파트", "B아파트", "C아파트"]
+
+
+def test_orchestrator_does_not_run_comparison_for_reference_only_comparison(monkeypatch):
+  comparison_calls = []
+
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", lambda *_: comparison_calls.append(True))
+
+  orchestration = run_plan("그 후보 비교해줘")
+
+  assert comparison_calls == []
+  assert orchestration.result["success"] is False
+  assert orchestration.result["reason"] == "no_matching_tool"
+  assert orchestration.result["message"] == "비교할 추천 후보를 먼저 확인하지 못했습니다. 비교할 아파트명을 직접 알려주시거나, 먼저 추천 조건을 함께 입력해 주세요."
 
 
 def test_orchestrator_skips_comparison_when_recommendation_has_one_candidate(monkeypatch):

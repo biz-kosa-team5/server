@@ -50,15 +50,19 @@ def latest_trade_matches(latest_trade: Trade | None, slots: dict[str, Any]) -> b
   min_price = optional_int(slots.get("min_price"))
   max_price = optional_int(slots.get("max_price"))
   min_pyeong = optional_float(slots.get("min_pyeong"))
+  max_pyeong = optional_float(slots.get("max_pyeong"))
 
   if latest_trade is None:
-    return min_price is None and max_price is None and min_pyeong is None
+    return min_price is None and max_price is None and min_pyeong is None and max_pyeong is None
 
   if min_price is not None and latest_trade.deal_amount < min_price:
     return False
   if max_price is not None and latest_trade.deal_amount > max_price:
     return False
-  if min_pyeong is not None and latest_trade.excl_area / PYEONG_DIVISOR < min_pyeong:
+  pyeong = latest_trade.excl_area / PYEONG_DIVISOR
+  if min_pyeong is not None and pyeong < min_pyeong:
+    return False
+  if max_pyeong is not None and pyeong > max_pyeong:
     return False
   return True
 

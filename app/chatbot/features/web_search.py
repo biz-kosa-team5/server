@@ -11,7 +11,7 @@ from typing import Any
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 DEFAULT_TIMEOUT_SECONDS = 4
-REDEVELOPMENT_KEYWORDS = ("재개발", "재건축", "정비사업", "호재", "미래", "전망")
+REDEVELOPMENT_KEYWORDS = ("재개발", "재건축", "정비사업", "호재", "미래", "전망", "투자", "투자가치", "투자 가치")
 
 logger = logging.getLogger(__name__)
 

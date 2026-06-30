@@ -193,8 +193,9 @@ def test_chatbot_answer_fallback_includes_dependent_recommendation_and_compariso
 
   assert "잠실엘스" in answer
   assert "래미안대치팰리스" in answer
-  assert "조회된 데이터 기준으로는 다음 후보" in answer
-  assert "조회된 데이터 기준으로 비교" in answer
+  assert "먼저 조건에 맞는 추천 후보" in answer
+  assert "이어서 위 추천 후보" in answer
+  assert "종합하면" in answer
 
 
 def test_chatbot_answer_fallback_includes_ambiguous_lookup_and_trend():

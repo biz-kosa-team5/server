@@ -200,13 +200,120 @@ def test_chatbot_answer_composer_falls_back_when_forbidden_term_is_returned(monk
   assert "tool" not in answer
 
 
-def test_chatbot_answer_composer_limits_answer_to_500_chars(monkeypatch):
+def test_chatbot_answer_composer_limits_answer_to_1000_chars(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-  completions = RecordingCompletions(content="문장입니다. " * 80)
+  completions = RecordingCompletions(content="문장입니다. " * 160)
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(success_context()))
 
-  assert len(answer) <= 500
+  assert len(answer) <= 1000
+
+
+def test_chatbot_answer_composer_uses_long_deterministic_sequence_without_llm(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="호출되면 안 됩니다.")
+  long_address = "서울특별시 서초구 반포동 생활편의와 교통 접근성 설명이 긴 주소 메모 " * 6
+  context = success_context(result={
+    "success": True,
+    "status": "success",
+    "message": "여러 전문 에이전트 결과를 처리했습니다.",
+    "results": [
+      {
+        "agent": "recommendation_agent",
+        "success": True,
+        "result": {
+          "handler": "recommendation",
+          "success": True,
+          "results": [
+            {
+              "complexName": "서초그랑자이",
+              "address": long_address,
+              "latestDealAmount": 350000,
+              "unitCnt": 1446,
+              "useDate": "2021-06-01",
+              "infrastructure": {
+                "nearestStation": {"name": "교대역", "distanceM": 520},
+                "nearestEducation": {"name": "서초초등학교", "distanceM": 430},
+                "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+              },
+            },
+            {
+              "complexName": "래미안서초에스티지",
+              "address": long_address,
+              "latestDealAmount": 320000,
+              "unitCnt": 421,
+              "useDate": "2016-12-01",
+              "infrastructure": {
+                "nearestStation": {"name": "강남역", "distanceM": 610},
+                "nearestEducation": {"name": "서이초등학교", "distanceM": 500},
+                "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+              },
+            },
+            {
+              "complexName": "반포자이",
+              "address": long_address,
+              "latestDealAmount": 410000,
+              "unitCnt": 3410,
+              "useDate": "2009-03-01",
+              "infrastructure": {
+                "nearestStation": {"name": "고속터미널역", "distanceM": 700},
+                "nearestEducation": {"name": "원촌초등학교", "distanceM": 650},
+                "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+              },
+            },
+          ],
+        },
+      },
+      {
+        "agent": "comparison_agent",
+        "success": True,
+        "dependsOn": "recommendation_agent",
+        "result": {
+          "handler": "comparison",
+          "success": True,
+          "criteria": {"apartment_names": ["서초그랑자이", "래미안서초에스티지", "반포자이"]},
+          "results": [
+            {
+              "complexName": "서초그랑자이",
+              "latestDealAmount": 350000,
+              "pyeong": 34,
+              "pricePerPyeong": 10294,
+              "unitCnt": 1446,
+              "builtYear": 2021,
+              "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+            },
+            {
+              "complexName": "래미안서초에스티지",
+              "latestDealAmount": 320000,
+              "pyeong": 34,
+              "pricePerPyeong": 9411,
+              "unitCnt": 421,
+              "builtYear": 2016,
+              "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+            },
+            {
+              "complexName": "반포자이",
+              "latestDealAmount": 410000,
+              "pyeong": 34,
+              "pricePerPyeong": 12058,
+              "unitCnt": 3410,
+              "builtYear": 2009,
+              "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
+            },
+          ],
+        },
+      },
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert completions.calls == []
+  assert len(answer) > 1000
+  assert len(answer) <= 5000
+  assert "먼저 조건에 맞는 추천 후보 3개입니다." in answer
+  assert "이어서 위 추천 후보 3개를 비교하면 다음과 같습니다." in answer
+  assert "종합하면" in answer
 
 
 def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendation(monkeypatch):
@@ -234,7 +341,7 @@ def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendat
   assert "생활편의 연치과병원 300m" in answer
   assert "재건축/정비사업 정보 없음" in answer
   assert "\n" in answer
-  assert len(answer) <= 650
+  assert len(answer) <= 1000
 
 
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):

@@ -18,6 +18,8 @@ from app.chatbot.service.answer.formatters.comparison import format_comparison_r
 from app.chatbot.service.answer.formatters.legal_contract import format_legal_contract_result
 from app.chatbot.service.answer.formatters.result import format_result_messages
 from app.chatbot.service.answer.formatters.simple_lookup import format_simple_lookup_result
+from app.chatbot.service.answer.composer import finalize_answer_text
+from app.chatbot.service.answer.context import ChatbotAnswerContext
 
 
 def test_simple_lookup_formatter_uses_location_dto_shape():
@@ -67,6 +69,27 @@ def test_simple_lookup_formatter_uses_trade_dto_shape():
   assert format_simple_lookup_result(result) == (
     "잠실엘스 실거래 내역은 2026-01-20 43.5억원 전용 84.97㎡ 15층입니다."
   )
+
+
+def test_simple_lookup_formatter_renders_ambiguous_candidates():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": False,
+    "query_type": QUERY_LOCATION,
+    "criteria": {"target_name": "우성아파트"},
+    "reason": "ambiguous_target",
+    "message": "여러 단지가 검색되었습니다.",
+    "candidates": [
+      {"complex_id": 1, "complex_name": "청담우성아파트", "address": "서울특별시 강남구 청담동 11-25"},
+      {"complex_id": 2, "complex_name": "대치우성아파트", "address": "서울특별시 강남구 대치동 63"},
+      {"complex_id": 3, "complex_name": "잠실우성아파트", "address": "서울특별시 송파구 잠실동 101"},
+    ],
+  })
+
+  assert "우성아파트로 검색되는 단지가 여러 개 있습니다." in answer
+  assert "1. 청담동 청담우성아파트" in answer
+  assert "2. 대치동 대치우성아파트" in answer
+  assert "어느 단지인지" in answer
 
 
 def test_price_trend_formatter_uses_timeseries_observation_rows():
@@ -292,6 +315,62 @@ def test_comparison_formatter_avoids_duplicate_missing_message_when_too_few_resu
 
   assert answer.count("일부 아파트를 찾지 못했습니다") == 1
   assert "비교할 아파트 데이터가 부족합니다" in answer
+
+
+def test_comparison_formatter_renders_candidate_groups_with_resolved_context():
+  answer = format_comparison_result({
+    "handler": "comparison",
+    "success": False,
+    "criteria": {"apartment_names": ["우성 아파트", "삼성 3차 아파트"]},
+    "results": [],
+    "missingApartmentNames": [],
+    "resolvedApartmentNames": ["삼성3차"],
+    "resolutionNotes": ["삼성 3차 아파트는 단지로 확인했습니다."],
+    "candidateGroups": [
+      {
+        "input": "우성 아파트",
+        "status": "ambiguous",
+        "candidates": [
+          {"complex_id": 1, "complex_name": "대치우성아파트", "address": "서울특별시 강남구 대치동 63"},
+          {"complex_id": 2, "complex_name": "청담우성아파트", "address": "서울특별시 강남구 청담동 11-25"},
+        ],
+      },
+    ],
+  })
+
+  assert "삼성3차는 단지로 확인했습니다." in answer
+  assert "우성 아파트로 검색되는 단지가 여러 개 있습니다." in answer
+  assert "대치우성아파트" in answer
+  assert "비교를 진행하려면" in answer
+
+
+def test_finalize_answer_replaces_missing_text_when_candidates_exist():
+  context = ChatbotAnswerContext(
+    question="우성 아파트 찾아줘",
+    success=False,
+    status="failed",
+    message="처리할 수 있는 질문이 없습니다.",
+    fragments=[],
+    result={
+      "handler": "simple_lookup",
+      "success": False,
+      "query_type": QUERY_LOCATION,
+      "criteria": {"target_name": "우성아파트"},
+      "reason": "ambiguous_target",
+      "message": "여러 단지가 검색되었습니다.",
+      "candidates": [
+        {"complex_id": 1, "complex_name": "청담우성아파트", "address": "서울특별시 강남구 청담동 11-25"},
+        {"complex_id": 2, "complex_name": "대치우성아파트", "address": "서울특별시 강남구 대치동 63"},
+      ],
+    },
+    executionSummary={"total": 1, "succeeded": 0, "failed": 1},
+  )
+
+  answer = finalize_answer_text("우성아파트를 찾을 수 없습니다.", context)
+
+  assert "찾을 수 없습니다" not in answer
+  assert "청담우성아파트" in answer
+  assert "대치우성아파트" in answer
 
 
 def test_legal_contract_formatter_uses_sources_without_internal_fields():

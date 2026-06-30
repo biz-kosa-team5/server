@@ -36,6 +36,23 @@ class ExecutionPlan:
 
 
 RECOMMENDATION_SIGNALS = ("추천", "권해", "골라", "조건에 맞는")
+EDUCATION_RECOMMENDATION_SIGNALS = (
+  "애 키우",
+  "아이 키우",
+  "자녀",
+  "육아",
+  "학군",
+  "학군 좋은",
+  "학교 근처",
+  "학교근처",
+  "초등학교 근처",
+  "초등학교근처",
+  "초등 근처",
+  "초등근처",
+  "초등학교 도보권",
+  "학교 도보권",
+  "초품아",
+)
 COMPARISON_SIGNALS = ("비교", "차이", "둘 중", "어디가 더", " vs ", "vs")
 DEPENDENCY_SIGNALS = (
   "후보 비교",
@@ -45,6 +62,16 @@ DEPENDENCY_SIGNALS = (
   "추천한 다음 비교",
   "추천하고 비교",
   "추천하고 후보 비교",
+  "그 3개",
+  "그 세 개",
+  "그 후보",
+  "그 단지",
+  "위 후보",
+  "위 단지",
+  "위 3개",
+  "추천한 단지",
+  "추천한 후보",
+  "방금 추천",
 )
 LOOKUP_ONLY_SIGNALS = (
   "위치",
@@ -72,6 +99,21 @@ TREND_ONLY_SIGNALS = (
   "오른",
   "내린",
 )
+GENERIC_COMPLEX_PROFILE_SIGNALS = (
+  "정보",
+  "요약",
+  "개요",
+  "설명",
+  "궁금",
+  "어떤 아파트",
+  "어떤 단지",
+)
+GENERIC_COMPLEX_PROFILE_REJECT_TARGETS = {
+  "부동산",
+  "부동산시장",
+  "시장",
+  "요즘부동산시장",
+}
 AMBIGUOUS_PRICE_SIGNALS = ("시세", "가격", "얼마")
 LEGAL_SIGNALS = (
   "계약",
@@ -109,6 +151,10 @@ LEGAL_SIGNALS = (
 )
 UNSUPPORTED_SIGNALS = ("날씨", "주식", "환율", "서울 아파트", "부동산 후보", "근처 학교", "신고가", "신저가")
 REGION_PATTERN = re.compile(r"강남\s*3구|강남삼구|강남3구|강남구|서초구|송파구|강남|서초|송파")
+COMPARISON_REQUIRES_CANDIDATE_MESSAGE = (
+  "비교할 추천 후보를 먼저 확인하지 못했습니다. "
+  "비교할 아파트명을 직접 알려주시거나, 먼저 추천 조건을 함께 입력해 주세요."
+)
 
 
 AGENT_BY_HANDLER = {
@@ -135,6 +181,8 @@ def build_execution_plan(text: str) -> ExecutionPlan:
   if not question:
     return supervisor_plan("empty_question")
 
+  # 발표 흐름 기준: 여기서 사용자 질문을 추천/비교/조회/RAG 중 어느 기능으로 보낼지 결정한다.
+  # 구체적인 복합 질문을 먼저 잡고, 마지막에 단일 기능 질문을 판단한다.
   nearby_comparison_plan = build_nearby_candidate_comparison_plan(question)
   if nearby_comparison_plan is not None:
     return nearby_comparison_plan
@@ -143,8 +191,16 @@ def build_execution_plan(text: str) -> ExecutionPlan:
   if dependent_plan is not None:
     return dependent_plan
 
+  reference_only_comparison_plan = build_reference_only_comparison_plan(question)
+  if reference_only_comparison_plan is not None:
+    return reference_only_comparison_plan
+
   if looks_like_unsupported_dependent_chain(question):
     return supervisor_plan("unsupported_dependent_chain")
+
+  generic_profile_plan = build_generic_complex_profile_plan(question)
+  if generic_profile_plan is not None:
+    return generic_profile_plan
 
   same_tool_plan = build_same_tool_multi_feature_plan(question)
   if same_tool_plan is not None:
@@ -177,11 +233,12 @@ def build_execution_plan(text: str) -> ExecutionPlan:
 
 
 def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
+  # "추천 후보를 비교"처럼 앞 단계 결과가 뒤 단계 입력이 되는 질문 처리.
   if not has_recommendation_signal(text):
     return None
   if not has_comparison_signal(text):
     return None
-  if not has_dependency_signal(text):
+  if not looks_like_dependent_recommendation_comparison(text):
     return None
 
   return ExecutionPlan(
@@ -199,7 +256,53 @@ def build_dependent_multi_feature_plan(text: str) -> ExecutionPlan | None:
         depends_on="recommendation_agent",
       ),
     ],
-    reason="recommendation_candidates_feed_comparison",
+    reason="recommendation_result_feeds_comparison",
+  )
+
+
+def build_reference_only_comparison_plan(text: str) -> ExecutionPlan | None:
+  if not has_comparison_signal(text):
+    return None
+  if has_recommendation_signal(text):
+    return None
+  if not has_recommendation_reference_signal(text):
+    return None
+
+  return ExecutionPlan(
+    plan_type="unsupported_feature",
+    steps=[
+      FeatureStep(
+        agent="unsupported_agent",
+        handler="no_matching_tool",
+        mode="direct",
+        slot_overrides={
+          "message": COMPARISON_REQUIRES_CANDIDATE_MESSAGE,
+          "suggestedQuestions": [
+            "서초구 아파트 3개 추천해주고 그 후보를 비교해줘",
+            "래미안대치팰리스랑 잠실엘스 가격 비교해줘",
+          ],
+        },
+        query=text,
+      ),
+    ],
+    reason="missing_recommendation_candidates_for_comparison",
+  )
+
+
+def looks_like_dependent_recommendation_comparison(text: str) -> bool:
+  if has_dependency_signal(text) or has_recommendation_reference_signal(text):
+    return True
+
+  recommendation_position = signal_position(text, RECOMMENDATION_SIGNALS)
+  comparison_position = signal_position(text, COMPARISON_SIGNALS)
+  if recommendation_position < comparison_position:
+    return True
+
+  return (
+    re.search(r"\d+\s*(?:개|곳|건)\s*추천.*비교", text) is not None
+    or re.search(r"추천.*\d+\s*(?:개|곳|건).*비교", text) is not None
+    or re.search(r"세\s*(?:개|곳)\s*추천.*비교", text) is not None
+    or re.search(r"추천.*세\s*(?:개|곳).*비교", text) is not None
   )
 
 
@@ -238,6 +341,20 @@ def has_dependency_signal(text: str) -> bool:
   if any(signal in text for signal in DEPENDENCY_SIGNALS):
     return True
   return re.search(r"후보(?:\s*\d+\s*(?:개|곳|건))?\s*비교", text) is not None
+
+
+def has_recommendation_reference_signal(text: str) -> bool:
+  if any(signal in text for signal in DEPENDENCY_SIGNALS):
+    return True
+  return re.search(
+    r"그\s*\d+\s*(?:개|곳|건)"
+    r"|위\s*\d+\s*(?:개|곳|건)"
+    r"|그\s*(?:후보|단지)"
+    r"|위\s*(?:후보|단지)"
+    r"|추천(?:한)?\s*(?:후보|단지)"
+    r"|방금\s*추천",
+    text,
+  ) is not None
 
 
 def looks_like_unsupported_dependent_chain(text: str) -> bool:
@@ -441,6 +558,54 @@ def build_ambiguous_multi_feature_plan(text: str) -> ExecutionPlan | None:
   )
 
 
+def build_generic_complex_profile_plan(text: str) -> ExecutionPlan | None:
+  if not looks_like_generic_complex_profile_question(text):
+    return None
+
+  target_name = extract_generic_complex_profile_target_name(text)
+  if not target_name:
+    return None
+
+  return ExecutionPlan(
+    plan_type="ambiguous_multi_feature",
+    steps=[
+      FeatureStep(
+        agent="lookup_agent",
+        handler="simple_lookup",
+        mode="ambiguous",
+        query=f"{target_name} 위치 알려줘",
+        slot_overrides={
+          "query_type": "location",
+          "target_name": target_name,
+        },
+      ),
+      FeatureStep(
+        agent="lookup_agent",
+        handler="simple_lookup",
+        mode="ambiguous",
+        query=f"{target_name} 최근 실거래 알려줘",
+        slot_overrides={
+          "query_type": "trade_history",
+          "target_name": target_name,
+        },
+      ),
+      FeatureStep(
+        agent="price_trend_agent",
+        handler="price_trend",
+        mode="ambiguous",
+        query=f"{target_name} 최근 1년 가격 흐름 알려줘",
+        slot_overrides={
+          "analysis_type": "timeseries",
+          "target_type": "complex",
+          "target_name": target_name,
+          "period": "1y",
+        },
+      ),
+    ],
+    reason="generic_complex_profile_needs_location_trade_and_trend",
+  )
+
+
 def build_independent_multi_feature_plan(text: str) -> ExecutionPlan | None:
   handlers = detected_handlers(text)
   if len(handlers) < 2:
@@ -466,6 +631,7 @@ def build_independent_multi_feature_plan(text: str) -> ExecutionPlan | None:
 
 
 def build_single_feature_plan(text: str) -> ExecutionPlan | None:
+  # 가장 일반적인 흐름: 추천이면 recommendation, 비교면 comparison처럼 handler 하나만 선택한다.
   handlers = detected_handlers(text)
   if len(handlers) == 1:
     handler = handlers[0]
@@ -487,7 +653,7 @@ def step_for_handler(
     agent=AGENT_BY_HANDLER[handler],
     handler=handler,
     mode=mode,
-    slot_overrides=slot_overrides_for_handler(handler, text),
+    slot_overrides=slot_overrides_for_handler(handler, query or text),
     query=query,
   )
 
@@ -514,9 +680,7 @@ def simple_lookup_slot_overrides(text: str) -> dict[str, Any]:
     overrides["query_type"] = "region_price_ranking" if looks_like_region_target(target_name or "") else "complex_price_record"
     overrides["price_order"] = "lowest"
   elif any(signal in text for signal in ("실거래", "거래내역", "거래 내역", "최근 거래", "가격", "시세", "얼마")) or re.search(r"최근\s*\d+\s*건", text):
-    overrides["query_type"] = "trade_history"
-  if overrides.get("query_type") == "trade_history" and looks_like_region_target(str(overrides.get("target_name") or "")):
-    overrides.pop("target_name", None)
+    overrides["query_type"] = "region_trade_history" if looks_like_region_target(target_name or "") else "trade_history"
   return overrides
 
 
@@ -547,6 +711,8 @@ def price_trend_slot_overrides(text: str) -> dict[str, Any]:
 
 
 def detected_handlers(text: str) -> list[str]:
+  # 질문 안의 신호 단어를 보고 실행 가능한 handler 후보를 모은다.
+  # 예: "추천" -> recommendation, "비교" -> comparison, "시세 추이" -> price_trend.
   candidates: list[tuple[int, str]] = []
 
   if has_recommendation_signal(text):
@@ -565,7 +731,7 @@ def detected_handlers(text: str) -> list[str]:
     for _, handler in sorted(candidates, key=lambda item: (item[0], item[1]))
   ]
   if "comparison" in ordered:
-    ordered = [handler for handler in ordered if handler != "simple_lookup"]
+    ordered = [handler for handler in ordered if handler not in {"simple_lookup", "recommendation"}]
   return dedupe_preserve_order(ordered)
 
 
@@ -599,14 +765,19 @@ def comparison_sub_query(text: str) -> str | None:
 
 
 def simple_lookup_sub_query(text: str) -> str | None:
+  if has_recommendation_signal(text) and signal_position(text, RECOMMENDATION_SIGNALS) < simple_lookup_position(text):
+    clause = clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
+    if clause:
+      return clause
+
   overrides = simple_lookup_slot_overrides(text)
   target_name = overrides.get("target_name")
   query_type = overrides.get("query_type")
   if isinstance(target_name, str) and query_type == "location":
     return f"{target_name} 위치 알려줘"
-  if isinstance(target_name, str) and query_type in {"trade_history", "complex_price_record"}:
+  if isinstance(target_name, str) and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     return f"{target_name} 최근 실거래 알려줘"
-  if target_name is None and query_type in {"trade_history", "complex_price_record"}:
+  if target_name is None and query_type in {"trade_history", "region_trade_history", "complex_price_record"}:
     return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("가격", "시세", "얼마"))
   return clause_from_first_signal(text, LOOKUP_ONLY_SIGNALS + ("어디", "좌표", "가격", "얼마", "찾아"))
 
@@ -646,6 +817,8 @@ def next_connector_start_after(text: str, position: int) -> int:
 def has_recommendation_signal(text: str) -> bool:
   if any(signal in text for signal in RECOMMENDATION_SIGNALS):
     return True
+  if has_education_recommendation_signal(text):
+    return True
   if has_price_trend_signal(text):
     return False
   if any(signal in text for signal in ("최고가", "최저가", "가장 비싼", "제일 비싼", "가장 싼", "제일 싼")):
@@ -654,6 +827,15 @@ def has_recommendation_signal(text: str) -> bool:
     r"(?:[가-힣A-Za-z0-9]+역|강남구|서초구|송파구|근처|주변|인근).*(?:아파트|단지)\s*(?:알려|보여)",
     text,
   ) is not None
+
+
+def has_education_recommendation_signal(text: str) -> bool:
+  if any(signal in text for signal in EDUCATION_RECOMMENDATION_SIGNALS):
+    return True
+  return (
+    any(keyword in text for keyword in ("초등학교", "초등", "학교", "교육"))
+    and any(keyword in text for keyword in ("근처", "주변", "인근", "가까운", "도보권"))
+  )
 
 
 def has_comparison_signal(text: str) -> bool:
@@ -678,6 +860,8 @@ def has_price_trend_signal(text: str) -> bool:
 
 
 def has_simple_lookup_signal(text: str) -> bool:
+  if has_education_recommendation_signal(text):
+    return False
   if has_legal_signal(text) and not any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
     return False
   if any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
@@ -709,6 +893,36 @@ def looks_like_ambiguous_complex_price_question(text: str) -> bool:
   return bool(extract_complex_target_name(text))
 
 
+def looks_like_generic_complex_profile_question(text: str) -> bool:
+  if not has_generic_complex_profile_signal(text):
+    return False
+  if (
+    has_recommendation_signal(text)
+    or has_comparison_signal(text)
+    or has_legal_signal(text)
+    or has_price_trend_signal(text)
+    or any(signal in text for signal in AMBIGUOUS_PRICE_SIGNALS)
+    or any(signal in text for signal in UNSUPPORTED_SIGNALS)
+  ):
+    return False
+  if any(signal in text for signal in LOOKUP_ONLY_SIGNALS):
+    return False
+  if extract_region_name(text) is not None:
+    return False
+  target_name = extract_generic_complex_profile_target_name(text)
+  return target_name is not None and is_valid_generic_complex_profile_target(target_name)
+
+
+def has_generic_complex_profile_signal(text: str) -> bool:
+  if any(signal in text for signal in GENERIC_COMPLEX_PROFILE_SIGNALS):
+    return True
+  match = re.search(r"(?P<target>.+?)\s*알려", text)
+  if match is None:
+    return False
+  raw_target = match.group("target").strip()
+  return "아파트" in raw_target or "단지" in raw_target
+
+
 def is_region_price_question(text: str) -> bool:
   return extract_region_name(text) is not None and any(signal in text for signal in ("시세", "가격", "추이", "흐름"))
 
@@ -733,6 +947,28 @@ def extract_complex_target_name(text: str) -> str | None:
     ("시세", "가격", "얼마", "요즘", "최근"),
     reject_region=True,
   )
+
+
+def extract_generic_complex_profile_target_name(text: str) -> str | None:
+  target = extract_entity_before_keywords(
+    text,
+    ("정보", "알려", "요약", "개요", "설명", "궁금"),
+    reject_region=True,
+  )
+  if not target:
+    return None
+  return normalize_generic_complex_profile_target(target)
+
+
+def is_valid_generic_complex_profile_target(value: str) -> bool:
+  target = re.sub(r"\s+", "", value.strip())
+  if not target:
+    return False
+  if target in GENERIC_COMPLEX_PROFILE_REJECT_TARGETS:
+    return False
+  if any(signal in target for signal in ("날씨", "시장", "분위기", "신고가", "신저가", "후보")):
+    return False
+  return not looks_like_region_target(target)
 
 
 def extract_lookup_target_name(text: str) -> str | None:
@@ -821,8 +1057,8 @@ def extract_entity_before_keywords(text: str, keywords: tuple[str, ...], *, reje
 
 def clean_target_candidate(value: str) -> str:
   text = value
-  text = re.sub(r"(?:최근|지난|요즘|현재|가장)\s*", "", text)
-  text = re.sub(r"\d+\s*(?:개월|달|년|건)", "", text)
+  text = re.sub(r"(?:최신|최근|지난|요즘|현재|가장)\s*", "", text)
+  text = re.sub(r"\d+\s*(?:개월|달|년|개|건|곳)", "", text)
   text = re.sub(r"\d{4}\s*년", "", text)
   text = re.sub(r"\d+(?:\.\d+)?\s*(?:평|평형|㎡|m2|제곱미터)", "", text, flags=re.IGNORECASE)
   text = re.sub(r"전용\s*", "", text)
@@ -833,6 +1069,15 @@ def clean_target_candidate(value: str) -> str:
   text = re.sub(r"\s+", "", text)
   text = text.rstrip("은는이가을를")
   return text.strip()
+
+
+def normalize_generic_complex_profile_target(value: str) -> str:
+  text = value.strip()
+  if len(text) > len("아파트") + 1 and text.endswith("아파트"):
+    return text[:-len("아파트")]
+  if len(text) > len("단지") + 1 and text.endswith("단지"):
+    return text[:-len("단지")]
+  return text
 
 
 def looks_like_find_location_question(text: str) -> bool:
@@ -851,7 +1096,12 @@ def looks_like_find_location_question(text: str) -> bool:
 def looks_like_region_target(value: str) -> bool:
   if not value:
     return False
-  return extract_region_name(value) == re.sub(r"\s+", "", value) or value in {"강남", "서초", "송파"}
+  compact = re.sub(r"\s+", "", value)
+  if extract_region_name(value) == compact or compact in {"강남", "서초", "송파"}:
+    return True
+  if "아파트" in compact:
+    return False
+  return re.fullmatch(r"[가-힣]{2,}(?:구|동)", compact) is not None
 
 
 def looks_like_ranking_price_trend_question(text: str) -> bool:

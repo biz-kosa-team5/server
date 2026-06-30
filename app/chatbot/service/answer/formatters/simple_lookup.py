@@ -12,6 +12,7 @@ from .common import (
   dict_value,
   first_non_empty,
   format_floor,
+  format_candidate_selection,
   format_labeled_value,
   format_price,
   list_value,
@@ -19,6 +20,13 @@ from .common import (
 
 
 def format_simple_lookup_result(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_selection(criteria_name(result), list_value(result.get("candidates")))
+  if candidate_answer:
+    return candidate_answer
+
+  if clean_text(result.get("reason")) == "insufficient_query":
+    return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
+
   data = list_value(result.get("data"))
   if not data:
     return clean_text(result.get("message"))
@@ -28,6 +36,8 @@ def format_simple_lookup_result(result: dict[str, Any]) -> str:
     return format_location_result(result, dict_value(data[0]))
   if query_type in {"trade", "trade_history", "complex_price_record"}:
     return format_trade_result(result, data)
+  if query_type == "region_trade_history":
+    return format_region_trade_result(result, data)
   return clean_text(result.get("message"))
 
 
@@ -68,6 +78,29 @@ def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:
   if trade_summaries:
     return "실거래 내역은 " + ", ".join(trade_summaries) + "입니다."
   return clean_text(result.get("message"))
+
+
+def format_region_trade_result(result: dict[str, Any], data: list[Any]) -> str:
+  rows = [dict_value(item) for item in data[:3]]
+  name = criteria_name(result)
+  trade_summaries = [
+    format_region_trade_row(row)
+    for row in rows
+  ]
+  trade_summaries = [item for item in trade_summaries if item]
+  if name and trade_summaries:
+    return f"{name} 최신 실거래 내역은 " + ", ".join(trade_summaries) + "입니다."
+  if trade_summaries:
+    return "최신 실거래 내역은 " + ", ".join(trade_summaries) + "입니다."
+  return clean_text(result.get("message"))
+
+
+def format_region_trade_row(row: dict[str, Any]) -> str:
+  complex_name = clean_text(row.get("complex_name"))
+  summary = format_trade_row(row)
+  if complex_name and summary:
+    return f"{complex_name} {summary}"
+  return summary
 
 
 def format_trade_row(row: dict[str, Any]) -> str:
