@@ -9,6 +9,7 @@ from scripts.run_chatbot_qa import (
   load_cases_from_questionnaire,
   render_markdown,
   result_notes,
+  run_cases,
 )
 
 
@@ -47,6 +48,32 @@ def test_load_cases_from_questionnaire_parses_simple_and_mixed_tables(tmp_path: 
   assert cases[1].expected_plan_types == ("ambiguous_multi_feature",)
   assert cases[2].expected_plan_types == ("same_tool_multi_feature",)
   assert cases[2].expected_handler_options == (("price_trend", "price_trend"),)
+
+
+def test_load_cases_from_questionnaire_parses_complex_88_schema(tmp_path: Path):
+  questionnaire = tmp_path / "chatbot-complex-questionnaire.md"
+  questionnaire.write_text(
+    """
+| id | group | variant | question | expected_plan_type | expected_execution_path | expected_handlers | expected_status | answer_must_include | answer_must_not_include | legal_required | legal_must_include | notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MX-001 | comparison_legal | A | 래미안대치팰리스랑 잠실엘스 비교하고 계약금 해제 알려줘 | independent_multi_feature | direct_independent_features | comparison + legal_contract | success;partial_success | 래미안대치팰리스;잠실엘스 | handler;agent | Y | 민법;제565조;계약금;해제 | hard gate |
+""",
+    encoding="utf-8",
+  )
+
+  cases = load_cases_from_questionnaire(questionnaire)
+
+  assert len(cases) == 1
+  case = cases[0]
+  assert case.id == "MX-001"
+  assert case.group == "comparison_legal"
+  assert case.variant == "A"
+  assert case.expected_handler_options == (("comparison", "legal_contract"),)
+  assert case.expected_status == ("success", "partial_success")
+  assert case.expected_answer_terms == ("래미안대치팰리스", "잠실엘스")
+  assert case.answer_must_not_include == ("handler", "agent")
+  assert case.legal_required is True
+  assert case.legal_must_include == ("민법", "제565조", "계약금", "해제")
 
 
 def test_render_markdown_includes_runtime_token_and_full_answer():
@@ -161,6 +188,117 @@ def test_result_notes_accepts_supervisor_first_path_when_handlers_match():
   )
 
   assert notes == []
+
+
+def test_result_notes_rejects_nested_answer_and_missing_legal_sources():
+  case = QaCase(
+    id="MX-001",
+    test_package="chatbot.qa.complex.comparison_legal",
+    question="래미안대치팰리스랑 잠실엘스 비교하고 계약금 해제 알려줘",
+    expected_plan_type="independent_multi_feature",
+    expected_execution_path="direct_independent_features",
+    expected_handlers=("comparison", "legal_contract"),
+    expected_status=("success", "partial_success"),
+    expected_answer_terms=("래미안대치팰리스", "잠실엘스"),
+    legal_required=True,
+    legal_must_include=("민법", "제565조", "계약금", "해제"),
+  )
+  payload = {
+    "status": "success",
+    "answer": "래미안대치팰리스와 잠실엘스 비교입니다. 민법 제565조 계약금 해제 규정입니다.",
+    "result": {"answer": "nested", "handler": "legal_contract", "success": False, "sources": []},
+    "fragments": [
+      {"execution": {"path": "direct_independent_features", "planType": "independent_multi_feature", "handlerCalls": ["comparison", "legal_contract"]}}
+    ],
+  }
+
+  notes = result_notes(
+    case,
+    payload,
+    ["independent_multi_feature"],
+    "direct_independent_features",
+    ["comparison", "legal_contract"],
+    True,
+    False,
+  )
+
+  assert "nested answer found" in notes
+  assert "legal_required expected legal result success=true" in notes
+  assert "legal_required expected at least one legal source" in notes
+
+
+def test_result_notes_accepts_legal_success_with_sources():
+  case = QaCase(
+    id="MX-001",
+    test_package="chatbot.qa.complex.comparison_legal",
+    question="계약금 해제",
+    expected_plan_type="independent_multi_feature",
+    expected_execution_path="direct_independent_features",
+    expected_handlers=("comparison", "legal_contract"),
+    expected_status=("success", "partial_success"),
+    expected_answer_terms=("민법",),
+    legal_required=True,
+    legal_must_include=("민법", "제565조", "계약금", "해제"),
+  )
+  payload = {
+    "status": "success",
+    "answer": "민법 제565조에 따라 계약금 해제를 설명합니다.",
+    "result": {"handler": "legal_contract", "success": True, "sources": [{"title": "민법"}]},
+    "fragments": [
+      {"execution": {"path": "direct_independent_features", "planType": "independent_multi_feature", "handlerCalls": ["comparison", "legal_contract"]}}
+    ],
+  }
+
+  notes = result_notes(
+    case,
+    payload,
+    ["independent_multi_feature"],
+    "direct_independent_features",
+    ["comparison", "legal_contract"],
+    True,
+    True,
+  )
+
+  assert notes == []
+
+
+def test_run_cases_live_http_fail_fast_legal(monkeypatch):
+  case = QaCase(
+    id="MX-001",
+    test_package="chatbot.qa.complex.lookup_legal",
+    question="잠실엘스와 계약금 해제",
+    expected_plan_type="independent_multi_feature",
+    expected_execution_path="direct_independent_features",
+    expected_handlers=("simple_lookup", "legal_contract"),
+    expected_status=("success", "partial_success"),
+    legal_required=True,
+    legal_must_include=("민법", "제565조", "계약금", "해제"),
+  )
+
+  async def fake_post_chatbot_query(_base_url: str, _question: str):
+    return {
+      "__http_status": 200,
+      "status": "success",
+      "answer": "잠실엘스 답변입니다.",
+      "fragments": [
+        {"execution": {"path": "direct_independent_features", "planType": "independent_multi_feature", "handlerCalls": ["simple_lookup"]}}
+      ],
+    }
+
+  monkeypatch.setattr("scripts.run_chatbot_qa.post_chatbot_query", fake_post_chatbot_query)
+
+  results = __import__("asyncio").run(run_cases(
+    None,
+    (case, case),
+    "2026-06-30",
+    strict_supervisor_first=False,
+    live_http=True,
+    fail_fast_legal=True,
+  ))
+
+  assert len(results) == 1
+  assert results[0].legal_fail_fast_triggered is True
+  assert "legal_required expected legal_contract handler" in results[0].notes
 
 
 def test_result_notes_rejects_direct_path_in_strict_supervisor_first_mode():

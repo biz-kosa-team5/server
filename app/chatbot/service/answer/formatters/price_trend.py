@@ -94,6 +94,10 @@ def format_failure_with_candidates(result: dict[str, Any]) -> str:
 
 def price_trend_target_name(result: dict[str, Any]) -> str:
   criteria = dict_value(result.get("criteria"))
+  resolved_name = clean_text(criteria.get("resolved_complex_name"))
+  if resolved_name:
+    return resolved_name
+
   target_name = clean_text(criteria.get("target_name"))
   if target_name:
     return target_name

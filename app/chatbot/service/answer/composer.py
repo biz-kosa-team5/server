@@ -444,7 +444,7 @@ def dedupe_candidate_names(candidates: list[dict[str, Any]]) -> list[str]:
   names = []
   seen = set()
   for candidate in candidates:
-    for key in ("complex_name", "complexName", "name", "trade_name", "tradeName"):
+    for key in ("complexName", "complex_name", "name"):
       name = str(candidate.get(key) or "").strip()
       if not name or name in seen:
         continue
@@ -506,7 +506,7 @@ def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
 
   lines = [recommendation_answer_title(result)]
   for index, row in enumerate(rows, start=1):
-    name = str(row.get("complexName") or row.get("name") or f"추천 후보 {index}").strip()
+    name = str(row.get("complexName") or row.get("complex_name") or row.get("name") or f"추천 후보 {index}").strip()
     if index > 1:
       lines.append("")
     lines.append(f"{index}. {name}")
@@ -705,7 +705,7 @@ def recommendation_candidate_names(context: ChatbotAnswerContext) -> list[str]:
     name
     for row in rows[:5]
     if isinstance(row, dict)
-    if (name := str(row.get("complexName") or row.get("name") or "").strip())
+    if (name := str(row.get("complexName") or row.get("complex_name") or row.get("name") or "").strip())
   ]
   return names
 

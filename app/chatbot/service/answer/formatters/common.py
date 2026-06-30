@@ -90,11 +90,7 @@ def format_candidates(result: dict[str, Any], *, limit: int = 5) -> str:
   for candidate in candidates[:limit]:
     if not isinstance(candidate, dict):
       continue
-    name = first_non_empty([
-      clean_text(candidate.get("complex_name")),
-      clean_text(candidate.get("name")),
-      clean_text(candidate.get("trade_name")),
-    ])
+    name = canonical_display_name(candidate) or "이름 미상"
     address = clean_text(candidate.get("address"))
     if name and address:
       labels.append(f"{name}({address})")
@@ -238,22 +234,22 @@ def format_candidate_groups(
 
 
 def format_candidate_row(row: dict[str, Any]) -> str:
-  name = candidate_name(row)
+  name = candidate_name(row) or "이름 미상"
   address = clean_text(row.get("address"))
   if address:
-    label = address_label(address)
-    prefix = f"{label} " if label else ""
-    return f"{prefix}{name} - {address}"
-  return name or "이름 미상"
+    return f"{name} - {address}"
+  return name
 
 
 def candidate_name(row: dict[str, Any]) -> str:
+  return canonical_display_name(row)
+
+
+def canonical_display_name(row: dict[str, Any]) -> str:
   return first_non_empty([
-    clean_text(row.get("complex_name")),
     clean_text(row.get("complexName")),
+    clean_text(row.get("complex_name")),
     clean_text(row.get("name")),
-    clean_text(row.get("trade_name")),
-    clean_text(row.get("tradeName")),
   ])
 
 

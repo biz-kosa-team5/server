@@ -14,6 +14,7 @@ from app.chatbot.features.legal_contract.slots import extract_legal_contract_slo
 from app.chatbot.features.price_trend.service import run_price_trend
 from app.chatbot.features.price_trend.slots import extract_price_trend_slots
 from app.chatbot.features.recommendation.service import run_recommendation
+from app.chatbot.features.recommendation.selection import run_recommendation_with_ai_selection
 from app.chatbot.features.recommendation.slots import extract_recommendation_slots
 from app.chatbot.features.simple_lookup.service import run_simple_lookup
 from app.chatbot.features.simple_lookup.slots import extract_simple_lookup_slots
@@ -322,7 +323,7 @@ def run_direct_step(session: Session, step: FeatureStep, text: str) -> dict[str,
   if step.handler == "recommendation":
     # 추천은 자연어를 recommendation slots로 변환한 뒤 추천 service에 넘긴다.
     slots = merge_slots(extract_recommendation_slots(query), step.slot_overrides)
-    return run_recommendation(session, slots, query)
+    return run_recommendation_with_ai_selection(session, slots, query, base_runner=run_recommendation)
 
   if step.handler == "comparison":
     # 비교는 자연어에서 아파트명/비교 기준을 뽑고 comparison service에 넘긴다.

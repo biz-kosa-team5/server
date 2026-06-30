@@ -6,6 +6,8 @@ import json
 import os
 import re
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +34,11 @@ class QaCase:
   expected_handler_options: tuple[tuple[str, ...], ...] = ()
   expected_status: tuple[str, ...] = ("success",)
   expected_answer_terms: tuple[str, ...] = ()
+  answer_must_not_include: tuple[str, ...] = ()
+  legal_required: bool = False
+  legal_must_include: tuple[str, ...] = ()
+  group: str = ""
+  variant: str = ""
   tier: str = "regression"
   notes: str = ""
 
@@ -62,6 +69,7 @@ class QaResult:
   notes: str = ""
   expected_handler_options: list[list[str]] = field(default_factory=list)
   payload: dict[str, Any] = field(default_factory=dict)
+  legal_fail_fast_triggered: bool = False
 
 
 QA_CASES: tuple[QaCase, ...] = (
@@ -229,31 +237,47 @@ BANNED_ANSWER_TERMS = (
 
 def main() -> int:
   args = parse_args()
-  configure_environment(live_llm=args.live_llm)
-  import_app_modules()
+  configure_environment(live_llm=args.live_llm or args.live_http)
+  if not args.live_http:
+    import_app_modules()
+    from app.database import SessionLocal, ensure_initialized
 
-  from app.database import SessionLocal, ensure_initialized
-
-  if not args.live_llm:
+  if not args.live_llm and not args.live_http:
     disable_live_openai()
 
-  ensure_initialized()
   selected_cases = filter_cases(load_cases(args), args.case)
   run_date = datetime.now().strftime("%Y-%m-%d")
-  with SessionLocal() as session:
-    results = asyncio.run(run_cases(
-      session,
-      selected_cases,
-      run_date,
-      strict_supervisor_first=args.live_llm,
-    ))
-
   output_dir = Path(args.output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
   suite_name = args.suite_name or ("chatbot-qa-docs-results" if args.from_docs else "chatbot-qa-results")
   markdown_path = output_dir / f"{suite_name}-{run_date}.md"
   jsonl_path = output_dir / f"{suite_name}-{run_date}.jsonl"
-  markdown_path.write_text(render_markdown(results, live_llm=args.live_llm), encoding="utf-8")
+
+  if args.live_http:
+    results = asyncio.run(run_cases(
+      None,
+      selected_cases,
+      run_date,
+      strict_supervisor_first=args.live_llm,
+      live_http=True,
+      base_url=args.base_url,
+      fail_fast_legal=args.fail_fast_legal,
+    ))
+  else:
+    ensure_initialized()
+    with SessionLocal() as session:
+      results = asyncio.run(run_cases(
+        session,
+        selected_cases,
+        run_date,
+        strict_supervisor_first=args.live_llm,
+        fail_fast_legal=args.fail_fast_legal,
+      ))
+
+  markdown_path.write_text(
+    render_markdown(results, live_llm=args.live_llm, live_http=args.live_http, fail_fast_legal=args.fail_fast_legal),
+    encoding="utf-8",
+  )
   write_jsonl(jsonl_path, results)
 
   passed = sum(1 for result in results if result.passed)
@@ -261,6 +285,9 @@ def main() -> int:
   print(f"wrote {markdown_path}")
   print(f"wrote {jsonl_path}")
   print(f"qa summary: total={len(results)} passed={passed} failed={failed}")
+  legal_fail_fast_triggered = any(result.legal_fail_fast_triggered for result in results)
+  if legal_fail_fast_triggered:
+    return 1
   return 0 if failed == 0 or args.allow_failures else 1
 
 
@@ -272,6 +299,9 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--questionnaire-path", default=str(DEFAULT_QUESTIONNAIRE_PATH))
   parser.add_argument("--suite-name", default="")
   parser.add_argument("--live-llm", action="store_true", help="Keep OPENAI_API_KEY and use live answer composer.")
+  parser.add_argument("--live-http", action="store_true", help="Call POST /api/v1/chatbot/query instead of importing the service.")
+  parser.add_argument("--base-url", default="http://127.0.0.1:8080", help="Base URL used with --live-http.")
+  parser.add_argument("--fail-fast-legal", action="store_true", help="Stop immediately when a legal_required=Y row misses legal sources/answer contract.")
   parser.add_argument("--allow-failures", action="store_true", help="Exit 0 even when QA cases fail.")
   return parser.parse_args()
 
@@ -333,9 +363,45 @@ def case_from_questionnaire_row(row: dict[str, str]) -> QaCase | None:
   if not case_id or not question:
     return None
 
+  if "legal_required" in row or "answer_must_include" in row:
+    return complex_case_from_row(row)
   if "expected_handlers" in row:
     return mixed_case_from_row(row)
   return handler_case_from_row(row)
+
+
+def complex_case_from_row(row: dict[str, str]) -> QaCase:
+  case_id = row["id"].strip()
+  expected_plan_text = row.get("expected_plan_type", "").strip()
+  expected_path_text = row.get("expected_execution_path", "").strip()
+  expected_handlers_text = row.get("expected_handlers", "").strip()
+  handler_options = handler_options_from_text(expected_handlers_text)
+  plan_options = plan_options_from_text(expected_plan_text) or tuple(split_required_terms(expected_plan_text))
+  path_options = path_options_from_text(expected_path_text) or tuple(split_required_terms(expected_path_text))
+  statuses = tuple(split_required_terms(row.get("expected_status", ""))) or ("success",)
+  first_handlers = handler_options[0] if handler_options else ()
+  group = row.get("group", "").strip()
+
+  return QaCase(
+    id=case_id,
+    test_package=f"chatbot.qa.complex.{group or 'mixed'}",
+    question=row["question"],
+    expected_plan_type=plan_options[0] if plan_options else expected_plan_text,
+    expected_execution_path=path_options[0] if path_options else expected_path_text,
+    expected_handlers=first_handlers,
+    expected_plan_types=plan_options,
+    expected_execution_paths=path_options,
+    expected_handler_options=handler_options,
+    expected_status=statuses,
+    expected_answer_terms=tuple(split_required_terms(row.get("answer_must_include", ""))),
+    answer_must_not_include=tuple(split_required_terms(row.get("answer_must_not_include", ""))),
+    legal_required=row.get("legal_required", "").strip().upper() == "Y",
+    legal_must_include=tuple(split_required_terms(row.get("legal_must_include", ""))),
+    group=group,
+    variant=row.get("variant", "").strip(),
+    tier="regression",
+    notes=row.get("notes", "").strip(),
+  )
 
 
 def handler_case_from_row(row: dict[str, str]) -> QaCase:
@@ -396,7 +462,7 @@ def handler_options_from_text(value: str) -> tuple[tuple[str, ...], ...]:
   if not text or text == "없음":
     return ((),)
 
-  alternatives = re.split(r"\s*또는\s*|\s+or\s+", text)
+  alternatives = re.split(r"\s*또는\s*|\s+or\s+|;", text)
   options = []
   for alternative in alternatives:
     handlers = [
@@ -417,6 +483,14 @@ def handler_options_from_text(value: str) -> tuple[tuple[str, ...], ...]:
     if option not in options:
       options.append(option)
   return tuple(options) or ((),)
+
+
+def split_required_terms(value: str) -> list[str]:
+  return [
+    term.strip()
+    for term in value.split(";")
+    if term.strip()
+  ]
 
 
 def normalize_expected_text(value: str) -> str:
@@ -607,15 +681,25 @@ async def run_cases(
   run_date: str,
   *,
   strict_supervisor_first: bool,
+  live_http: bool = False,
+  base_url: str = "http://127.0.0.1:8080",
+  fail_fast_legal: bool = False,
 ) -> list[QaResult]:
   results = []
   for case in cases:
-    results.append(await run_case(
+    result = await run_case(
       session,
       case,
       run_date,
       strict_supervisor_first=strict_supervisor_first,
-    ))
+      live_http=live_http,
+      base_url=base_url,
+    )
+    if fail_fast_legal and case.legal_required and is_legal_hard_gate_failure(result):
+      result.legal_fail_fast_triggered = True
+      results.append(result)
+      break
+    results.append(result)
   return results
 
 
@@ -625,16 +709,22 @@ async def run_case(
   run_date: str,
   *,
   strict_supervisor_first: bool = False,
+  live_http: bool = False,
+  base_url: str = "http://127.0.0.1:8080",
 ) -> QaResult:
-  from app.chatbot.service.chatbot_service import handle_chatbot_query
-
   started_at = perf_counter()
-  payload = await handle_chatbot_query(session, {"question": case.question})
+  if live_http:
+    payload = await post_chatbot_query(base_url, case.question)
+  else:
+    from app.chatbot.service.chatbot_service import handle_chatbot_query
+    payload = await handle_chatbot_query(session, {"question": case.question})
   elapsed_ms = round((perf_counter() - started_at) * 1000)
   actual_plan_types = collect_plan_types(payload)
   actual_path = actual_execution_path(payload)
   actual_agents = collect_agents(payload)
   actual_handlers = collect_handlers(payload)
+  payload["__qa_group"] = case.group or case.test_package.rsplit(".", 1)[-1]
+  payload["__qa_variant"] = case.variant
   answer = payload.get("answer") if isinstance(payload.get("answer"), str) else ""
   nested_answer_absent = nested_answer_paths(payload) == [["answer"]]
   answer_ok = validate_answer(answer, case, nested_answer_absent)
@@ -681,6 +771,51 @@ async def run_case(
   )
 
 
+async def post_chatbot_query(base_url: str, question: str) -> dict[str, Any]:
+  return await asyncio.to_thread(post_chatbot_query_sync, base_url, question)
+
+
+def post_chatbot_query_sync(base_url: str, question: str) -> dict[str, Any]:
+  url = f"{base_url.rstrip('/')}/api/v1/chatbot/query"
+  body = json.dumps({"question": question}).encode("utf-8")
+  request = urllib.request.Request(
+    url,
+    data=body,
+    method="POST",
+    headers={
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+    },
+  )
+  try:
+    with urllib.request.urlopen(request, timeout=180) as response:
+      text = response.read().decode("utf-8")
+      payload = json.loads(text)
+      if isinstance(payload, dict):
+        payload["__http_status"] = response.status
+        return payload
+      return {"__http_status": response.status, "__json_error": "response JSON is not an object", "answer": ""}
+  except urllib.error.HTTPError as exc:
+    text = exc.read().decode("utf-8", errors="replace")
+    try:
+      payload = json.loads(text)
+    except json.JSONDecodeError:
+      payload = {"answer": "", "__json_error": text}
+    if isinstance(payload, dict):
+      payload["__http_status"] = exc.code
+      return payload
+    return {"__http_status": exc.code, "__json_error": text, "answer": ""}
+  except json.JSONDecodeError as exc:
+    return {"__http_status": 200, "__json_error": str(exc), "answer": ""}
+  except Exception as exc:
+    return {
+      "__http_status": 0,
+      "__http_error": f"{exc.__class__.__name__}: {exc}",
+      "status": "failed",
+      "answer": "",
+    }
+
+
 def result_notes(
   case: QaCase,
   payload: dict[str, Any],
@@ -693,6 +828,11 @@ def result_notes(
   strict_supervisor_first: bool = False,
 ) -> list[str]:
   notes = []
+  http_status = payload.get("__http_status")
+  if http_status is not None and http_status != 200:
+    notes.append(f"HTTP 200 expected, got {http_status}")
+  if payload.get("__json_error"):
+    notes.append(f"JSON parsing failed: {payload.get('__json_error')}")
   status = str(payload.get("status", ""))
   if status not in case.expected_status:
     notes.append(f"status expected {case.expected_status}, got {status}")
@@ -709,12 +849,13 @@ def result_notes(
     path_options = expected_path_options(case)
     notes.append(f"path expected one of {path_options}, got {actual_path}")
   handler_options = expected_handler_options(case)
-  if not any(handler_prefix_matches(expected, actual_handlers) for expected in handler_options):
+  if not any(handler_order_matches(expected, actual_handlers) for expected in handler_options):
     notes.append(f"handlers expected one of {handler_options}, got {actual_handlers}")
   if not answer_ok:
     notes.append("answer contract/content check failed")
   if not nested_answer_absent:
     notes.append("nested answer found")
+  notes.extend(legal_result_notes(case, payload, actual_handlers))
   return notes
 
 
@@ -806,23 +947,91 @@ def supervisor_first_path_matches(
   if not handler_options:
     return False
   return any(
-    handler_prefix_matches(expected_handlers, actual_handlers)
+    handler_order_matches(expected_handlers, actual_handlers)
     for expected_handlers in handler_options
   )
 
 
 def handler_prefix_matches(expected_handlers: tuple[str, ...], actual_handlers: list[str]) -> bool:
+  return handler_order_matches(expected_handlers, actual_handlers)
+
+
+def handler_order_matches(expected_handlers: tuple[str, ...], actual_handlers: list[str]) -> bool:
   if not expected_handlers:
     return True
-  return list(expected_handlers) == actual_handlers[:len(expected_handlers)]
+  actual_index = 0
+  for expected in expected_handlers:
+    while actual_index < len(actual_handlers):
+      if base_handler_name(actual_handlers[actual_index]) == base_handler_name(expected):
+        actual_index += 1
+        break
+      actual_index += 1
+    else:
+      return False
+  return True
+
+
+def base_handler_name(handler: str) -> str:
+  return handler.split(".", 1)[0]
 
 
 def validate_answer(answer: str, case: QaCase, nested_answer_absent: bool) -> bool:
   if not answer.strip() or not nested_answer_absent:
     return False
-  if any(term in answer for term in BANNED_ANSWER_TERMS):
+  banned_terms = case.answer_must_not_include or BANNED_ANSWER_TERMS
+  if any(term in answer for term in banned_terms):
     return False
   return all(term in answer for term in case.expected_answer_terms)
+
+
+def legal_result_notes(case: QaCase, payload: dict[str, Any], actual_handlers: list[str]) -> list[str]:
+  if not case.legal_required:
+    return []
+  notes: list[str] = []
+  answer = payload.get("answer") if isinstance(payload.get("answer"), str) else ""
+  if "legal_contract" not in [base_handler_name(handler) for handler in actual_handlers]:
+    notes.append("legal_required expected legal_contract handler")
+  legal_results = collect_legal_results(payload)
+  if not any(result.get("success") is True for result in legal_results):
+    notes.append("legal_required expected legal result success=true")
+  if not any(isinstance(result.get("sources"), list) and result.get("sources") for result in legal_results):
+    notes.append("legal_required expected at least one legal source")
+  missing_terms = [term for term in case.legal_must_include if term not in answer]
+  if missing_terms:
+    notes.append(f"legal answer missing required terms: {', '.join(missing_terms)}")
+  return notes
+
+
+def collect_legal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+  results: list[dict[str, Any]] = []
+
+  def visit(value: Any) -> None:
+    if isinstance(value, list):
+      for item in value:
+        visit(item)
+      return
+    if not isinstance(value, dict):
+      return
+    if value.get("handler") == "legal_contract":
+      results.append(value)
+    for key in ("result", "results", "fragments"):
+      if key in value:
+        visit(value.get(key))
+
+  visit(payload)
+  return results
+
+
+def is_legal_hard_gate_failure(result: QaResult) -> bool:
+  return any(
+    marker in result.notes
+    for marker in (
+      "legal_required expected",
+      "legal answer missing required terms",
+      "HTTP 200 expected",
+      "JSON parsing failed",
+    )
+  )
 
 
 def actual_execution_path(payload: dict[str, Any]) -> str:
@@ -979,25 +1188,59 @@ def excerpt(value: str, limit: int = 120) -> str:
   return text[: limit - 1] + "…"
 
 
-def render_markdown(results: list[QaResult], *, live_llm: bool) -> str:
+def render_markdown(
+  results: list[QaResult],
+  *,
+  live_llm: bool,
+  live_http: bool = False,
+  fail_fast_legal: bool = False,
+) -> str:
   total = len(results)
   passed = sum(1 for result in results if result.passed)
   failed = total - passed
+  legal_fail_fast_triggered = any(result.legal_fail_fast_triggered for result in results)
   lines = [
     f"# Chatbot QA Results - {results[0].run_date if results else datetime.now().strftime('%Y-%m-%d')}",
     "",
     "## Summary",
     "",
-    f"- mode: {'live_llm' if live_llm else 'deterministic'}",
+    f"- mode: {run_mode_label(live_llm=live_llm, live_http=live_http)}",
     f"- total: {total}",
     f"- passed: {passed}",
     f"- failed: {failed}",
+    f"- overall: {'PASS' if failed == 0 else 'FAIL'}",
+    f"- legal fail-fast enabled: {'Y' if fail_fast_legal else 'N'}",
+    f"- legal fail-fast triggered: {'Y' if legal_fail_fast_triggered else 'N'}",
+    "",
+    "## Group Success Rates",
+    "",
+    "| group | total | passed | failed | pass rate |",
+    "|---|---:|---:|---:|---:|",
+  ]
+  for group, group_results in group_results_by_name(results).items():
+    group_total = len(group_results)
+    group_passed = sum(1 for result in group_results if result.passed)
+    group_failed = group_total - group_passed
+    rate = f"{(group_passed / group_total * 100):.1f}%" if group_total else "0.0%"
+    lines.append(f"| {escape_table(group)} | {group_total} | {group_passed} | {group_failed} | {rate} |")
+
+  handler_failures = [result for result in results if "handlers expected" in result.notes or "legal_required expected legal_contract handler" in result.notes]
+  answer_failures = [result for result in results if "answer contract/content check failed" in result.notes or "legal answer missing required terms" in result.notes]
+  lines.extend([
+    "",
+    "## Handler Missing Cases",
+    "",
+    "- " + ("; ".join(result.id for result in handler_failures) if handler_failures else "none"),
+    "",
+    "## Answer Contract Failures",
+    "",
+    "- " + ("; ".join(result.id for result in answer_failures) if answer_failures else "none"),
     "",
     "## Results",
     "",
     "| id | package | status | expected path | actual path | expected handlers | actual handlers | elapsed ms | token check | answer ok | nested answer absent | answer | notes |",
     "|---|---|---|---|---|---|---|---:|---|---|---|---|---|",
-  ]
+  ])
   for result in results:
     lines.append(
       "| "
@@ -1033,6 +1276,22 @@ def render_markdown(results: list[QaResult], *, live_llm: bool) -> str:
       "",
     ])
   return "\n".join(lines)
+
+
+def run_mode_label(*, live_llm: bool, live_http: bool) -> str:
+  if live_http:
+    return "live_http"
+  return "live_llm" if live_llm else "deterministic"
+
+
+def group_results_by_name(results: list[QaResult]) -> dict[str, list[QaResult]]:
+  grouped: dict[str, list[QaResult]] = {}
+  for result in results:
+    group = result.payload.get("__qa_group")
+    if not isinstance(group, str) or not group:
+      group = result.test_package.rsplit(".", 1)[-1]
+    grouped.setdefault(group, []).append(result)
+  return dict(sorted(grouped.items()))
 
 
 def escape_table(value: str) -> str:

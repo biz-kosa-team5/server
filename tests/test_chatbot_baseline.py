@@ -341,10 +341,18 @@ def test_recommendation_extractor_keeps_district_and_price_words_distinct():
 
   assert cheap_slots["district"] == "서초구"
   assert cheap_slots["limit"] == 4
-  assert cheap_slots["sort_by"] == "price_asc"
+  assert "sort_by" not in cheap_slots
   assert "school_type" not in cheap_slots
   assert expensive_slots["station_name"] == "청담역"
   assert expensive_slots["sort_by"] == "price_desc"
+
+
+def test_recommendation_extractor_uses_price_sort_only_for_explicit_lowest_price():
+  slots = extract_recommendation_slots("서초구 최저가 아파트 4곳 추천해줘")
+
+  assert slots["district"] == "서초구"
+  assert slots["limit"] == 4
+  assert slots["sort_by"] == "price_asc"
 
 
 def test_comparison_extractor_builds_subject_and_metric_slots():

@@ -6,6 +6,7 @@ from langchain.tools import tool
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.recommendation.service import run_recommendation
+from app.chatbot.features.recommendation.selection import run_recommendation_with_ai_selection
 from app.chatbot.features.recommendation.slots import (
   extract_recommendation_slots,
   looks_like_generic_station_reference,
@@ -41,6 +42,7 @@ def build_recommendation_tool(session: Session):
     "초등학교근처", "초중고 가까운 곳", "학군 좋은 곳", "초품아"처럼 짧은 질문도 추천으로 처리합니다.
     초중고, 초/중/고, 초·중·고처럼 복수 학교급을 말하면 school_types=["초등학교", "중학교", "고등학교"]로 해석할 수 있습니다.
     사용자가 조건을 자연스럽게 말하면 query에는 원문을 그대로 넣고, 확실한 구조화 인자만 채우세요.
+    가격이 낮다는 이유만으로 좋은 추천이라고 단정하지 말고, 세대수/연식/평형/거래 최신성/역·학교·생활편의 근거를 함께 봅니다.
 
     Args:
       query: 사용자가 입력한 아파트 추천 질문입니다. 예: "송파구 40억 이하 아파트 추천해줘"
@@ -88,7 +90,7 @@ def build_recommendation_tool(session: Session):
       "limit": limit,
     })
     slots = merge_recommendation_slots(extracted_slots, llm_slots, query)
-    return run_recommendation(session, slots, query)
+    return run_recommendation_with_ai_selection(session, slots, query)
 
   return recommend_apartments
 

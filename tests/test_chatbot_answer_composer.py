@@ -171,6 +171,41 @@ def test_chatbot_answer_composer_sends_structured_llm_context(monkeypatch):
   assert payload["rawResponse"]["status"] == "partial_success"
 
 
+def test_chatbot_answer_composer_strips_trade_aliases_from_llm_context(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="공식단지명 위치는 서울시 테스트구 테스트동 1입니다.")
+  context = success_context(result={
+    "success": True,
+    "handler": "simple_lookup",
+    "query_type": "location",
+    "criteria": {"target_name": "별칭거래명"},
+    "data": [
+      {
+        "complex_id": 1,
+        "complex_name": "공식단지명",
+        "trade_name": "별칭거래명",
+        "address": "서울시 테스트구 테스트동 1",
+      }
+    ],
+    "candidates": [
+      {
+        "complex_id": 1,
+        "complex_name": "공식단지명",
+        "trade_name": "별칭거래명",
+        "address": "서울시 테스트구 테스트동 1",
+      }
+    ],
+  })
+
+  asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  user_message = completions.calls[0]["messages"][1]["content"]
+  payload = json.loads(user_message.split("답변 조립을 위한 정리본이야.\n", 1)[1])
+  assert payload["singleResult"]["data"][0]["complex_name"] == "공식단지명"
+  assert "trade_name" not in json.dumps(payload, ensure_ascii=False)
+  assert "tradeName" not in json.dumps(payload, ensure_ascii=False)
+
+
 def test_chatbot_answer_composer_sends_ui_summary_without_action_coordinates(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
   completions = RecordingCompletions()

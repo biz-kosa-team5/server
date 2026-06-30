@@ -4,8 +4,10 @@ from scripts.run_chatbot_model_eval import (
   EvalResult,
   MODEL_EVAL_CASES,
   MODEL_EVAL_RUN_GROUPS,
+  evaluate_raw_answer,
   estimate_cost,
   expected_handlers_present,
+  load_eval_cases,
   normalize_token_usage,
   render_markdown,
   token_field_values,
@@ -22,6 +24,28 @@ def test_model_eval_matrix_is_fixed_to_20_cases_and_4_run_groups():
     "raw-gpt-5.5",
     "raw-gpt-5.4-mini",
   }
+
+
+def test_model_eval_loads_cases_from_questionnaire_docs(tmp_path):
+  questionnaire = tmp_path / "questionnaire.md"
+  questionnaire.write_text(
+    """
+| id | group | variant | question | expected_plan_type | expected_execution_path | expected_handlers | expected_status | answer_must_include | answer_must_not_include | legal_required | legal_must_include | notes |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MX-001 | comparison_legal | A | 비교하고 계약금 해제 알려줘 | independent_multi_feature | direct_independent_features | comparison + legal_contract | success;partial_success | 계약금 | handler;agent | Y | 민법;제565조;계약금;해제 | hard gate |
+""",
+    encoding="utf-8",
+  )
+  args = type("Args", (), {"from_docs": True, "questionnaire_path": str(questionnaire)})()
+
+  cases = load_eval_cases(args)
+
+  assert len(cases) == 1
+  assert cases[0].id == "MX-001"
+  assert cases[0].category == "comparison_legal"
+  assert cases[0].kind == "multi"
+  assert cases[0].legal_required is True
+  assert cases[0].legal_must_include == ("민법", "제565조", "계약금", "해제")
 
 
 def test_expected_handlers_match_detailed_handler_labels():
@@ -92,6 +116,28 @@ def test_render_markdown_uses_korean_columns_and_full_answer_blocks():
     )
   ])
 
+  assert "## Project vs Raw Cost" in markdown
   assert "| 문항 ID | 분류 | 질문 | 실행군 | 모델 ID | 상태 | 기대 경로 | 실제 경로 | 기대 핸들러 | 실제 핸들러 |" in markdown
   assert "### <a id=\"answer-001\"></a>SL-001 / project-gpt-5.5" in markdown
   assert "```text\n잠실엘스는 잠실동에 있습니다.\n```" in markdown
+
+
+def test_raw_legal_answer_scoring_marks_hallucination_risk():
+  case = MODEL_EVAL_CASES[17]
+  case = type(case)(
+    id="MX-LEGAL",
+    category="comparison_legal",
+    question="계약금 해제 알려줘",
+    expected_handlers=("legal_contract",),
+    expected_project_path="direct_feature",
+    legal_required=True,
+    legal_must_include=("민법", "제565조", "계약금", "해제"),
+  )
+
+  answer_ok, fidelity, quality_note, notes, raw_eval = evaluate_raw_answer(case, "계약금은 항상 돌려받습니다.")
+
+  assert answer_ok is True
+  assert fidelity == "참고용"
+  assert notes == []
+  assert raw_eval["hallucination_risk"] is True
+  assert "환각 위험=Y" in quality_note
