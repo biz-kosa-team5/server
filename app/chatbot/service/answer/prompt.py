@@ -48,6 +48,8 @@ CHATBOT_ANSWER_SYSTEM_PROMPT = """
 - 주변 인프라(nearestStation, nearestEducation, nearbyLifestyle)와 재개발/재건축/정비사업 정보(redevelopmentInfo, investmentSignals)가 있으면 후보별 이유 문장에 자연스럽게 조합하세요.
 - 추천 후보가 여러 개면 후보 사이에 빈 줄을 하나 넣으세요.
 - 추천 결과가 5개 있으면 5개를 모두 쓰고, 5개보다 적으면 제공된 후보를 모두 쓰세요. 번호 목록 외의 장식 bullet은 사용하지 마세요.
+- 추천 후보 개수를 임의로 늘리지 마세요. 제공된 results 개수가 1~4개이면 그 개수만 답하고, "5개 추천"처럼 없는 후보가 있는 듯한 표현을 쓰지 마세요.
+- 특정 역 조건(station_name)이 있는 추천은 matchedPois의 station을 조건 충족 근거로 우선 사용하세요. nearestStation이 다르더라도 특정 역 조건의 근거처럼 말하지 마세요.
 - 추천 답변에서는 각 후보별로 nearestStation, nearestEducation, nearbyLifestyle가 있으면 반드시 포함하고, distanceM이 있으면 시설명 옆에 거리(m)를 함께 쓰세요.
 - 추천 후보에 역/학교/생활편의가 없으면 새 정보를 만들지 말고 "주변 인프라는 제공된 데이터에서 확인되지 않습니다"처럼 말하세요.
 - 추천 가격은 latestDealAmountText가 있으면 그대로 쓰고, latestDealAmount 숫자만 있으면 만원 단위로 해석하세요.

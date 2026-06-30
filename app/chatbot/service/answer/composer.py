@@ -405,6 +405,7 @@ def format_recommendation_candidate_blocks(answer: str, context: ChatbotAnswerCo
     matched = line_candidate_name(stripped, candidate_names)
     if not matched:
       stripped = strip_reason_label(stripped)
+      stripped = strip_orphan_reason_prefix(stripped, output)
       if pending_reason is not None:
         pending_reason = append_reason_text(pending_reason, stripped)
       else:
@@ -417,6 +418,11 @@ def format_recommendation_candidate_blocks(answer: str, context: ChatbotAnswerCo
 
     number = candidate_number(stripped) or (candidate_names.index(matched) + 1)
     reason = candidate_inline_reason(stripped, matched)
+    previous_title = last_non_empty_line(output)
+    if previous_title == f"{number}. {matched}":
+      if reason:
+        pending_reason = reason
+      continue
     if output and output[-1] != "":
       output.append("")
     output.append(f"{number}. {matched}")
@@ -426,6 +432,14 @@ def format_recommendation_candidate_blocks(answer: str, context: ChatbotAnswerCo
     output.append(pending_reason)
 
   return normalize_answer_whitespace("\n".join(output))
+
+
+def last_non_empty_line(lines: list[str]) -> str | None:
+  for line in reversed(lines):
+    stripped = line.strip()
+    if stripped:
+      return stripped
+  return None
 
 
 def candidate_number(line: str) -> int | None:
@@ -449,6 +463,13 @@ def append_reason_text(current: str, addition: str) -> str:
 
 def strip_reason_label(value: str) -> str:
   return re.sub(r"^\s*이유\s*[:：]\s*", "", value).strip()
+
+
+def strip_orphan_reason_prefix(value: str, output: list[str]) -> str:
+  previous = last_non_empty_line(output)
+  if previous is None or re.match(r"^[1-5][.)]\s+", previous) is None:
+    return value
+  return re.sub(r"^(?:아파트\s*)?(?:은|는|이|가)\s+", "", value).strip()
 
 
 def recommendation_candidate_names(context: ChatbotAnswerContext) -> list[str]:

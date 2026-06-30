@@ -313,6 +313,37 @@ def test_chatbot_answer_composer_preserves_requested_recommendation_block_shape(
   assert "\n이유:" not in answer
 
 
+def test_chatbot_answer_composer_merges_duplicate_candidate_heading(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content=(
+    "잠실역 근처의 학교가 가까운 아파트입니다.\n"
+    "1. 미성\n"
+    "잠실역 390m, 서울잠실초등학교 491m입니다.\n\n"
+    "2. 진주\n\n"
+    "2. 진주\n"
+    "는 잠실역 704m, 서울잠실초등학교 196m입니다.\n\n"
+    "3. 호수\n\n"
+    "3. 호수\n"
+    "아파트는 잠실역 621m, 서울송파초등학교 386m입니다."
+  ))
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "results": [
+      {"complexName": "미성"},
+      {"complexName": "진주"},
+      {"complexName": "호수"},
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert answer.count("2. 진주") == 1
+  assert answer.count("3. 호수") == 1
+  assert "\n\n2. 진주\n잠실역 704m" in answer
+  assert "\n\n3. 호수\n잠실역 621m" in answer
+
+
 def test_chatbot_answer_composer_keeps_five_recommendation_blocks(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
   completions = RecordingCompletions(content=(
@@ -335,6 +366,37 @@ def test_chatbot_answer_composer_keeps_five_recommendation_blocks(monkeypatch):
     assert f"\n{index}. 후보{index}\n" in f"\n{answer}\n"
   assert "\n\n5. 후보5\n" in answer
   assert "\n이유:" not in answer
+
+
+def test_chatbot_answer_composer_structured_recommendation_uses_available_count(monkeypatch):
+  monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "criteria": {"station_name": "잠실역"},
+    "results": [
+      {
+        "complexName": "미성",
+        "matchedPois": [{"category": "station", "name": "잠실(송파구청)역", "distanceM": 390.66}],
+        "latestDealAmountText": "17.9억원",
+        "infrastructure": {"nearbyLifestyle": []},
+      },
+      {
+        "complexName": "진주",
+        "matchedPois": [{"category": "station", "name": "잠실(송파구청)역", "distanceM": 704.55}],
+        "latestDealAmountText": "24.0억원",
+        "infrastructure": {"nearbyLifestyle": []},
+      },
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer().compose(context))
+
+  assert "1. 미성" in answer
+  assert "\n\n2. 진주" in answer
+  assert "3." not in answer
+  assert "5개" not in answer
+  assert "잠실(송파구청)역 391m" in answer
 
 
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):

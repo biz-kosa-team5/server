@@ -836,6 +836,42 @@ def test_chatbot_query_routes_short_school_nearby_question_directly(monkeypatch)
   assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
 
 
+def test_chatbot_query_routes_neighborhood_infra_recommendation_directly(monkeypatch):
+  captured = {}
+
+  class FakeChatbotSupervisor:
+    def __init__(self, _):
+      raise AssertionError("deterministic neighborhood infra recommendation should not initialize supervisor")
+
+  def fake_run_recommendation(_session, slots, text):
+    captured["slots"] = slots
+    captured["text"] = text
+    return {
+      "success": True,
+      "handler": "recommendation",
+      "criteria": slots,
+      "results": [{"complexName": "테스트"}],
+    }
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_run_recommendation)
+
+  response = client.post(
+    "/api/v1/chatbot/query",
+    json={"question": "방이동의 지하철역 근처 아파트 추천해줘"},
+  )
+
+  assert response.status_code == 200
+  assert captured["text"] == "방이동의 지하철역 근처 아파트 추천해줘"
+  assert captured["slots"] == {
+    "neighborhood": "방이동",
+    "infra_preferences": ["transport"],
+    "radius_m": 800,
+    "sort_by": "distance_asc",
+  }
+  assert response.json()["fragments"][0]["execution"]["path"] == "direct_feature"
+
+
 def test_chatbot_query_composes_answer_from_tool_json_without_llm(monkeypatch):
   monkeypatch.delenv("OPENAI_API_KEY", raising=False)
   monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", ChatbotAnswerComposer)
