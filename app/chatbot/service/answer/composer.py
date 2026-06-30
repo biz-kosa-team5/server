@@ -226,8 +226,10 @@ def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
     if has_forbidden_answer_terms(fallback):
       fallback = remove_forbidden_sentences(fallback)
     text = fallback
-  recommendation_text = readable_recommendation_answer(context)
-  if recommendation_text:
+  candidate_fallback = candidate_selection_fallback(context)
+  if candidate_fallback and should_replace_with_candidate_fallback(text, context):
+    return truncate_answer(candidate_fallback)
+  if not candidate_fallback and (recommendation_text := readable_recommendation_answer(context)):
     return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
   text = truncate_answer(text)
   text = ensure_required_recommendation_notes(text, context)
@@ -261,6 +263,97 @@ def remove_forbidden_sentences(answer: str) -> str:
     if not has_forbidden_answer_terms(sentence)
   ]
   return normalize_answer_whitespace(" ".join(kept))
+
+
+def candidate_selection_fallback(context: ChatbotAnswerContext) -> str:
+  if not context_has_candidates(context):
+    return ""
+  fallback = remove_coordinate_text(normalize_answer_whitespace(fallback_answer(context)))
+  if has_forbidden_answer_terms(fallback):
+    fallback = remove_forbidden_sentences(fallback)
+  return fallback
+
+
+def should_replace_with_candidate_fallback(answer: str, context: ChatbotAnswerContext) -> bool:
+  candidates = candidate_rows_from_context(context)
+  if not candidates:
+    return False
+  if is_missing_only_candidate_answer(answer):
+    return True
+  if context_has_candidate_groups(context) and looks_like_confirmed_comparison(answer):
+    return True
+  return not enough_candidate_names_in_answer(answer, candidates)
+
+
+def context_has_candidates(context: ChatbotAnswerContext) -> bool:
+  return bool(candidate_rows_from_context(context))
+
+
+def context_has_candidate_groups(context: ChatbotAnswerContext) -> bool:
+  return any(
+    isinstance(result, dict)
+    and isinstance(result.get("candidateGroups"), list)
+    and bool(result.get("candidateGroups"))
+    for result in iter_results(context.result)
+  )
+
+
+def candidate_rows_from_context(context: ChatbotAnswerContext) -> list[dict[str, Any]]:
+  rows: list[dict[str, Any]] = []
+  for result in iter_results(context.result):
+    if not isinstance(result, dict):
+      continue
+    rows.extend([
+      item
+      for item in result.get("candidates", [])
+      if isinstance(item, dict)
+    ] if isinstance(result.get("candidates"), list) else [])
+    groups = result.get("candidateGroups")
+    if isinstance(groups, list):
+      for group in groups:
+        if not isinstance(group, dict):
+          continue
+        rows.extend([
+          item
+          for item in group.get("candidates", [])
+          if isinstance(item, dict)
+        ] if isinstance(group.get("candidates"), list) else [])
+  return rows
+
+
+def is_missing_only_candidate_answer(answer: str) -> bool:
+  if any(token in answer for token in ("여러", "후보", "어느", "선택", "골라")):
+    return False
+  return any(token in answer for token in ("찾을 수 없습니다", "찾지 못했습니다", "없습니다", "데이터가 부족합니다"))
+
+
+def looks_like_confirmed_comparison(answer: str) -> bool:
+  if any(token in answer for token in ("여러", "후보", "어느", "선택", "골라")):
+    return False
+  return any(token in answer for token in ("비교하면", "비교 결과", "기준으로 비교", "더 가깝", "더 비싸", "더 저렴"))
+
+
+def enough_candidate_names_in_answer(answer: str, candidates: list[dict[str, Any]]) -> bool:
+  names = dedupe_candidate_names(candidates)
+  if not names:
+    return True
+  required = min(2, len(names))
+  mentioned = sum(1 for name in names[:5] if name and name in answer)
+  return mentioned >= required
+
+
+def dedupe_candidate_names(candidates: list[dict[str, Any]]) -> list[str]:
+  names = []
+  seen = set()
+  for candidate in candidates:
+    for key in ("complex_name", "complexName", "name", "trade_name", "tradeName"):
+      name = str(candidate.get(key) or "").strip()
+      if not name or name in seen:
+        continue
+      seen.add(name)
+      names.append(name)
+      break
+  return names
 
 
 def truncate_answer(answer: str, max_length: int = MAX_FINAL_ANSWER_LENGTH) -> str:

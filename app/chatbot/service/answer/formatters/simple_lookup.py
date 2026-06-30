@@ -12,6 +12,7 @@ from .common import (
   dict_value,
   first_non_empty,
   format_floor,
+  format_candidate_selection,
   format_labeled_value,
   format_price,
   list_value,
@@ -19,6 +20,13 @@ from .common import (
 
 
 def format_simple_lookup_result(result: dict[str, Any]) -> str:
+  candidate_answer = format_candidate_selection(criteria_name(result), list_value(result.get("candidates")))
+  if candidate_answer:
+    return candidate_answer
+
+  if clean_text(result.get("reason")) == "insufficient_query":
+    return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
+
   data = list_value(result.get("data"))
   if not data:
     return clean_text(result.get("message"))

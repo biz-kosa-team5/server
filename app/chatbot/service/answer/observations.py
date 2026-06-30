@@ -180,6 +180,10 @@ def compact_simple_lookup(result: dict[str, Any]) -> dict[str, Any]:
     "message",
     "reason",
     "suggestedQuestions",
+    "candidates",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   data = result.get("data")
   if isinstance(data, list):
@@ -201,6 +205,10 @@ def compact_price_trend(result: dict[str, Any]) -> dict[str, Any]:
     "message",
     "reason",
     "suggestedQuestions",
+    "candidates",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   rows = result.get("rows")
   if isinstance(rows, list):
@@ -219,6 +227,9 @@ def compact_recommendation(result: dict[str, Any]) -> dict[str, Any]:
     "message",
     "reason",
     "suggestedQuestions",
+    "candidateGroups",
+    "resolvedApartmentNames",
+    "resolutionNotes",
   ])
   results = result.get("results")
   if isinstance(results, list):
