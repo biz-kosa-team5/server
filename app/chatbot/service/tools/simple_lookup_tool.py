@@ -33,6 +33,61 @@ def build_simple_lookup_tool(session: Session):
         price_order: str | None = None,
     ) -> dict[str, Any]:
         """
+        단순 조회 전용 tool입니다. 반드시 질문 의도에 맞는 query_type을 직접 선택해서 넘기세요.
+        이 tool에 전달한 query_type은 slots.py가 추출한 기본 query_type을 덮어씁니다.
+
+        query_type 선택 규칙:
+        - location:
+          특정 아파트/단지의 위치, 주소, 좌표를 묻는 질문입니다.
+          예: "은마아파트 위치 알려줘"
+          -> query_type="location", target_name="은마아파트"
+
+        - trade_history:
+          특정 아파트/단지의 실거래가, 거래내역, 최근 거래를 묻는 질문입니다.
+          예: "은마아파트 84㎡ 지난 1년 거래내역 알려줘"
+          -> query_type="trade_history", target_name="은마아파트", area=84, period="1y"
+          예: "래미안대치팰리스 최근 6개월 거래 5건 보여줘"
+          -> query_type="trade_history", target_name="래미안대치팰리스", period="6m", limit=5
+
+        - region_trade_history:
+          구/동 지역의 실거래가, 거래내역, 최근 거래를 묻는 질문입니다.
+          최고가/최저가 순위가 아니라 단순 거래내역이면 이 값을 사용하세요.
+          예: "서초구 59㎡ 지난 6개월 거래내역 보여줘"
+          -> query_type="region_trade_history", target_name="서초구", area=59, period="6m"
+          예: "대치동 최근 거래 10건 알려줘"
+          -> query_type="region_trade_history", target_name="대치동", limit=10
+
+        - complex_price_record:
+          특정 아파트/단지 안에서 최고가 또는 최저가 거래를 묻는 질문입니다.
+          예: "은마아파트 84㎡ 지난 1년 최고가 거래 알려줘"
+          -> query_type="complex_price_record", target_name="은마아파트", area=84, period="1y", price_order="highest"
+          예: "반포자이 최근 6개월 최저가 3건 보여줘"
+          -> query_type="complex_price_record", target_name="반포자이", period="6m", price_order="lowest", limit=3
+
+        - region_price_ranking:
+          구/동 지역 안에서 최고가 또는 최저가 거래 순위/랭킹/N건을 묻는 질문입니다.
+          예: "송파구 30평 최고가 거래 3건 알려줘"
+          -> query_type="region_price_ranking", target_name="송파구", pyeong=30, price_order="highest", limit=3
+          예: "서초구 59㎡ 지난 6개월 최저가 거래내역 보여줘"
+          -> query_type="region_price_ranking", target_name="서초구", area=59, period="6m", price_order="lowest"
+
+        기간/건수 규칙:
+        - "지난 6개월", "최근 6개월" -> period="6m"
+        - "지난 1년", "최근 1년" -> period="1y"
+        - "3건", "5건", "TOP 5"처럼 거래 건수를 명시한 경우에만 limit을 넘기세요.
+        - "최근 6개월"의 숫자 6은 기간 숫자이며 limit이 아닙니다.
+
+        면적 규칙:
+        - "84㎡", "84m2" -> area=84
+        - "30평", "30평형" -> pyeong=30
+        - "30평대"는 현재 단일 pyeong으로 정확히 표현할 수 없으므로 가능하면 pyeong을 생략하세요.
+
+        정렬/가격 규칙:
+        - "최고가", "가장 비싼" -> price_order="highest"
+        - "최저가", "가장 싼" -> price_order="lowest"
+        - "가장 오래된", "최초 거래" -> sort_order="oldest", query_type="trade_history" 또는 "region_trade_history"
+        - 최고가/최저가 질문은 sort_order가 아니라 price_order를 사용하세요.
+
         아파트 단지의 위치, 단지 실거래 내역, 동/구 단위 최신 실거래 내역,
         단지 최고가/최저가, 지역 최고가/최저가 거래 랭킹을 조회합니다.
 

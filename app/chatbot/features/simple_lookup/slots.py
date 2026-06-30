@@ -4,10 +4,7 @@ import re
 from typing import Any
 
 from .dto import (
-    QUERY_COMPLEX_PRICE_RECORD,
     QUERY_LOCATION,
-    QUERY_REGION_PRICE_RANKING,
-    QUERY_REGION_TRADE_HISTORY,
     QUERY_TRADE_HISTORY,
 )
 
@@ -73,15 +70,8 @@ def infer_query_type(text: str) -> str:
     if any(token in text for token in ("어디", "위치", "주소", "좌표")) or _looks_like_find_location_question(text):
         return QUERY_LOCATION
 
-    if _has_price_record_expression(text):
-        if _looks_like_region_ranking(text):
-            return QUERY_REGION_PRICE_RANKING
-
-        return QUERY_COMPLEX_PRICE_RECORD
-
-    if _looks_like_region_trade_history(text):
-        return QUERY_REGION_TRADE_HISTORY
-
+    # Conservative fallback only. In the LLM tool path, an explicit
+    # query_type argument from the tool call overwrites this value.
     return QUERY_TRADE_HISTORY
 
 def _extract_location_target_name(text: str) -> str | None:

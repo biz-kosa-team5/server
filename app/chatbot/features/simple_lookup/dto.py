@@ -103,6 +103,7 @@ class SimpleLookupCriteria(BaseModel):
     price_order: PriceOrder | None = None
 
 
+# llm 답변 작성을 위한 단위 힌트 
 def _calculate_price_per_m2(
     deal_amount: int,
     excl_area: float | None,
