@@ -45,6 +45,9 @@ def build_simple_lookup_tool(session: Session):
 
         query_type 선택 규칙:
         - "어디 있어?", "주소 알려줘", "위치 알려줘", "좌표 알려줘"는 query_type="location"입니다.
+        - 특정 단지명을 대상으로 한 "찾아줘", "찾아주라", "찾아주세요"는 사용자가 단지 위치/기본 정보를 찾는 말일 수 있으므로
+          query_type="location"으로 처리할 수 있습니다. 예: "반포자이 찾아줘" -> location, target_name="반포자이".
+        - "아파트 찾아줘"처럼 대상 단지명이나 지역 조건이 없는 질문은 target_name을 억지로 만들지 마세요.
         - "얼마야", "요즘 얼마야", "최근 얼마야", "최근 실거래가", "거래내역"은 query_type="trade_history"입니다.
           - 특정 단지의 "가장 오래된 거래", "제일 오래된 거래", "최초 거래", "첫 거래", "처음 거래"는
           query_type="trade_history", sort_order="oldest", limit=1입니다.
@@ -91,6 +94,9 @@ def build_simple_lookup_tool(session: Session):
         주요 예시:
         - "잠실엘스 위치 알려줘"
           -> query_type="location", target_name="잠실엘스"
+
+        - "반포자이 찾아줘"
+          -> query_type="location", target_name="반포자이"
 
         - "은마 최근 실거래가 알려줘"
           -> query_type="trade_history", target_name="은마"
@@ -140,6 +146,7 @@ def build_simple_lookup_tool(session: Session):
         target_name 해석 규칙:
         - 단지 조회에서는 아파트 단지명을 target_name에 넣으세요.
           예: "은마", "반포자이", "잠실엘스"
+        - 조사, 말끝, 어색한 중복 표현은 target_name에 포함하지 말고 query 원문에만 보존하세요.
         - 지역 랭킹에서는 지역명을 target_name에 넣으세요.
           예: "강남구", "서초구", "송파구"
         - 지역 조회에서는 동/구명을 target_name에 넣으세요.

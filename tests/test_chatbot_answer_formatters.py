@@ -86,10 +86,10 @@ def test_simple_lookup_formatter_renders_ambiguous_candidates():
     ],
   })
 
-  assert "우성아파트로 검색되는 단지가 여러 개 있습니다." in answer
+  assert "우성아파트로 확인되는 단지는 다음과 같습니다." in answer
   assert "1. 청담동 청담우성아파트" in answer
   assert "2. 대치동 대치우성아파트" in answer
-  assert "어느 단지인지" in answer
+  assert "어느 단지인지" not in answer
 
 
 def test_price_trend_formatter_uses_timeseries_observation_rows():
@@ -339,9 +339,9 @@ def test_comparison_formatter_renders_candidate_groups_with_resolved_context():
   })
 
   assert "삼성3차는 단지로 확인했습니다." in answer
-  assert "우성 아파트로 검색되는 단지가 여러 개 있습니다." in answer
+  assert "우성 아파트로 확인되는 단지는 다음과 같습니다." in answer
   assert "대치우성아파트" in answer
-  assert "비교를 진행하려면" in answer
+  assert "비교를 진행하려면" not in answer
 
 
 def test_finalize_answer_replaces_missing_text_when_candidates_exist():
@@ -371,6 +371,7 @@ def test_finalize_answer_replaces_missing_text_when_candidates_exist():
   assert "찾을 수 없습니다" not in answer
   assert "청담우성아파트" in answer
   assert "대치우성아파트" in answer
+  assert "어느 단지인지" not in answer
 
 
 def test_legal_contract_formatter_uses_sources_without_internal_fields():

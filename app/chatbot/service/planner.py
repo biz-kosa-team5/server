@@ -1075,7 +1075,6 @@ def clean_target_candidate(value: str) -> str:
   text = re.sub(r"(?:에서|부터)$", "", text)
   text = text.strip(" ,")
   text = re.sub(r"\s+", "", text)
-  text = text.rstrip("은는이가을를")
   return text.strip()
 
 
@@ -1089,7 +1088,7 @@ def normalize_generic_complex_profile_target(value: str) -> str:
 
 
 def looks_like_find_location_question(text: str) -> bool:
-  match = re.search(r"(?P<target>.+?)\s*찾아(?:줘|주세요)?\??$", text)
+  match = re.search(r"(?P<target>.+?)\s*찾아\s*(?:줘|주세요|주라)?\??$", text)
   if match is None:
     return False
   target = clean_target_candidate(match.group("target"))

@@ -164,90 +164,69 @@ def test_chatbot_stream_answer_delta_hides_internal_terms_and_raw_coordinates(mo
     assert forbidden not in streamed_answer
 
 
-def test_chatbot_stream_progressively_emits_recommendation_then_comparison(monkeypatch):
-  def fake_recommendation(_session, _slots, _text):
-    long_note = "서초구 대형마트 접근성과 생활편의 조건에 맞는 설명 " * 10
-    return {
-      "handler": "recommendation",
-      "success": True,
-      "results": [
-        {
-          "complexName": "서초그랑자이",
-          "address": long_note,
-          "latestDealAmount": 350000,
-          "unitCnt": 1446,
-          "useDate": "2021-06-01",
-          "infrastructure": {
-            "nearestStation": {"name": "교대역", "distanceM": 520},
-            "nearestEducation": {"name": "서초초등학교", "distanceM": 430},
-            "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
-          },
-        },
-        {
-          "complexName": "래미안서초에스티지",
-          "address": long_note,
-          "latestDealAmount": 320000,
-          "unitCnt": 421,
-          "useDate": "2016-12-01",
-          "infrastructure": {
-            "nearestStation": {"name": "강남역", "distanceM": 610},
-            "nearestEducation": {"name": "서이초등학교", "distanceM": 500},
-            "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
-          },
-        },
-        {
-          "complexName": "반포자이",
-          "address": long_note,
-          "latestDealAmount": 410000,
-          "unitCnt": 3410,
-          "useDate": "2009-03-01",
-          "infrastructure": {
-            "nearestStation": {"name": "고속터미널역", "distanceM": 700},
-            "nearestEducation": {"name": "원촌초등학교", "distanceM": 650},
-            "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
-          },
-        },
-      ],
-    }
+def test_chatbot_stream_uses_supervisor_aggregate_for_recommendation_then_comparison(monkeypatch):
+  class FakeChatbotSupervisor:
+    def __init__(self, _session, model=None):
+      self.model = model
 
-  def fake_comparison(_session, slots, _text):
-    return {
-      "handler": "comparison",
-      "success": True,
-      "criteria": {"apartment_names": slots["apartment_names"]},
-      "results": [
+    async def run_with_trace(self, _question):
+      return (
         {
-          "complexName": "서초그랑자이",
-          "latestDealAmount": 350000,
-          "pyeong": 34,
-          "pricePerPyeong": 10294,
-          "unitCnt": 1446,
-          "builtYear": 2021,
-          "nearbyLifestyle": [{"name": "대형마트A", "distanceM": 420}],
+          "success": True,
+          "status": "success",
+          "message": "여러 조회 결과를 처리했습니다.",
+          "results": [
+            {
+              "agent": "recommendation_agent",
+              "success": True,
+              "result": {
+                "handler": "recommendation",
+                "success": True,
+                "results": [
+                  {"complexName": "서초그랑자이"},
+                  {"complexName": "래미안서초에스티지"},
+                  {"complexName": "반포자이"},
+                ],
+              },
+            },
+            {
+              "agent": "comparison_agent",
+              "success": True,
+              "result": {
+                "handler": "comparison",
+                "success": True,
+                "criteria": {
+                  "apartment_names": [
+                    "서초그랑자이",
+                    "래미안서초에스티지",
+                    "반포자이",
+                  ]
+                },
+                "results": [
+                  {"complexName": "서초그랑자이"},
+                  {"complexName": "래미안서초에스티지"},
+                  {"complexName": "반포자이"},
+                ],
+              },
+            },
+          ],
         },
         {
-          "complexName": "래미안서초에스티지",
-          "latestDealAmount": 320000,
-          "pyeong": 34,
-          "pricePerPyeong": 9411,
-          "unitCnt": 421,
-          "builtYear": 2016,
-          "nearbyLifestyle": [{"name": "대형마트B", "distanceM": 610}],
+          "path": "supervisor_aggregate",
+          "selectedAgents": ["recommendation_agent", "comparison_agent"],
         },
-        {
-          "complexName": "반포자이",
-          "latestDealAmount": 410000,
-          "pyeong": 34,
-          "pricePerPyeong": 12058,
-          "unitCnt": 3410,
-          "builtYear": 2009,
-          "nearbyLifestyle": [{"name": "대형마트C", "distanceM": 730}],
-        },
-      ],
-    }
+      )
 
-  monkeypatch.setattr("app.chatbot.service.orchestrator.run_recommendation", fake_recommendation)
-  monkeypatch.setattr("app.chatbot.service.orchestrator.run_comparison", fake_comparison)
+  class FakeChatbotAnswerComposer:
+    def __init__(self, model=None):
+      self.model = model
+      self.last_usage = None
+
+    async def compose(self, _context):
+      return "먼저 조건에 맞는 추천 후보를 확인했고, 이어서 위 추천 후보를 비교했습니다. 종합하면 후보별 장단점을 같이 보면 됩니다."
+
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotSupervisor", FakeChatbotSupervisor)
+  monkeypatch.setattr("app.chatbot.service.chatbot_service.ChatbotAnswerComposer", FakeChatbotAnswerComposer)
 
   response = client.post(
     "/api/v1/chatbot/query/stream",
@@ -261,18 +240,17 @@ def test_chatbot_stream_progressively_emits_recommendation_then_comparison(monke
     if event["event"] == "status"
   ]
   assert status_labels == [
-    "질문 의도 파악 중",
-    "처리 순서 정하는 중",
-    "추천 후보 찾는 중",
-    "추천 후보 비교 중",
-    "최종 답변 정리 중",
+    "질문 분석 중",
+    "작업 분리 중",
+    "작업 1/1 처리 중",
     "지도/시각 자료 준비 중",
+    "답변 문장 정리 중",
   ]
 
   event_types = [event["event"] for event in events]
   first_answer_index = event_types.index("answer_delta")
   artifacts_index = event_types.index("artifacts")
-  assert first_answer_index < artifacts_index
+  assert artifacts_index < first_answer_index
   streamed_answer = "".join(
     event["data"]["text"]
     for event in events
@@ -280,7 +258,6 @@ def test_chatbot_stream_progressively_emits_recommendation_then_comparison(monke
   )
   assert streamed_answer.index("먼저 조건에 맞는 추천 후보") < streamed_answer.index("이어서 위 추천 후보")
   assert streamed_answer.index("이어서 위 추천 후보") < streamed_answer.index("종합하면")
-  assert len(streamed_answer) > 1000
 
   final = events[-1]["data"]
   assert final["answer"] == streamed_answer

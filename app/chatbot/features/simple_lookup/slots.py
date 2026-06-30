@@ -70,7 +70,7 @@ def extract_simple_lookup_slots(question: str) -> dict[str, Any]:
 
 
 def infer_query_type(text: str) -> str:
-    if any(token in text for token in ("어디", "위치", "주소", "좌표")):
+    if any(token in text for token in ("어디", "위치", "주소", "좌표")) or _looks_like_find_location_question(text):
         return QUERY_LOCATION
 
     if _has_price_record_expression(text):
@@ -86,17 +86,27 @@ def infer_query_type(text: str) -> str:
 
 def _extract_location_target_name(text: str) -> str | None:
     matched = re.search(
-        r"(?P<target>.+?)\s*(?:어디|위치|주소|좌표)",
+        r"(?P<target>.+?)\s*(?:어디|위치|주소|좌표|찾아\s*(?:줘|주세요|주라)?)",
         text,
     )
     if matched is None:
         return None
 
-    target = matched.group("target").strip()
+    target = _clean_target_name(matched.group("target"))
     if not target:
         return None
 
     return target
+
+
+def _looks_like_find_location_question(text: str) -> bool:
+    matched = re.search(r"(?P<target>.+?)\s*찾아\s*(?:줘|주세요|주라)?\??$", text)
+    if matched is None:
+        return False
+    target = _clean_target_name(matched.group("target"))
+    if not target:
+        return False
+    return not _looks_like_region_name(target)
 
 
 def _extract_lookup_target_name(text: str) -> str | None:
@@ -236,5 +246,4 @@ def _clean_target_name(value: str) -> str:
     text = re.sub(r"(?:에서|부터)$", "", text)
     text = text.strip(" ,")
     text = re.sub(r"\s+", "", text)
-    text = text.rstrip("은는이가을를")
     return text.strip()

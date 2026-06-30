@@ -304,6 +304,28 @@ def test_recommendation_extractor_keeps_school_shorthand_when_tokenized():
   assert slots["limit"] == 3
 
 
+def test_recommendation_extractor_keeps_school_shorthand_when_joined():
+  slots = extract_recommendation_slots("초중고근처 강남구 아파트 3개")
+
+  assert slots["school_types"] == ["초등학교", "중학교", "고등학교"]
+  assert slots["radius_m"] == 800
+  assert slots["sort_by"] == "school_distance_asc"
+  assert slots["limit"] == 3
+
+
+def test_recommendation_extractor_does_not_use_generic_poi_as_specific_station():
+  transport_slots = extract_recommendation_slots("역 근처 아파트 추천")
+  education_slots = extract_recommendation_slots("초·중·고 근처 서초구 아파트 추천해줘")
+  commercial_slots = extract_recommendation_slots("대형마트 근처 서초구 아파트 3개 추천")
+
+  assert "station_name" not in transport_slots
+  assert transport_slots["infra_preferences"] == ["transport"]
+  assert "station_name" not in education_slots
+  assert education_slots["school_types"] == ["초등학교", "중학교", "고등학교"]
+  assert "station_name" not in commercial_slots
+  assert commercial_slots["infra_preferences"] == ["commercial"]
+
+
 def test_recommendation_extractor_handles_short_school_nearby_query():
   slots = extract_recommendation_slots("초등학교근처")
 
@@ -372,6 +394,33 @@ def test_comparison_extractor_cleans_metric_words_from_names():
   ]
   assert extract_compare_slots("래미안대치팰리스랑 잠실엘스 중 어디가 초등학교에 가까워?")["apartment_names"] == [
     "래미안대치팰리스",
+    "잠실엘스",
+  ]
+
+
+def test_comparison_extractor_handles_hard_context_connector_noise():
+  assert extract_compare_slots("삼성 3차 아파트랑이 우성아파트랑 비교 좀 해줘.")["apartment_names"] == [
+    "삼성 3차 아파트",
+    "우성아파트",
+  ]
+  assert extract_compare_slots("잠실엘스랑은마 비교해줘")["apartment_names"] == [
+    "잠실엘스",
+    "은마",
+  ]
+  assert extract_compare_slots("잠실엘스랑이편한세상 비교해줘")["apartment_names"] == [
+    "잠실엘스",
+    "이편한세상",
+  ]
+  assert extract_compare_slots("개포우성1이랑 잠실엘스 비교해줘")["apartment_names"] == [
+    "개포우성1",
+    "잠실엘스",
+  ]
+  assert extract_compare_slots("그럼우성아파트랑삼성3차아파트비교해줘")["apartment_names"] == [
+    "우성아파트",
+    "삼성3차아파트",
+  ]
+  assert extract_compare_slots("그럼 그중 개포우성1랑 잠실엘스 비교해줘.")["apartment_names"] == [
+    "개포우성1",
     "잠실엘스",
   ]
 

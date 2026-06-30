@@ -320,6 +320,16 @@ def test_extract_simple_lookup_slots_uses_recent_count_as_limit():
     assert slots["limit"] == 5
 
 
+def test_extract_simple_lookup_slots_treats_find_as_location_lookup():
+    find_slots = extract_simple_lookup_slots("반포자이 찾아줘")
+    where_slots = extract_simple_lookup_slots("반포자이 어디에 있어?")
+
+    assert find_slots["query_type"] == QUERY_LOCATION
+    assert find_slots["target_name"] == "반포자이"
+    assert where_slots["query_type"] == QUERY_LOCATION
+    assert where_slots["target_name"] == "반포자이"
+
+
 def test_extract_simple_lookup_slots_routes_region_trade_history_with_count_unit():
     slots = extract_simple_lookup_slots("대치동 최신 실거래가 3개 뽑아줘")
 

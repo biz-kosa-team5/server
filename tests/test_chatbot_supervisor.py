@@ -12,7 +12,6 @@ from app.chatbot.service.supervisor import (
   extract_agent_result,
   extract_supervisor_result,
   extract_supervisor_result_with_trace,
-  suggest_specialist_agents,
 )
 
 
@@ -32,50 +31,11 @@ class FakeSupervisorAgent:
     return self.result
 
 
-def test_suggest_specialist_agents_keeps_recommendation_reason_to_recommendation_agent():
-  assert suggest_specialist_agents("강남구에 있는 아파트 3개를 추천해주고 그 이유를 알려줘") == [
-    "recommendation_agent",
-  ]
-
-
-def test_suggest_specialist_agents_opens_additional_agents_for_distinct_evidence():
-  assert suggest_specialist_agents("강남구 아파트 3개 추천하고 최근 시세 추이도 알려줘") == [
-    "recommendation_agent",
-    "price_trend_agent",
-  ]
-  assert suggest_specialist_agents("강남구 아파트 추천하고 실거래도 알려줘") == [
-    "recommendation_agent",
-    "lookup_agent",
-  ]
-  assert suggest_specialist_agents("강남구 아파트 추천하고 후보 비교도 해줘") == [
-    "recommendation_agent",
-    "comparison_agent",
-  ]
-  assert suggest_specialist_agents("강남구 아파트 추천하고 매매 계약 법령도 알려줘") == [
-    "recommendation_agent",
-    "legal_contract_agent",
-  ]
-
-
-def test_suggest_specialist_agents_handles_price_trend_spacing_variants():
-  assert suggest_specialist_agents("잠실엘스 시세추이 알려줘") == [
-    "price_trend_agent",
-  ]
-  assert suggest_specialist_agents("잠실엘스 시세 흐름 알려줘") == [
-    "price_trend_agent",
-  ]
-  assert suggest_specialist_agents("잠실엘스 최근 가격 변화 알려줘") == [
-    "price_trend_agent",
-  ]
-
-
-def test_build_supervisor_user_content_adds_non_forced_routing_hint():
+def test_build_supervisor_user_content_preserves_raw_question_without_routing_hint():
   content = build_supervisor_user_content("강남구 아파트 추천하고 최근 시세 추이도 알려줘")
 
-  assert "라우팅 참고" in content
-  assert "recommendation_agent" in content
-  assert "price_trend_agent" in content
-  assert "강제가 아니며" in content
+  assert content == "강남구 아파트 추천하고 최근 시세 추이도 알려줘"
+  assert "라우팅 참고" not in content
 
 
 def test_aggregate_specialist_results_marks_partial_success():
@@ -398,9 +358,7 @@ def test_chatbot_supervisor_runs_supervisor_agent_without_langchain():
     "legal_contract_agent",
   ]
   supervisor_message = supervisor.supervisor.payloads[0]["messages"][0]["content"]
-  assert "라우팅 참고" in supervisor_message
-  assert "recommendation_agent" in supervisor_message
-  assert "legal_contract_agent" in supervisor_message
+  assert supervisor_message == "30억 이하 아파트 추천하고 매매 계약 법률 알려줘"
 
 
 def test_extract_agent_result_returns_no_matching_tool_without_tool_messages():

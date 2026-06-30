@@ -30,15 +30,19 @@ GENERIC_CORE_NAMES = {
   "어디",
 }
 QUERY_ACTION_SUFFIXES = (
+  "찾아주라",
+  "찾아주세요",
   "찾아줘",
   "알려줘",
+  "알려주세요",
   "보여줘",
+  "보여주세요",
   "조회해줘",
   "추천해줘",
   "해줘",
+  "주세요",
   "줘",
 )
-PARTICLE_SUFFIXES = ("으로", "로", "은", "는", "이", "가", "을", "를")
 DISTANCE_CONTEXT_LIMIT_M = 4000.0
 
 
@@ -85,7 +89,11 @@ class ComplexResolver:
     context: ComplexResolverContext | None = None,
   ) -> ComplexResolution:
     query_text = clean_query_text(query)
+    context = context_from_query_text(query_text, context or ComplexResolverContext())
     variants = complex_name_variants(query_text)
+    for target in target_names_from_query_text(query_text):
+      for variant in complex_name_variants(target):
+        add_variant(variants, variant)
 
     if is_insufficient_complex_query(query_text, variants):
       return ComplexResolution(
@@ -95,7 +103,7 @@ class ComplexResolver:
         message="조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요.",
       )
 
-    scored = self._find_candidates(variants, context or ComplexResolverContext())
+    scored = self._find_candidates(variants, context)
     if not scored:
       return ComplexResolution(
         status=NOT_FOUND,
@@ -115,7 +123,6 @@ class ComplexResolver:
         message="단지를 확인했습니다.",
       )
 
-    context = context or ComplexResolverContext()
     if should_auto_resolve(scored, query_text, context):
       note = resolution_note(scored[0], query_text, context)
       return ComplexResolution(
@@ -124,7 +131,7 @@ class ComplexResolver:
         variants=variants,
         complex=scored[0].row,
         candidates=candidates,
-        message="문맥에 가장 가까운 단지를 기준으로 확인했습니다.",
+        message="가장 일치도가 높은 단지를 기준으로 확인했습니다.",
         resolution_notes=[note] if note else [],
       )
 
@@ -205,12 +212,18 @@ def complex_name_variants(value: Any) -> list[str]:
   if not text:
     return []
 
-  compact = normalize_complex_key(text)
-  candidates: list[str] = []
-  add_variant(candidates, compact)
+  source_texts = [text]
+  stripped = strip_query_action_suffix(text)
+  if stripped != text:
+    source_texts.append(stripped)
 
-  without_parentheses = re.sub(r"\([^)]*\)", "", compact)
-  add_variant(candidates, without_parentheses)
+  candidates: list[str] = []
+  for source_text in source_texts:
+    add_variant(candidates, normalize_complex_key(source_text))
+
+  for candidate in list(candidates):
+    without_parentheses = re.sub(r"\([^)]*\)", "", candidate)
+    add_variant(candidates, without_parentheses)
 
   for candidate in list(candidates):
     for suffix in GENERIC_SUFFIXES:
@@ -236,22 +249,67 @@ def complex_name_variants(value: Any) -> list[str]:
 
 
 def add_variant(candidates: list[str], value: str) -> None:
-  value = strip_particles(value)
+  value = value.strip()
   if value and value not in candidates:
     candidates.append(value)
 
 
-def strip_particles(value: str) -> str:
-  text = value.strip()
+def strip_query_action_suffix(value: str) -> str:
+  text = clean_query_text(value)
   changed = True
   while changed:
     changed = False
-    for particle in PARTICLE_SUFFIXES:
-      if text.endswith(particle) and len(text) > len(particle) + 1:
-        text = text.removesuffix(particle)
+    for action in QUERY_ACTION_SUFFIXES:
+      if text.endswith(action) and len(text) > len(action):
+        text = text.removesuffix(action).strip()
         changed = True
         break
   return text
+
+
+def target_names_from_query_text(value: str) -> list[str]:
+  names = []
+  stripped = strip_query_action_suffix(value)
+  if stripped:
+    names.append(stripped)
+
+  neighborhood, target = split_neighborhood_target(stripped)
+  if neighborhood and target:
+    names.append(target)
+
+  return [
+    name
+    for index, name in enumerate(names)
+    if name and name not in names[:index]
+  ]
+
+
+def context_from_query_text(
+  query: str,
+  context: ComplexResolverContext,
+) -> ComplexResolverContext:
+  neighborhood, _target = split_neighborhood_target(strip_query_action_suffix(query))
+  if not neighborhood:
+    return context
+  if neighborhood in context.address_keywords:
+    return context
+  return ComplexResolverContext(
+    region_id=context.region_id,
+    region_name=context.region_name,
+    address_keywords=(*context.address_keywords, neighborhood),
+    anchor_complex=context.anchor_complex,
+    auto_resolve_with_context=context.auto_resolve_with_context,
+  )
+
+
+def split_neighborhood_target(value: str) -> tuple[str, str]:
+  match = re.match(r"^\s*(?P<neighborhood>[가-힣A-Za-z0-9]+?동)\s*(?P<target>.+)$", value)
+  if match is None:
+    return "", ""
+  target = clean_query_text(match.group("target"))
+  if not target or generic_suffix_stripped(normalize_complex_key(target)) in GENERIC_CORE_NAMES:
+    return "", ""
+  return match.group("neighborhood"), target
 
 
 def normalize_complex_key(value: Any) -> str:
@@ -282,7 +340,7 @@ def generic_suffix_stripped(value: str) -> str:
         core = core.removesuffix(suffix)
         changed = True
         break
-  return strip_particles(core)
+  return core
 
 
 def score_complex_candidate(
@@ -438,12 +496,15 @@ def should_auto_resolve(
     return True
   if not context.auto_resolve_with_context:
     return False
-  if not has_strong_context(query, context):
-    return False
 
   top = scored[0]
   second = scored[1]
-  return top.score >= 900 and top.score - second.score >= 80
+  gap = top.score - second.score
+  if top.score >= 900 and gap >= 120:
+    return True
+  if has_strong_context(query, context) and top.score >= 850 and gap >= 80:
+    return True
+  return False
 
 
 def has_strong_context(query: str, context: ComplexResolverContext) -> bool:

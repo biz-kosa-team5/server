@@ -142,21 +142,26 @@ def extract_station_name(text: str) -> str | None:
     text,
   )
   if connected_match is not None:
-    candidate = connected_match.group(1)
-    return None if looks_like_generic_station_reference(candidate) else candidate
+    return valid_station_name(connected_match.group(1))
 
   match = re.search(r"([가-힣A-Za-z0-9()]+역)\s*(?:근처|주변|인근|역세권)?", text)
   if match is not None:
-    candidate = match.group(1)
-    return None if looks_like_generic_station_reference(candidate) else candidate
+    return valid_station_name(match.group(1))
 
   near_match = re.search(r"([가-힣A-Za-z0-9]+)\s*(?:근처|주변|인근)", text)
   if near_match is None:
     return None
   candidate = near_match.group(1)
-  if looks_like_school_reference(candidate) or looks_like_generic_station_reference(candidate):
+  if not candidate.endswith("역"):
     return None
-  return candidate
+  return valid_station_name(candidate)
+
+
+def valid_station_name(value: str) -> str | None:
+  text = value.strip()
+  if looks_like_generic_station_reference(text):
+    return None
+  return text
 
 
 def extract_school_name(text: str) -> str | None:
@@ -164,12 +169,17 @@ def extract_school_name(text: str) -> str | None:
     r"([가-힣A-Za-z0-9]+(?:유치원|초등학교|중학교|고등학교|특수학교|초|중|고))\s*(?:이랑|랑|와|과|에서)?\s*(?:가까운|가까이에|근처|주변|인근)",
     text,
   )
-  return None if match is None else match.group(1)
+  if match is None:
+    return None
+  candidate = match.group(1)
+  if is_school_level_shorthand(candidate):
+    return None
+  return candidate
 
 
 def extract_school_types(text: str) -> list[str]:
   school_types = []
-  if re.search(r"초\s*[,/·]?\s*중\s*[,/·]?\s*고", text) or "초중고" in text:
+  if has_school_level_shorthand(text):
     return ["초등학교", "중학교", "고등학교"]
   aliases = {
     "초등": "초등학교",
@@ -345,11 +355,19 @@ def is_closest_school_query(text: str) -> bool:
 def has_school_reference(text: str) -> bool:
   if any(keyword in text for keyword in ("학교", "학군", "초등", "중학교", "고등학교", "유치원", "교육", "초품아")):
     return True
-  return re.search(r"(?<![가-힣A-Za-z0-9])[초중고](?![가-힣A-Za-z0-9])", text) is not None
+  return has_school_level_shorthand(text) or re.search(r"(?<![가-힣A-Za-z0-9])[초중고](?![가-힣A-Za-z0-9])", text) is not None
 
 
 def looks_like_school_reference(text: str) -> bool:
-  return any(keyword in text for keyword in ("학교", "학군", "초등", "중등", "고등", "유치원", "교육", "초품아"))
+  return has_school_level_shorthand(text) or any(keyword in text for keyword in ("학교", "학군", "초등", "중등", "고등", "유치원", "교육", "초품아"))
+
+
+def has_school_level_shorthand(text: str) -> bool:
+  return re.search(r"초\s*[,/·]?\s*중\s*[,/·]?\s*고", text) is not None
+
+
+def is_school_level_shorthand(text: str) -> bool:
+  return re.fullmatch(r"초\s*[,/·]?\s*중\s*[,/·]?\s*고", text) is not None
 
 
 def looks_like_generic_station_reference(text: str) -> bool:

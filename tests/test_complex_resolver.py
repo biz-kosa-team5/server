@@ -132,6 +132,31 @@ def test_resolver_resolves_samsung_third_phase_apartment():
   assert resolved_id == SAMSUNG3_ID
 
 
+def test_resolver_uses_neighborhood_prefix_as_address_hint():
+  with seeded_resolver_session() as session:
+    result = ComplexResolver(session).resolve("청담동 우성아파트 찾아주라")
+    resolved_id = result.complex.id if result.complex is not None else None
+
+  assert result.status == RESOLVED
+  assert resolved_id == CHEONGDAM_WOOSUNG_ID
+
+
+def test_simple_lookup_uses_neighborhood_prefix_as_address_hint():
+  with seeded_resolver_session() as session:
+    result = run_simple_lookup(
+      session,
+      {
+        "query_type": QUERY_LOCATION,
+        "target_name": "잠실동우성아파트",
+      },
+      "잠실동 우성아파트 찾아줘",
+  )
+
+  assert result["success"] is True
+  assert "우성" in result["data"][0]["complex_name"]
+  assert "잠실동" in result["data"][0]["address"]
+
+
 def test_resolver_rejects_generic_apartment_query_without_db_scan():
   with seeded_resolver_session() as session:
     result = ComplexResolver(session).resolve("아파트 찾아줘")
@@ -175,17 +200,16 @@ def test_price_trend_ambiguous_complex_returns_candidates():
   assert len(result["candidates"]) >= 3
 
 
-def test_comparison_uses_confirmed_target_as_anchor_with_resolution_note():
+def test_comparison_returns_candidates_for_ambiguous_target_even_with_other_resolved_target():
   question = "우성 아파트랑 삼성 3차 아파트 비교해줘"
   with seeded_resolver_session() as session:
     result = run_comparison(session, extract_compare_slots(question), question)
 
-  assert result["success"] is True, result
-  assert result["candidateGroups"] == []
+  assert result["success"] is False
+  assert result["reason"] == "ambiguous_target"
+  assert result["candidateGroups"]
+  assert result["candidateGroups"][0]["input"] == "우성 아파트"
   assert "삼성3차" in result["resolvedApartmentNames"]
-  assert "대치우성아파트" in result["resolvedApartmentNames"]
-  assert result["resolutionNotes"]
-  assert any("가까운 후보" in note for note in result["resolutionNotes"])
 
 
 def test_comparison_returns_candidate_groups_when_anchor_cannot_resolve():
