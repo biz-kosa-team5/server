@@ -19,6 +19,7 @@ from app.config import load_environment
 
 from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
+from .formatters.price_trend import format_price_trend_result
 from .formatters.simple_lookup import format_simple_lookup_result
 from .formatters.sequential import format_dependent_recommendation_comparison_answer
 from .observations import build_answer_observations
@@ -84,6 +85,9 @@ class ChatbotAnswerComposer:
     structured_lookup_answer = stable_simple_lookup_answer(context)
     if structured_lookup_answer:
       return finalize_sequence_answer_text(structured_lookup_answer, context)
+    structured_price_trend_answer = stable_price_trend_answer(context)
+    if structured_price_trend_answer:
+      return finalize_sequence_answer_text(structured_price_trend_answer, context)
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -269,6 +273,24 @@ def stable_simple_lookup_answer(context: ChatbotAnswerContext) -> str:
   ):
     answer = f"{answer}\n\n지도에 표시했습니다."
   return answer
+
+
+def stable_price_trend_answer(context: ChatbotAnswerContext) -> str:
+  if context.success is not True:
+    return ""
+
+  results = [
+    result
+    for result in iter_results(context.result)
+    if isinstance(result, dict)
+    and result.get("handler") == "price_trend"
+    and result.get("success") is True
+    and result.get("observation_type") in {"timeseries", "ranking"}
+  ]
+  if len(results) != 1:
+    return ""
+
+  return format_price_trend_result(results[0])
 
 
 def finalize_answer_text(

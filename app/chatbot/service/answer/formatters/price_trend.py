@@ -1,19 +1,19 @@
 """
-시세 추이 tool JSON을 fallback 답변 문장으로 변환합니다.
-기간, 평균/변화율/거래 건수처럼 반환된 지표만 사용하고 추세 전망은 생성하지 않습니다.
+시세 추이 tool JSON을 읽기 쉬운 블록형 답변으로 변환합니다.
+최종 답변 LLM이 수치 해석을 과하게 덧붙이지 않도록 observation 값만 사용합니다.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from .common import (
   clean_text,
   dict_value,
   format_candidate_selection,
+  format_candidates,
   format_number,
   format_percent,
   format_price,
-  format_candidates,
   list_value,
 )
 
@@ -24,64 +24,166 @@ def format_price_trend_result(result: dict[str, Any]) -> str:
     return candidate_answer
 
   if clean_text(result.get("reason")) == "insufficient_query":
-    return clean_text(result.get("message")) or "조회할 단지명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
+    return clean_text(result.get("message")) or "조회할 단지명이나 지역명이 부족합니다. 지역이나 단지명을 더 구체적으로 알려주세요."
 
-  summary = dict_value(result.get("summary"))
-  data = [
+  rows = [
     dict_value(item)
     for item in (list_value(result.get("data")) or list_value(result.get("rows")))
   ]
   query_type = clean_text(result.get("query_type") or result.get("observation_type"))
-  target_name = price_trend_target_name(result)
 
-  if query_type in {"price_change_ranking", "ranking"} and data:
-    items = []
-    for item in data[:3]:
-      name = clean_text(item.get("complex_name"))
-      rate = format_percent(item.get("change_rate"))
-      if name and rate:
-        items.append(f"{name} {rate}")
-    if items:
-      prefix = f"{target_name} 가격 변화율 순위는 " if target_name else "가격 변화율 순위는 "
-      return prefix + ", ".join(items) + "입니다."
+  if query_type in {"price_change_ranking", "ranking"} and rows:
+    return format_ranking_result(result, rows)
 
-  if summary:
-    first_period = clean_text(summary.get("first_period"))
-    last_period = clean_text(summary.get("last_period"))
-    unit = summary_value_unit(clean_text(summary.get("primary_metric")))
-    first_value = format_metric_value(summary.get("first_value"), unit)
-    last_value = format_metric_value(summary.get("last_value"), unit)
-    change_rate = format_percent(summary.get("change_rate"))
-    trade_count = summary.get("total_trade_count")
-    parts = []
-    if first_period and last_period and first_value and last_value:
-      parts.append(
-        f"{first_period} {first_value}에서 "
-        f"{last_period} {last_value}{summary_change_particle(unit)} 변했습니다"
-      )
-    if change_rate:
-      parts.append(f"변화율은 {change_rate}입니다")
-    if trade_count is not None:
-      parts.append(f"거래 건수는 {trade_count}건입니다")
-    if parts:
-      prefix = f"{target_name} 시세추이를 조회했습니다. " if target_name else "시세추이를 조회했습니다. "
-      return prefix + ". ".join(parts) + "."
+  if query_type in {"timeseries", "price_trend"} and rows:
+    return format_timeseries_result(result, rows)
 
-  if data:
-    first = data[0]
-    last = data[-1]
-    first_period = clean_text(first.get("period_start"))
-    last_period = clean_text(last.get("period_start"))
-    metric_key, unit = timeseries_metric(first, last)
-    first_amount = format_timeseries_value(first.get(metric_key), unit)
-    last_amount = format_timeseries_value(last.get(metric_key), unit)
-    if first_period and last_period and first_amount and last_amount:
-      prefix = f"{target_name} 시세추이를 조회했습니다. " if target_name else "시세추이를 조회했습니다. "
-      return (
-        f"{prefix}{first_period} 평균 {first_amount}에서 "
-        f"{last_period} 평균 {last_amount}{summary_change_particle(unit)} 확인됩니다."
-      )
+  if rows:
+    return format_timeseries_result(result, rows)
   return format_failure_with_candidates(result)
+
+
+def format_timeseries_result(result: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+  target_name = price_trend_target_name(result)
+  summary = timeseries_summary(result, rows)
+
+  title = f"{target_name} 시세추이를 조회했습니다." if target_name else "시세추이를 조회했습니다."
+  lines = [title]
+
+  period_line = format_period_line(summary)
+  amount_line = format_change_line(
+    "평균 거래금액",
+    summary.get("first_avg_deal_amount"),
+    summary.get("last_avg_deal_amount"),
+    format_price,
+  )
+  sqm_line = format_change_line(
+    "㎡당 가격",
+    summary.get("first_avg_price_per_sqm"),
+    summary.get("last_avg_price_per_sqm"),
+    format_price_per_sqm,
+  )
+  count_line = format_change_line(
+    "거래건수",
+    summary.get("first_trade_count"),
+    summary.get("last_trade_count"),
+    format_trade_count,
+  )
+  total_line = format_labeled_metric("총 거래건수", summary.get("total_trade_count"), format_trade_count)
+
+  detail_lines = [
+    line
+    for line in (period_line, amount_line, sqm_line, count_line, total_line)
+    if line
+  ]
+  if detail_lines:
+    lines.append("")
+    lines.extend(detail_lines)
+  return "\n".join(lines)
+
+
+def format_ranking_result(result: dict[str, Any], rows: list[dict[str, Any]]) -> str:
+  target_name = price_trend_target_name(result)
+  title = f"{target_name} 가격 변화율 순위는 다음과 같습니다." if target_name else "가격 변화율 순위는 다음과 같습니다."
+  lines = [title]
+
+  for index, row in enumerate(rows[:5], start=1):
+    name = clean_text(row.get("complex_name")) or clean_text(row.get("trade_name")) or f"{index}위"
+    rank = row.get("rank") or index
+    if lines[-1] != "":
+      lines.append("")
+    lines.append(f"{rank}) {name}")
+
+    period = format_period_range(row.get("start_period"), row.get("end_period"))
+    if period:
+      lines.append(f"기간: {period}")
+
+    change_rate = format_percent(row.get("change_rate"))
+    if change_rate:
+      lines.append(f"변화율: {change_rate}")
+
+    start_price = format_price_per_sqm(row.get("start_price_per_sqm"))
+    end_price = format_price_per_sqm(row.get("end_price_per_sqm"))
+    if start_price and end_price:
+      lines.append(f"㎡당 가격: {start_price} -> {end_price}")
+
+    address = clean_text(row.get("address"))
+    if address:
+      lines.append(f"주소: {address}")
+
+  return "\n".join(lines)
+
+
+def timeseries_summary(result: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+  summary = dict_value(result.get("summary_metrics")) or dict_value(result.get("summary"))
+  if summary:
+    return summary
+
+  first = rows[0]
+  last = rows[-1]
+  return {
+    "first_period": first.get("period_start"),
+    "last_period": last.get("period_start"),
+    "first_avg_deal_amount": first.get("avg_deal_amount"),
+    "last_avg_deal_amount": last.get("avg_deal_amount"),
+    "first_avg_price_per_sqm": first.get("avg_price_per_sqm"),
+    "last_avg_price_per_sqm": last.get("avg_price_per_sqm"),
+    "first_trade_count": first.get("trade_count"),
+    "last_trade_count": last.get("trade_count"),
+    "total_trade_count": sum(int_value(row.get("trade_count")) for row in rows),
+  }
+
+
+def format_period_line(summary: dict[str, Any]) -> str:
+  period = format_period_range(summary.get("first_period"), summary.get("last_period"))
+  return f"기간: {period}" if period else ""
+
+
+def format_period_range(start: Any, end: Any) -> str:
+  start_text = clean_text(start)
+  end_text = clean_text(end)
+  if start_text and end_text:
+    return f"{start_text} ~ {end_text}"
+  return start_text or end_text
+
+
+def format_change_line(label: str, first: Any, last: Any, formatter: Callable[[Any], str]) -> str:
+  first_text = formatter(first)
+  last_text = formatter(last)
+  if not first_text or not last_text:
+    return ""
+  return f"{label}: {first_text} -> {last_text}"
+
+
+def format_labeled_metric(label: str, value: Any, formatter: Callable[[Any], str]) -> str:
+  text = formatter(value)
+  if not text:
+    return ""
+  return f"{label}: {text}"
+
+
+def format_price_per_sqm(value: Any) -> str:
+  number = format_number(value)
+  if not number:
+    return ""
+  return f"{number}만원/㎡"
+
+
+def format_trade_count(value: Any) -> str:
+  if value is None or value == "":
+    return ""
+  try:
+    return f"{int(value):,}건"
+  except (TypeError, ValueError):
+    text = clean_text(value)
+    return f"{text}건" if text and not text.endswith("건") else text
+
+
+def int_value(value: Any) -> int:
+  try:
+    return int(value)
+  except (TypeError, ValueError):
+    return 0
 
 
 def format_failure_with_candidates(result: dict[str, Any]) -> str:
@@ -100,36 +202,3 @@ def price_trend_target_name(result: dict[str, Any]) -> str:
 
   slots = dict_value(result.get("slots"))
   return clean_text(slots.get("target_name"))
-
-
-def timeseries_metric(first: dict[str, Any], last: dict[str, Any]) -> tuple[str, str]:
-  if first.get("avg_deal_amount") is not None or last.get("avg_deal_amount") is not None:
-    return "avg_deal_amount", "만원"
-  return "avg_price_per_sqm", "만원/㎡"
-
-
-def format_timeseries_value(value: Any, unit: str) -> str:
-  if unit == "만원":
-    return format_price(value)
-  return format_metric_value(value, unit)
-
-
-def summary_value_unit(primary_metric: str) -> str:
-  if primary_metric == "avg_deal_amount":
-    return "만원"
-  if primary_metric == "avg_price_per_sqm":
-    return "만원/㎡"
-  return ""
-
-
-def format_metric_value(value: Any, unit: str) -> str:
-  number = format_number(value)
-  if not number or not unit:
-    return number
-  return f"{number}{unit}"
-
-
-def summary_change_particle(unit: str) -> str:
-  if unit == "만원":
-    return "으로"
-  return "로"
