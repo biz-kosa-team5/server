@@ -1,6 +1,10 @@
 import asyncio
 import json
 
+from app.chatbot.features.simple_lookup.dto import (
+  QUERY_REGION_PRICE_RANKING,
+  QUERY_REGION_TRADE_HISTORY,
+)
 from app.chatbot.service.answer import ChatbotAnswerComposer, ChatbotAnswerContext
 from app.chatbot.service.answer import composer as composer_module
 
@@ -46,6 +50,93 @@ def test_chatbot_answer_composer_does_not_reuse_single_result_answer(monkeypatch
   assert answer == "최종 answer 계층에서 만든 답변입니다."
   assert len(completions.calls) == 1
   assert "feature 단계에서 만든 추천 답변입니다." not in completions.calls[0]["messages"][1]["content"]
+
+
+def test_chatbot_answer_composer_uses_stable_region_trade_history_without_llm(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="호출되면 안 됩니다.")
+  result = {
+    "success": True,
+    "handler": "simple_lookup",
+    "query_type": QUERY_REGION_TRADE_HISTORY,
+    "criteria": {
+      "query_type": QUERY_REGION_TRADE_HISTORY,
+      "target_name": "강남구",
+    },
+    "data": [
+      {
+        "complex_id": 1,
+        "complex_name": "풍림아이원2차202동",
+        "address": "대치동 910-6",
+        "deal_date": "2026-06-23",
+        "deal_amount": 255000,
+        "excl_area": 156.21,
+        "price_per_m2": 1632.42,
+        "floor": 7,
+      },
+    ],
+  }
+  context = ChatbotAnswerContext.from_response_dict({
+    **success_context(result=result).to_dict(),
+    "uiSummary": {"hasMapFocus": True},
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert completions.calls == []
+  assert answer == (
+    "강남구의 최근 실거래가 1건은 다음과 같습니다.\n\n"
+    "1) 풍림아이원2차202동\n"
+    "거래일: 2026-06-23\n"
+    "거래금액: 25.5억원\n"
+    "전용면적: 156.21㎡\n"
+    "㎡당 가격: 1,632.42만원\n"
+    "층수: 7층\n"
+    "주소: 대치동 910-6\n\n"
+    "제공된 데이터 기준입니다.\n\n"
+    "지도에 표시했습니다."
+  )
+
+
+def test_chatbot_answer_composer_uses_stable_region_price_ranking_without_llm(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content="1억 8천만 원이라고 잘못 말하면 안 됩니다.")
+  result = {
+    "success": True,
+    "handler": "simple_lookup",
+    "query_type": QUERY_REGION_PRICE_RANKING,
+    "criteria": {
+      "query_type": QUERY_REGION_PRICE_RANKING,
+      "target_name": "서초구",
+      "price_order": "highest",
+    },
+    "data": [
+      {
+        "rank": 1,
+        "region_name": "서초구",
+        "complex_id": 1,
+        "complex_name": "아크로리버파크",
+        "address": "반포동 2-12",
+        "deal_date": "2024-08-05",
+        "deal_amount": 1800000,
+        "excl_area": 234.91,
+        "price_per_m2": 7662.51,
+        "floor": 35,
+      },
+    ],
+  }
+  context = ChatbotAnswerContext.from_response_dict({
+    **success_context(result=result).to_dict(),
+    "uiSummary": {"hasMapFocus": True},
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert completions.calls == []
+  assert "거래금액: 180.0억원" in answer
+  assert "1억 8천만 원" not in answer
+  assert "1,800,000,000원" not in answer
+  assert answer.endswith("지도에 표시했습니다.")
 
 
 def test_chatbot_answer_composer_sends_detailed_answer_policy(monkeypatch):

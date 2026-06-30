@@ -19,6 +19,7 @@ from app.config import load_environment
 
 from .context import ChatbotAnswerContext
 from .fallback import fallback_answer
+from .formatters.simple_lookup import format_simple_lookup_result
 from .formatters.sequential import format_dependent_recommendation_comparison_answer
 from .observations import build_answer_observations
 from .prompt import CHATBOT_ANSWER_SYSTEM_PROMPT, DEFAULT_ANSWER_MODEL
@@ -80,6 +81,9 @@ class ChatbotAnswerComposer:
     sequence_answer = format_dependent_recommendation_comparison_answer(context.result)
     if sequence_answer:
       return finalize_sequence_answer_text(sequence_answer, context)
+    structured_lookup_answer = stable_simple_lookup_answer(context)
+    if structured_lookup_answer:
+      return finalize_sequence_answer_text(structured_lookup_answer, context)
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -231,6 +235,29 @@ def int_or_zero(value: Any) -> int:
     return int(value)
   except (TypeError, ValueError):
     return 0
+
+
+def stable_simple_lookup_answer(context: ChatbotAnswerContext) -> str:
+  if context.success is not True:
+    return ""
+
+  results = [
+    result
+    for result in iter_results(context.result)
+    if isinstance(result, dict)
+    and result.get("handler") == "simple_lookup"
+    and result.get("success") is True
+    and result.get("query_type") in {"region_trade_history", "region_price_ranking"}
+  ]
+  if len(results) != 1:
+    return ""
+
+  answer = format_simple_lookup_result(results[0])
+  if not answer:
+    return ""
+  if isinstance(context.uiSummary, dict) and context.uiSummary.get("hasMapFocus") is True:
+    answer = f"{answer}\n\n지도에 표시했습니다."
+  return answer
 
 
 def finalize_answer_text(

@@ -9,6 +9,8 @@ from app.chatbot.features.price_trend.dto import (
 )
 from app.chatbot.features.simple_lookup.dto import (
   QUERY_LOCATION,
+  QUERY_REGION_PRICE_RANKING,
+  QUERY_REGION_TRADE_HISTORY,
   QUERY_TRADE_HISTORY,
   SimpleLookupObservation,
 )
@@ -97,6 +99,117 @@ def test_simple_lookup_formatter_uses_trade_dto_shape():
   assert format_simple_lookup_result(result) == (
     "잠실엘스 실거래 내역은 2026-01-20 43.5억원 전용 84.97㎡ 15층입니다."
   )
+
+
+def test_simple_lookup_formatter_renders_region_trade_history_consistently():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": True,
+    "query_type": QUERY_REGION_TRADE_HISTORY,
+    "criteria": {
+      "query_type": QUERY_REGION_TRADE_HISTORY,
+      "target_name": "송파구",
+    },
+    "data": [
+      {
+        "complex_id": 1,
+        "complex_name": "잠실엘스",
+        "address": "잠실동 19",
+        "deal_date": "2026-06-24",
+        "deal_amount": 330000,
+        "excl_area": 84.8,
+        "price_per_m2": 3891.51,
+        "floor": 14,
+      },
+      {
+        "complex_id": 2,
+        "complex_name": "리센츠",
+        "address": "잠실동 22",
+        "deal_date": "2026-06-19",
+        "deal_amount": 339500,
+        "excl_area": 84.99,
+        "price_per_m2": 3994.59,
+        "floor": 12,
+      },
+    ],
+  })
+
+  assert answer == (
+    "송파구의 최근 실거래가 2건은 다음과 같습니다.\n\n"
+    "1) 잠실엘스\n"
+    "거래일: 2026-06-24\n"
+    "거래금액: 33.0억원\n"
+    "전용면적: 84.8㎡\n"
+    "㎡당 가격: 3,891.51만원\n"
+    "층수: 14층\n"
+    "주소: 잠실동 19\n\n"
+    "2) 리센츠\n"
+    "거래일: 2026-06-19\n"
+    "거래금액: 34.0억원\n"
+    "전용면적: 84.99㎡\n"
+    "㎡당 가격: 3,994.59만원\n"
+    "층수: 12층\n"
+    "주소: 잠실동 22\n\n"
+    "제공된 데이터 기준입니다."
+  )
+
+
+def test_simple_lookup_formatter_renders_region_price_ranking_with_manwon_unit():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": True,
+    "query_type": QUERY_REGION_PRICE_RANKING,
+    "criteria": {
+      "query_type": QUERY_REGION_PRICE_RANKING,
+      "target_name": "서초구",
+      "price_order": "highest",
+    },
+    "data": [
+      {
+        "rank": 1,
+        "region_name": "서초구",
+        "complex_id": 1,
+        "complex_name": "아크로리버파크",
+        "address": "반포동 2-12",
+        "deal_date": "2024-08-05",
+        "deal_amount": 1800000,
+        "excl_area": 234.91,
+        "price_per_m2": 7662.51,
+        "floor": 35,
+      },
+      {
+        "rank": 2,
+        "region_name": "서초구",
+        "complex_id": 2,
+        "complex_name": "래미안원베일리",
+        "address": "반포동 1",
+        "deal_date": "2025-02-26",
+        "deal_amount": 1650000,
+        "excl_area": 200.0,
+        "price_per_m2": 8250.0,
+      },
+    ],
+  })
+
+  assert answer == (
+    "서초구 아파트 최고가 순위는 다음과 같습니다.\n\n"
+    "1) 아크로리버파크\n"
+    "거래일: 2024-08-05\n"
+    "거래금액: 180.0억원\n"
+    "전용면적: 234.91㎡\n"
+    "㎡당 가격: 7,662.51만원\n"
+    "층수: 35층\n"
+    "주소: 반포동 2-12\n\n"
+    "2) 래미안원베일리\n"
+    "거래일: 2025-02-26\n"
+    "거래금액: 165.0억원\n"
+    "전용면적: 200.0㎡\n"
+    "㎡당 가격: 8,250.00만원\n"
+    "주소: 반포동 1\n\n"
+    "제공된 데이터 기준입니다."
+  )
+  assert "1,800,000,000원" not in answer
+  assert "1억 8천" not in answer
 
 
 def test_simple_lookup_formatter_renders_ambiguous_candidates():
