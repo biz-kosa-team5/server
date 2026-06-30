@@ -6,7 +6,10 @@ from langchain.tools import tool
 from sqlalchemy.orm import Session
 
 from app.chatbot.features.recommendation.service import run_recommendation
-from app.chatbot.features.recommendation.slots import extract_recommendation_slots
+from app.chatbot.features.recommendation.slots import (
+  extract_recommendation_slots,
+  looks_like_generic_station_reference,
+)
 from .utils import compact_none
 
 
@@ -61,8 +64,8 @@ def build_recommendation_tool(session: Session):
     Returns:
       dict: recommendation service가 반환한 구조화된 JSON 결과입니다.
     """
-    slots = extract_recommendation_slots(query)
-    slots.update(compact_none({
+    extracted_slots = extract_recommendation_slots(query)
+    llm_slots = compact_none({
       "district": district,
       "neighborhood": neighborhood,
       "station_name": station_name,
@@ -81,7 +84,73 @@ def build_recommendation_tool(session: Session):
       "redevelopment_interest": redevelopment_interest,
       "sort_by": sort_by,
       "limit": limit,
-    }))
+    })
+    slots = merge_recommendation_slots(extracted_slots, llm_slots, query)
     return run_recommendation(session, slots, query)
 
   return recommend_apartments
+
+
+def merge_recommendation_slots(regex_slots: dict[str, Any], llm_slots: dict[str, Any], query: str) -> dict[str, Any]:
+  slots = dict(regex_slots)
+  overrides = dict(llm_slots)
+  for key in ("neighborhood", "infra_preferences", "radius_m", "sort_by"):
+    if key in regex_slots:
+      overrides.pop(key, None)
+  if "neighborhood" in regex_slots and "district" not in regex_slots:
+    overrides.pop("district", None)
+  if "station_name" in regex_slots:
+    overrides.pop("station_name", None)
+  elif should_keep_generic_transport_slot(regex_slots, query):
+    overrides.pop("station_name", None)
+  elif should_ignore_llm_station_name(overrides.get("station_name"), slots.get("neighborhood") or overrides.get("neighborhood"), query):
+    overrides.pop("station_name", None)
+  if should_keep_generic_education_slot(regex_slots, query):
+    overrides.pop("school_name", None)
+    overrides.pop("school_type", None)
+    overrides.pop("school_types", None)
+  slots.update(overrides)
+  return slots
+
+
+def should_keep_generic_transport_slot(regex_slots: dict[str, Any], query: str) -> bool:
+  infra_preferences = regex_slots.get("infra_preferences")
+  return (
+    isinstance(infra_preferences, list)
+    and "transport" in infra_preferences
+    and "station_name" not in regex_slots
+    and any(keyword in query for keyword in ("지하철역", "전철역", "역 근처", "역 주변", "역 인근", "역세권"))
+  )
+
+
+def should_keep_generic_education_slot(regex_slots: dict[str, Any], query: str) -> bool:
+  infra_preferences = regex_slots.get("infra_preferences")
+  return (
+    isinstance(infra_preferences, list)
+    and "education" in infra_preferences
+    and "school_name" not in regex_slots
+    and "school_type" not in regex_slots
+    and "school_types" not in regex_slots
+    and any(keyword in query for keyword in ("학교", "교육", "학군"))
+  )
+
+
+def should_ignore_llm_station_name(station_name: Any, neighborhood: Any, query: str) -> bool:
+  if station_name is None:
+    return False
+  candidate = str(station_name).strip()
+  if not candidate:
+    return True
+  if looks_like_generic_station_reference(candidate):
+    return True
+  neighborhood_name = str(neighborhood or "").strip()
+  if neighborhood_name and candidate == neighborhood_name:
+    return True
+  if neighborhood_name and candidate == f"{neighborhood_name}역":
+    return True
+  return (
+    neighborhood_name
+    and f"{neighborhood_name}의" in query
+    and any(keyword in query for keyword in ("지하철역", "전철역", "역 근처", "역 주변", "역 인근"))
+    and "역" not in candidate
+  )

@@ -12,6 +12,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.chatbot.features.recommendation.slots import extract_recommendation_slots
+
 from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
 from .conversation_memory import (
   build_conversation_memory_patch,
@@ -495,12 +497,25 @@ async def execute_task(
 ) -> TaskExecutionResult:
   execution: dict[str, Any] | None = None
   try:
-    plan = None
+    plan = build_execution_plan(task.text)
+    if should_run_direct_plan_first(plan, task.text):
+      orchestration_result = await execute_plan(
+        session,
+        task.text,
+        plan,
+        supervisor=None,
+        supervisor_provider=None,
+        supervisor_initialization_failed=False,
+        allow_lookup_trend_direct=True,
+      )
+      if orchestration_result is not None:
+        return TaskExecutionResult(
+          task=task,
+          result=orchestration_result.result,
+          execution=enrich_execution_trace(orchestration_result.execution, orchestration_result.result),
+        )
 
     def fallback_plan():
-      nonlocal plan
-      if plan is None:
-        plan = build_execution_plan(task.text)
       return plan
 
     result, execution = await run_supervisor_first(
@@ -532,6 +547,27 @@ async def execute_task(
     execution = {"path": "supervisor_execution_failed"}
 
   return TaskExecutionResult(task=task, result=result, execution=execution)
+
+
+def should_run_direct_plan_first(plan: ExecutionPlan, text: str) -> bool:
+  if plan.plan_type != "single_feature":
+    return False
+  if len(plan.steps) != 1 or plan.steps[0].handler != "recommendation":
+    return False
+  slots = extract_recommendation_slots(text)
+  infra_preferences = slots.get("infra_preferences")
+  return (
+    isinstance(infra_preferences, list)
+    and bool(infra_preferences)
+    and (
+      slots.get("neighborhood") is not None
+      or slots.get("district") is not None
+      or slots.get("station_name") is not None
+      or slots.get("school_name") is not None
+      or slots.get("school_type") is not None
+      or slots.get("school_types") is not None
+    )
+  )
 
 
 async def run_supervisor_first(

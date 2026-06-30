@@ -10,7 +10,7 @@ from app.chatbot.service.tools import (
   build_simple_lookup_tool,
 )
 from app.database import SessionLocal, ensure_initialized
-from app.models import Complex
+from app.models import Complex, Poi, Trade
 
 
 def test_recommendation_extractor_builds_filter_slots():
@@ -41,6 +41,31 @@ def test_recommendation_extractor_builds_neighborhood_slot():
   assert slots["limit"] == 3
 
 
+def test_recommendation_extractor_combines_neighborhood_and_generic_infra_slots():
+  station_slots = extract_recommendation_slots("방이동의 지하철역 근처 아파트 추천해줘")
+  school_slots = extract_recommendation_slots("대치동의 학교 근처 아파트 추천해줘")
+  combined_slots = extract_recommendation_slots("대치동의 지하철역과 학교가 가까운 아파트 추천해줘")
+
+  assert station_slots == {
+    "neighborhood": "방이동",
+    "infra_preferences": ["transport"],
+    "radius_m": 800,
+    "sort_by": "distance_asc",
+  }
+  assert school_slots == {
+    "neighborhood": "대치동",
+    "infra_preferences": ["education"],
+    "radius_m": 800,
+    "sort_by": "school_distance_asc",
+  }
+  assert combined_slots == {
+    "neighborhood": "대치동",
+    "infra_preferences": ["transport", "education"],
+    "radius_m": 800,
+    "sort_by": "school_distance_asc",
+  }
+
+
 def test_recommendation_filters_by_neighborhood():
   ensure_initialized()
   with SessionLocal() as session:
@@ -49,6 +74,204 @@ def test_recommendation_filters_by_neighborhood():
   assert result["success"] is True, result
   assert result["results"]
   assert all("잠실동" in item["address"] for item in result["results"])
+
+
+def test_recommendation_filters_by_neighborhood_and_generic_subway_station():
+  ensure_initialized()
+  question = "방이동의 지하철역 근처 아파트 추천해줘"
+  slots = extract_recommendation_slots(question)
+
+  with SessionLocal() as session:
+    session.add_all([
+      Complex(
+        id=990911,
+        region_id=11710,
+        parcel_id=9909111,
+        pnu="1171011100199091101",
+        name="방이테스트",
+        trade_name="방이테스트",
+        address="서울특별시 송파구 방이동 990",
+        latitude=37.515,
+        longitude=127.112,
+        unit_cnt=300,
+        use_date="2010-01-01",
+      ),
+      Trade(
+        id=99091101,
+        complex_id=990911,
+        deal_date="2026-01-01",
+        deal_amount=120000,
+        excl_area=84.0,
+        floor=10,
+      ),
+      Poi(
+        id=990911,
+        category="station",
+        name="방이테스트역",
+        subtype="테스트노선",
+        latitude=37.5151,
+        longitude=127.1121,
+      ),
+    ])
+    session.flush()
+    result = run_recommendation(session, slots, question)
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["results"]
+  assert result["results"][0]["complexName"] == "방이테스트"
+  assert result["results"][0]["infrastructure"]["nearestStation"]["name"] == "방이테스트역"
+
+
+def test_recommendation_tool_keeps_neighborhood_transport_query_when_llm_adds_wrong_region():
+  ensure_initialized()
+  question = "방이동의 지하철역 근처 아파트 추천해줘"
+
+  with SessionLocal() as session:
+    session.add_all([
+      Complex(
+        id=990913,
+        region_id=11710,
+        parcel_id=9909131,
+        pnu="1171011100199091301",
+        name="방이툴테스트",
+        trade_name="방이툴테스트",
+        address="서울특별시 송파구 방이동 991",
+        latitude=37.516,
+        longitude=127.113,
+        unit_cnt=300,
+        use_date="2010-01-01",
+      ),
+      Trade(
+        id=99091301,
+        complex_id=990913,
+        deal_date="2026-01-01",
+        deal_amount=120000,
+        excl_area=84.0,
+        floor=10,
+      ),
+      Poi(
+        id=990913,
+        category="station",
+        name="방이툴테스트역",
+        subtype="테스트노선",
+        latitude=37.5161,
+        longitude=127.1131,
+      ),
+    ])
+    session.flush()
+    result = build_recommendation_tool(session).invoke({
+      "query": question,
+      "district": "강남구",
+      "radius_m": 500,
+      "sort_by": "school_distance_asc",
+    })
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["criteria"]["neighborhood"] == "방이동"
+  assert result["criteria"]["infra_preferences"] == ["transport"]
+  assert result["criteria"]["radius_m"] == 800
+  assert result["criteria"]["sort_by"] == "distance_asc"
+  assert "station_name" not in result["criteria"]
+  assert "district" not in result["criteria"]
+  assert result["results"]
+  assert result["results"][0]["complexName"] == "방이툴테스트"
+
+
+def test_recommendation_tool_keeps_generic_station_query_when_llm_guesses_station():
+  ensure_initialized()
+  question = "방이동의 지하철역 근처 아파트 추천해줘"
+
+  with SessionLocal() as session:
+    session.add_all([
+      Complex(
+        id=990914,
+        region_id=11710,
+        parcel_id=9909141,
+        pnu="1171011100199091401",
+        name="방이제네릭역테스트",
+        trade_name="방이제네릭역테스트",
+        address="서울특별시 송파구 방이동 992",
+        latitude=37.516,
+        longitude=127.113,
+        unit_cnt=300,
+        use_date="2010-01-01",
+      ),
+      Trade(
+        id=99091401,
+        complex_id=990914,
+        deal_date="2026-01-01",
+        deal_amount=120000,
+        excl_area=84.0,
+        floor=10,
+      ),
+      Poi(
+        id=990914,
+        category="station",
+        name="방이제네릭역",
+        subtype="테스트노선",
+        latitude=37.5161,
+        longitude=127.1131,
+      ),
+    ])
+    session.flush()
+    result = build_recommendation_tool(session).invoke({
+      "query": question,
+      "station_name": "방이역",
+    })
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["criteria"]["neighborhood"] == "방이동"
+  assert result["criteria"]["infra_preferences"] == ["transport"]
+  assert "station_name" not in result["criteria"]
+  assert result["results"]
+  assert result["results"][0]["complexName"] == "방이제네릭역테스트"
+
+
+def test_recommendation_tool_keeps_generic_school_query_when_llm_adds_school_types():
+  ensure_initialized()
+  question = "대치동의 학교 근처 아파트 추천해줘"
+
+  with SessionLocal() as session:
+    result = build_recommendation_tool(session).invoke({
+      "query": question,
+      "school_types": ["초등학교", "중학교", "고등학교"],
+    })
+
+  assert result["success"] is True, result
+  assert result["criteria"]["neighborhood"] == "대치동"
+  assert result["criteria"]["infra_preferences"] == ["education"]
+  assert "school_types" not in result["criteria"]
+  assert "school_type" not in result["criteria"]
+  assert "school_name" not in result["criteria"]
+  assert result["results"]
+
+
+def test_recommendation_filters_by_neighborhood_station_and_school_combo():
+  ensure_initialized()
+  question = "대치동의 지하철역과 학교가 가까운 아파트 추천해줘"
+  slots = extract_recommendation_slots(question)
+
+  with SessionLocal() as session:
+    session.add(Poi(
+      id=990912,
+      category="station",
+      name="대치테스트역",
+      subtype="테스트노선",
+      latitude=37.4987,
+      longitude=127.0651,
+    ))
+    session.flush()
+    result = run_recommendation(session, slots, question)
+    session.rollback()
+
+  assert result["success"] is True, result
+  assert result["results"]
+  assert result["results"][0]["complexName"] == "래미안대치팰리스"
+  assert result["results"][0]["infrastructure"]["nearestStation"]["name"] == "대치테스트역"
+  assert result["results"][0]["infrastructure"]["nearestEducation"] is not None
 
 
 def test_recommendation_prefers_candidates_with_infrastructure_by_default():

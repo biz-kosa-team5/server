@@ -83,11 +83,11 @@ class ChatbotAnswerComposer:
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
-      return finalize_answer_text(fallback_answer(context), context)
+      return finalize_answer_text(fallback_answer(context), context, use_structured_recommendation=True)
 
     client = self._client or openai_client(self._api_key)
     if client is None:
-      return finalize_answer_text(fallback_answer(context), context)
+      return finalize_answer_text(fallback_answer(context), context, use_structured_recommendation=True)
 
     try:
       request = {
@@ -117,11 +117,15 @@ class ChatbotAnswerComposer:
       if should_cooldown_answer_llm(exc):
         disable_answer_llm_temporarily()
       logger.exception("Failed to compose chatbot answer")
-      return finalize_answer_text(fallback_answer(context), context)
+      return finalize_answer_text(fallback_answer(context), context, use_structured_recommendation=True)
 
     self.last_usage = extract_usage_metadata(response)
     answer = extract_response_content(response)
-    return finalize_answer_text(answer or fallback_answer(context), context)
+    return finalize_answer_text(
+      answer or fallback_answer(context),
+      context,
+      use_structured_recommendation=not bool(answer),
+    )
 
 
 def openai_client(api_key: str | None = None) -> OpenAI | None:
@@ -229,8 +233,14 @@ def int_or_zero(value: Any) -> int:
     return 0
 
 
-def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
-  # 최종 답변에서 내부 용어(handler/tool 등)와 좌표 문장을 제거하고, 추천 답변은 목록형으로 고정한다.
+def finalize_answer_text(
+  answer: str,
+  context: ChatbotAnswerContext,
+  *,
+  use_structured_recommendation: bool = False,
+) -> str:
+  # 최종 답변에서 내부 용어(handler/tool 등)와 좌표 문장을 제거한다.
+  # LLM 답변이 정상 생성된 추천은 덮어쓰지 않고, LLM을 못 쓸 때만 서버 포맷으로 fallback한다.
   text = normalize_answer_whitespace(answer)
   text = remove_markdown_formatting(text)
   text = remove_coordinate_text(text)
@@ -241,11 +251,15 @@ def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:
     if has_forbidden_answer_terms(fallback):
       fallback = remove_forbidden_sentences(fallback)
     text = fallback
+    use_structured_recommendation = True
+  recommendation_text = readable_recommendation_answer(context) if use_structured_recommendation else ""
+  if recommendation_text:
+    return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
   candidate_fallback = candidate_selection_fallback(context)
   if candidate_fallback and should_replace_with_candidate_fallback(text, context):
     return truncate_answer(candidate_fallback)
-  if not candidate_fallback and (recommendation_text := readable_recommendation_answer(context)):
-    return truncate_answer(recommendation_text, MAX_RECOMMENDATION_ANSWER_LENGTH)
+  if recommendation_observations(context):
+    text = normalize_recommendation_answer_layout(text, context)
   text = truncate_answer(text)
   text = ensure_required_recommendation_notes(text, context)
   return text or context.message or "질문을 처리했습니다."
@@ -460,9 +474,155 @@ def readable_recommendation_answer(context: ChatbotAnswerContext) -> str:
       if value
     ]
     detail = " · ".join(facts)
-    lines.append(f"{index}. {name}" + (f" - {detail}" if detail else ""))
+    if index > 1:
+      lines.append("")
+    lines.append(f"{index}. {name}")
+    if detail:
+      lines.append(detail)
 
   return normalize_answer_whitespace("\n".join(lines))
+
+
+def normalize_recommendation_answer_layout(answer: str, context: ChatbotAnswerContext) -> str:
+  text = break_inline_numbered_items(answer)
+  text = number_recommendation_candidate_lines(text, context)
+  return format_recommendation_candidate_blocks(text, context)
+
+
+def break_inline_numbered_items(answer: str) -> str:
+  text = re.sub(r"(?<!^)(?<!\n)\s+(?=[1-5][.)]\s+)", "\n", answer)
+  return normalize_answer_whitespace(text)
+
+
+def number_recommendation_candidate_lines(answer: str, context: ChatbotAnswerContext) -> str:
+  candidate_names = recommendation_candidate_names(context)
+  if not candidate_names:
+    return answer
+
+  numbered_lines = []
+  used_names: set[str] = set()
+  for line in answer.split("\n"):
+    stripped = line.strip()
+    if not stripped:
+      continue
+    if re.match(r"^[1-5][.)]\s+", stripped):
+      numbered_lines.append(stripped)
+      matched = line_candidate_name(stripped, candidate_names)
+      if matched:
+        used_names.add(matched)
+      continue
+
+    matched = line_candidate_name(stripped, candidate_names)
+    if matched and matched not in used_names:
+      next_number = len(used_names) + 1
+      numbered_lines.append(f"{next_number}. {stripped}")
+      used_names.add(matched)
+    else:
+      numbered_lines.append(stripped)
+  return normalize_answer_whitespace("\n".join(numbered_lines))
+
+
+def format_recommendation_candidate_blocks(answer: str, context: ChatbotAnswerContext) -> str:
+  candidate_names = recommendation_candidate_names(context)
+  if not candidate_names:
+    return answer
+
+  output: list[str] = []
+  pending_reason: str | None = None
+  for line in answer.split("\n"):
+    stripped = line.strip()
+    if not stripped:
+      continue
+
+    matched = line_candidate_name(stripped, candidate_names)
+    if not matched:
+      stripped = strip_reason_label(stripped)
+      stripped = strip_orphan_reason_prefix(stripped, output)
+      if pending_reason is not None:
+        pending_reason = append_reason_text(pending_reason, stripped)
+      else:
+        output.append(stripped)
+      continue
+
+    if pending_reason is not None:
+      output.append(pending_reason)
+      output.append("")
+
+    number = candidate_number(stripped) or (candidate_names.index(matched) + 1)
+    reason = candidate_inline_reason(stripped, matched)
+    previous_title = last_non_empty_line(output)
+    if previous_title == f"{number}. {matched}":
+      if reason:
+        pending_reason = reason
+      continue
+    if output and output[-1] != "":
+      output.append("")
+    output.append(f"{number}. {matched}")
+    pending_reason = reason or None
+
+  if pending_reason is not None:
+    output.append(pending_reason)
+
+  return normalize_answer_whitespace("\n".join(output))
+
+
+def last_non_empty_line(lines: list[str]) -> str | None:
+  for line in reversed(lines):
+    stripped = line.strip()
+    if stripped:
+      return stripped
+  return None
+
+
+def candidate_number(line: str) -> int | None:
+  match = re.match(r"^([1-5])[.)]\s+", line)
+  return None if match is None else int(match.group(1))
+
+
+def candidate_inline_reason(line: str, candidate_name: str) -> str:
+  cleaned = re.sub(r"^[1-5][.)]\s+", "", line).strip()
+  reason = cleaned.removeprefix(candidate_name).strip()
+  reason = re.sub(r"^\s*(?:-|–|—|:|：)\s*", "", reason).strip()
+  return strip_reason_label(reason)
+
+
+def append_reason_text(current: str, addition: str) -> str:
+  addition = strip_reason_label(addition)
+  if current.endswith((".", "!", "?", "다.", "요.")):
+    return f"{current} {addition}"
+  return f"{current} {addition}"
+
+
+def strip_reason_label(value: str) -> str:
+  return re.sub(r"^\s*이유\s*[:：]\s*", "", value).strip()
+
+
+def strip_orphan_reason_prefix(value: str, output: list[str]) -> str:
+  previous = last_non_empty_line(output)
+  if previous is None or re.match(r"^[1-5][.)]\s+", previous) is None:
+    return value
+  return re.sub(r"^(?:아파트\s*)?(?:은|는|이|가)\s+", "", value).strip()
+
+
+def recommendation_candidate_names(context: ChatbotAnswerContext) -> list[str]:
+  results = recommendation_observations(context)
+  if not results:
+    return []
+  rows = results[0].get("results")
+  if not isinstance(rows, list):
+    return []
+  names = [
+    name
+    for row in rows[:5]
+    if isinstance(row, dict)
+    if (name := str(row.get("complexName") or row.get("name") or "").strip())
+  ]
+  return names
+
+
+def line_candidate_name(line: str, candidate_names: list[str]) -> str | None:
+  cleaned = re.sub(r"^[1-5][.)]\s+", "", line).strip()
+  return next((name for name in candidate_names if cleaned.startswith(name)), None)
 
 
 def recommendation_answer_title(result: dict[str, Any]) -> str:
