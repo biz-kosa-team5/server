@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class ChatbotQueryRequest(BaseModel):
   question: str = Field(min_length=1)
+  conversationContext: dict[str, Any] | None = None
 
   @field_validator("question")
   @classmethod
@@ -28,6 +29,9 @@ class ChatbotQueryResponse(BaseModel):
   message: str
   executionSummary: dict[str, Any]
   answer: str
+  resolvedQuestion: str | None = None
+  conversationResolution: dict[str, Any] | None = None
+  conversationMemoryPatch: dict[str, Any] | None = None
   uiActions: list[dict[str, Any]] = Field(default_factory=list)
   uiArtifacts: list[dict[str, Any]] = Field(default_factory=list)
   uiSummary: dict[str, Any] | None = None

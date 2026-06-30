@@ -12,6 +12,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .answer import ChatbotAnswerComposer, ChatbotAnswerContext
+from .conversation_memory import (
+  build_conversation_memory_patch,
+  normalize_conversation_context,
+  resolve_contextual_question,
+)
 from .orchestrator import OrchestrationResult, execute_plan
 from .planner import ExecutionPlan, build_execution_plan
 from .supervisor import (
@@ -184,10 +189,15 @@ class ChatbotQueryResponse:
 
 async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
   question = str(payload.get("question", "")).strip()
+  conversation_context = normalize_conversation_context(payload.get("conversationContext"))
+  resolved_question, conversation_resolution = resolve_contextual_question(
+    question,
+    conversation_context,
+  )
   model = runtime_model_from_payload(payload)
   supervisor_provider = LazySupervisorProvider(session, model=model)
   task_results = []
-  for task in ChatbotTask.from_question(question):
+  for task in ChatbotTask.from_question(resolved_question):
     task_results.append(await execute_task(
       session,
       None,
@@ -199,6 +209,8 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
     task_results=task_results,
   )
   response_dict = chatbot_response.to_response_dict()
+  response_dict["resolvedQuestion"] = resolved_question
+  response_dict["conversationResolution"] = conversation_resolution
   response_dict.update(build_chatbot_ui_payload(session, response_dict))
   answer_context = chatbot_response.to_answer_context(response_dict)
   answer_composer = create_answer_composer(model)
@@ -209,6 +221,7 @@ async def handle_chatbot_query(session: Session, payload: dict[str, Any]) -> dic
   usage = collect_response_usage(response_dict)
   if usage:
     response_dict["usage"] = usage
+  response_dict["conversationMemoryPatch"] = build_conversation_memory_patch(response_dict)
   return response_dict
 
 
