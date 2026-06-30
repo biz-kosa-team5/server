@@ -59,6 +59,10 @@ def test_chatbot_answer_composer_sends_detailed_answer_policy(monkeypatch):
   assert "복합 질문이면 fragments의 index 순서를 유지" in system_prompt
   assert "내부 처리 용어를 사용자에게 노출하지 마세요" in system_prompt
   assert "도메인별 요약 방식" in system_prompt
+  assert "아래 비교표로 가격/거리 차이를 볼 수 있다" in system_prompt
+  assert "추천 후보가 여러 개면 후보 사이에 빈 줄을 하나 넣으세요" in system_prompt
+  assert '"이유:" 같은 라벨 없이 자연문장으로 추천 근거를 쓰세요' in system_prompt
+  assert "추천 결과가 5개 있으면 5개를 모두 쓰고" in system_prompt
 
 
 def test_chatbot_answer_composer_sends_structured_llm_context(monkeypatch):
@@ -211,7 +215,7 @@ def test_chatbot_answer_composer_limits_answer_to_1000_chars(monkeypatch):
 
 def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendation(monkeypatch):
   monkeypatch.setenv("OPENAI_API_KEY", "test-key")
-  completions = RecordingCompletions(content="대치동 추천 후보는 개포우성1입니다. 도곡역과 대청중학교가 가깝고 생활편의시설도 확인됩니다.")
+  completions = RecordingCompletions(content="대치동 추천 후보는 개포우성1입니다.\n개포우성1 - 도곡역과 대청중학교가 가까워 추천할 수 있습니다.")
   context = success_context(result={
     "success": True,
     "handler": "recommendation",
@@ -229,12 +233,108 @@ def test_chatbot_answer_composer_adds_missing_redevelopment_note_for_recommendat
 
   answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
 
-  assert answer.startswith("조건에 맞는 추천 후보입니다.\n1. 개포우성1")
-  assert "도곡역 382m" in answer
-  assert "생활편의 연치과병원 300m" in answer
-  assert "재건축/정비사업 정보 없음" in answer
+  assert answer.startswith("대치동 추천 후보는 개포우성1입니다.\n\n1. 개포우성1")
+  assert "\n도곡역과 대청중학교가 가까워 추천할 수 있습니다." in answer
+  assert "\n이유:" not in answer
+  assert "생활편의 거리는 개포우성1 기준 연치과병원 300m입니다." in answer
+  assert "재건축/정비사업은 현재 응답 데이터에서 확인된 정보가 없습니다." in answer
   assert "\n" in answer
   assert len(answer) <= 1000
+
+
+def test_chatbot_answer_composer_keeps_llm_recommendation_lines(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content=(
+    "역세권과 가격 데이터를 기준으로 보면 두 후보를 우선 볼 수 있습니다.\n"
+    "잠실엘스 - 잠실역 420m, 최근 거래가 28억원이라 조건에 맞습니다.\n"
+    "리센츠 - 잠실새내역 310m, 생활편의시설이 가까워 추천할 수 있습니다."
+  ))
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "results": [
+      {"complexName": "잠실엘스"},
+      {"complexName": "리센츠"},
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert "조건에 맞는 추천 후보입니다." not in answer
+  assert "1. 잠실엘스\n잠실역 420m" in answer
+  assert "\n\n2. 리센츠\n잠실새내역 310m" in answer
+  assert "\n이유:" not in answer
+
+
+def test_chatbot_answer_composer_breaks_inline_numbered_recommendations(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content=(
+    "조건에 맞는 후보입니다. 1. 잠실엘스 - 잠실역 420m와 최근 거래가 28억원이 근거입니다. "
+    "2. 리센츠 - 잠실새내역 310m와 생활편의시설이 근거입니다."
+  ))
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "results": [
+      {"complexName": "잠실엘스"},
+      {"complexName": "리센츠"},
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert "조건에 맞는 후보입니다.\n\n1. 잠실엘스\n잠실역 420m" in answer
+  assert "\n\n2. 리센츠\n잠실새내역 310m" in answer
+  assert "\n이유:" not in answer
+
+
+def test_chatbot_answer_composer_preserves_requested_recommendation_block_shape(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content=(
+    "조건에 맞는 후보입니다.\n"
+    "1. 잠실엘스\n"
+    "이유: 잠실역 420m와 최근 거래가 28억원이 근거입니다.\n\n"
+    "2. 리센츠\n"
+    "이유: 잠실새내역 310m와 생활편의시설이 근거입니다."
+  ))
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "results": [
+      {"complexName": "잠실엘스"},
+      {"complexName": "리센츠"},
+    ],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  assert "1. 잠실엘스\n잠실역 420m" in answer
+  assert "\n\n2. 리센츠\n잠실새내역 310m" in answer
+  assert "\n이유:" not in answer
+
+
+def test_chatbot_answer_composer_keeps_five_recommendation_blocks(monkeypatch):
+  monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+  completions = RecordingCompletions(content=(
+    "추천 기준에 맞는 후보 5개입니다.\n"
+    "1. 후보1 - 역 100m와 생활편의시설이 가까워 추천합니다. "
+    "2. 후보2 - 학교 120m와 최근 거래가가 확인됩니다. "
+    "3. 후보3 - 주변 병원과 상권이 가까워 생활편의가 좋습니다. "
+    "4. 후보4 - 노후 단지와 정비사업 공개 검색 결과가 있어 참고할 수 있습니다. "
+    "5. 후보5 - 역세권과 최근 거래 데이터가 확인됩니다."
+  ))
+  context = success_context(result={
+    "success": True,
+    "handler": "recommendation",
+    "results": [{"complexName": f"후보{index}"} for index in range(1, 6)],
+  })
+
+  answer = asyncio.run(ChatbotAnswerComposer(client=RecordingClient(completions)).compose(context))
+
+  for index in range(1, 6):
+    assert f"\n{index}. 후보{index}\n" in f"\n{answer}\n"
+  assert "\n\n5. 후보5\n" in answer
+  assert "\n이유:" not in answer
 
 
 def test_chatbot_answer_composer_uses_injected_llm_client_without_api_key(monkeypatch):
