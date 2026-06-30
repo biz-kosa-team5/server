@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LLM_FAILURE_COOLDOWN_SECONDS = 300.0
 _ANSWER_LLM_DISABLED_UNTIL = 0.0
-MAX_FINAL_ANSWER_LENGTH = 500
-MAX_RECOMMENDATION_ANSWER_LENGTH = 650
+MAX_FINAL_ANSWER_LENGTH = 1000
+MAX_RECOMMENDATION_ANSWER_LENGTH = 1000
 FORBIDDEN_ANSWER_TERMS = (
   "handler",
   "agent",
@@ -63,9 +63,11 @@ class ChatbotAnswerComposer:
     )
     self._client = client
     self._api_key = api_key
+    self.last_usage: dict[str, int] | None = None
 
   async def compose(self, context: ChatbotAnswerContext) -> str:
     # tool 결과가 실패했거나 LLM을 사용할 수 없으면 fallback 답변으로 안전하게 내려간다.
+    self.last_usage = None
     if context.success is False:
       return finalize_answer_text(fallback_answer(context), context)
     if answer_llm_temporarily_disabled():
@@ -76,11 +78,9 @@ class ChatbotAnswerComposer:
       return finalize_answer_text(fallback_answer(context), context)
 
     try:
-      response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=self.model,
-        temperature=0.2,
-        messages=[
+      request = {
+        "model": self.model,
+        "messages": [
           {
             "role": "system",
             "content": CHATBOT_ANSWER_SYSTEM_PROMPT,
@@ -94,6 +94,12 @@ class ChatbotAnswerComposer:
             ),
           },
         ],
+      }
+      if supports_custom_temperature(self.model):
+        request["temperature"] = 0.2
+      response = await asyncio.to_thread(
+        client.chat.completions.create,
+        **request,
       )
     except Exception as exc:
       if should_cooldown_answer_llm(exc):
@@ -101,6 +107,7 @@ class ChatbotAnswerComposer:
       logger.exception("Failed to compose chatbot answer")
       return finalize_answer_text(fallback_answer(context), context)
 
+    self.last_usage = extract_usage_metadata(response)
     answer = extract_response_content(response)
     return finalize_answer_text(answer or fallback_answer(context), context)
 
@@ -125,6 +132,10 @@ def normalize_openai_model(model: str) -> str:
   if model.startswith("openai:"):
     model = model.split(":", 1)[1]
   return model or DEFAULT_ANSWER_MODEL
+
+
+def supports_custom_temperature(model: str) -> bool:
+  return not model.startswith("gpt-5")
 
 
 def answer_llm_temporarily_disabled() -> bool:
@@ -168,6 +179,42 @@ def extract_response_content(response: Any) -> str:
   if not isinstance(content, str):
     return ""
   return content.strip()
+
+
+def extract_usage_metadata(response: Any) -> dict[str, int] | None:
+  usage = get_value(response, "usage")
+  if usage is None:
+    return None
+
+  input_tokens = int_or_zero(get_value(usage, "prompt_tokens") or get_value(usage, "input_tokens"))
+  output_tokens = int_or_zero(get_value(usage, "completion_tokens") or get_value(usage, "output_tokens"))
+  total_tokens = int_or_zero(get_value(usage, "total_tokens"))
+  if total_tokens == 0:
+    total_tokens = input_tokens + output_tokens
+
+  cached_tokens = 0
+  prompt_details = get_value(usage, "prompt_tokens_details") or get_value(usage, "input_tokens_details")
+  if prompt_details is not None:
+    cached_tokens = int_or_zero(
+      get_value(prompt_details, "cached_tokens")
+      or get_value(prompt_details, "cache_read")
+    )
+
+  if input_tokens == 0 and output_tokens == 0 and total_tokens == 0:
+    return None
+  return {
+    "input_tokens": input_tokens,
+    "output_tokens": output_tokens,
+    "cached_tokens": cached_tokens,
+    "total_tokens": total_tokens,
+  }
+
+
+def int_or_zero(value: Any) -> int:
+  try:
+    return int(value)
+  except (TypeError, ValueError):
+    return 0
 
 
 def finalize_answer_text(answer: str, context: ChatbotAnswerContext) -> str:

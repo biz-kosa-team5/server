@@ -47,9 +47,12 @@ async def execute_plan(
   supervisor: ChatbotSupervisor | None = None,
   supervisor_provider: SupervisorProvider | None = None,
   supervisor_initialization_failed: bool = False,
+  allow_lookup_trend_direct: bool = False,
 ) -> OrchestrationResult | None:
   # planner가 만든 ExecutionPlan을 실제 함수 호출로 바꾸는 실행 분기점이다.
   # planner가 "무엇을 할지" 정하면, orchestrator는 "어떻게 실행할지"를 담당한다.
+  if not allow_lookup_trend_direct and has_lookup_or_trend_step(plan):
+    return None
   if plan.plan_type == "supervisor_llm":
     return None
   if plan.plan_type == "single_feature":
@@ -89,6 +92,13 @@ async def execute_plan(
       supervisor_initialization_failed=supervisor_initialization_failed,
     )
   return None
+
+
+def has_lookup_or_trend_step(plan: ExecutionPlan) -> bool:
+  return any(
+    step.handler in {"simple_lookup", "price_trend"}
+    for step in plan.steps
+  )
 
 
 async def execute_single_feature(

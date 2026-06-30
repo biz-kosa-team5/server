@@ -22,7 +22,7 @@ from .dto import (
     TrendSlots,
 )
 
-
+DATA_START_DATE = date(2012, 1, 2)
 BASE_DATE = date(2026, 6, 20)
 
 DEFAULT_PERIOD = "1y"
@@ -121,10 +121,9 @@ class PriceTrendPolicy:
         if start is not None:
             return self._validate_date_range(start, self.base_date)
 
-        # 5. end_date만 있으면 기본 기간만큼 과거를 조회한다.
+        # 5. end_date만 있으면 DATA_START_DATE에서 부터 조회한다.
         if end is not None:
-            start = self._start_date_from_end_and_period(end, DEFAULT_PERIOD)
-            return self._validate_date_range(start, end)
+            return self._validate_date_range(DATA_START_DATE, end)
 
         # 6. 날짜가 없으면 period 또는 기본 period를 base_date 기준으로 조회한다.
         return self._date_range_from_period(period or DEFAULT_PERIOD)

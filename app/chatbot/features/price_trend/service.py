@@ -41,7 +41,7 @@ class TrendService:
                 return TrendFailObservation(
                     observation_type=criteria.get("analysis_type"),
                     reason="no_result",
-                    error="조건에 맞는 시세추이 데이터가 없습니다.",
+                    message="조건에 맞는 시세추이 데이터가 없습니다.",
                     criteria=criteria,
                     slots=slots,
                 ).model_dump(mode="json", exclude_none=True)
@@ -57,7 +57,7 @@ class TrendService:
         except TrendError as error:
             return TrendFailObservation(
                 reason=error.reason,
-                error=error.message,
+                message=error.message,
                 candidates=error.candidates,
                 slots=slots,
             ).model_dump(mode="json", exclude_none=True)

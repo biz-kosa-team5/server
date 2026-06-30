@@ -100,7 +100,7 @@ class TrendFailObservation(BaseModel):
     observation_type: str | None = None
 
     reason: str
-    error: str
+    message: str
 
     criteria: TrendCriteria = Field(default_factory=dict)
     candidates: list[dict[str, Any]] = Field(default_factory=list)

@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # query_type 상수
 QUERY_LOCATION = "location"
 QUERY_TRADE_HISTORY = "trade_history"
+QUERY_REGION_TRADE_HISTORY = "region_trade_history"
 QUERY_COMPLEX_PRICE_RECORD = "complex_price_record"
 QUERY_REGION_PRICE_RANKING = "region_price_ranking"
 
@@ -27,6 +28,7 @@ PRICE_LOWEST = "lowest"
 QueryType: TypeAlias = Literal[
     "location",
     "trade_history",
+    "region_trade_history",
     "complex_price_record",
     "region_price_ranking",
 ]
@@ -81,6 +83,7 @@ class SimpleLookupCriteria(BaseModel):
 
     query_type: QueryType
     target_name: str
+    target_type: str | None = None
 
     area_min: float | None = None
     area_max: float | None = None
