@@ -124,6 +124,8 @@ SPECIALIST_AGENT_SPECS = [
     description=(
       "특정 단지 찾기/위치/주소, 단지 실거래 내역, 동/구 최신 실거래, 최고가 조회 담당, "
       "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함"
+      "질문을 요약하거나 재작성하지 말고, 기간(예: 지난 1년/최근 6개월), 면적(예: 84㎡/30평), "
+      "정렬 조건(예: 최고가/최저가/최근순), 개수 조건(예: 3건/5개만)을 절대 제거하지 말 것"
     ),
     tool_builders=(build_simple_lookup_tool,),
     system_prompt=specialist_system_prompt(
@@ -156,7 +158,9 @@ SPECIALIST_AGENT_SPECS = [
     name="price_trend_agent",
     description=(
       "시세 추이, 가격 변화율, 가격 순위 분석 담당, "
-      "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함"
+      "이 agent의 query에는 사용자의 원문 질문을 그대로 넣어야 함. "
+      "질문을 요약하거나 재작성하지 말고, 기간(예: 2024년/최근 1년), 면적(예: 84㎡/30평), "
+      "정렬 조건(예: 상승률/하락률/순위), 개수 조건(예: 3개만/TOP 5)을 절대 제거하지 말 것"
     ),
     tool_builders=(build_price_trend_tool,),
     system_prompt=specialist_system_prompt(
