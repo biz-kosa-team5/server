@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from .common import (
+  canonical_display_name,
   clean_text,
   compact_parts,
   dict_value,
@@ -67,11 +68,7 @@ def format_location_result(
   *,
   candidates: list[Any] | None = None,
 ) -> str:
-  name = first_non_empty([
-    clean_text(item.get("complex_name")),
-    clean_text(item.get("trade_name")),
-    criteria_name(result),
-  ])
+  name = canonical_display_name(item)
   address = clean_text(item.get("address"))
   latitude = item.get("latitude")
   longitude = item.get("longitude")
@@ -95,10 +92,7 @@ def format_location_result(
 
 def format_trade_result(result: dict[str, Any], data: list[Any]) -> str:
   rows = [dict_value(item) for item in data[:3]]
-  name = first_non_empty([
-    clean_text(rows[0].get("complex_name")) if rows else "",
-    criteria_name(result),
-  ])
+  name = clean_text(rows[0].get("complex_name")) if rows else ""
   trade_summaries = [
     format_trade_row(row)
     for row in rows
@@ -169,10 +163,7 @@ def format_region_trade_history_result(result: dict[str, Any], data: list[Any]) 
 
 
 def format_region_trade_history_row(row: dict[str, Any]) -> str:
-  name = first_non_empty([
-    clean_text(row.get("complex_name")),
-    clean_text(row.get("trade_name")),
-  ])
+  name = clean_text(row.get("complex_name"))
   date = clean_text(row.get("deal_date"))
   amount = format_price(row.get("deal_amount"))
   area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")
@@ -219,10 +210,7 @@ def format_region_ranking_result(result: dict[str, Any], data: list[Any]) -> str
 def format_region_ranking_row(row: dict[str, Any]) -> str:
   rank = row.get("rank")
   rank_label = f"{rank})" if rank is not None else ""
-  name = first_non_empty([
-    clean_text(row.get("complex_name")),
-    clean_text(row.get("trade_name")),
-  ])
+  name = clean_text(row.get("complex_name"))
   date = clean_text(row.get("deal_date"))
   amount = format_price(row.get("deal_amount"))
   area = format_labeled_value("전용면적:", row.get("exclusive_area") or row.get("excl_area"), suffix="㎡")

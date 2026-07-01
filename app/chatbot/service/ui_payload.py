@@ -353,7 +353,7 @@ def merge_complex_source(source: dict[str, Any], complex_row: Complex | None) ->
 
 def focus_action_from_complex(complex_row: Any, source: str, label: str | None = None) -> dict[str, Any] | None:
   row = object_to_mapping(complex_row)
-  name = clean_text(first_non_empty_value(row, ["complexName", "complex_name", "name", "trade_name", "tradeName"]))
+  name = clean_text(first_non_empty_value(row, ["complexName", "complex_name", "name"]))
   complex_id = to_int_or_none(first_non_empty_value(row, ["complexId", "complex_id", "id"]))
   parcel_id = to_int_or_none(first_non_empty_value(row, ["parcelId", "parcel_id"]))
   latitude = finite_float(first_non_empty_value(row, ["latitude", "lat"]))
@@ -668,7 +668,7 @@ def trend_line_chart_artifact(result: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
   criteria = dict_value(result.get("criteria"))
-  target_name = first_region_name(criteria) or clean_text(criteria.get("target_name")) or "시세"
+  target_name = first_region_name(criteria) or clean_text(criteria.get("resolved_complex_name")) or clean_text(criteria.get("target_name")) or "시세"
   target_type = clean_text(criteria.get("target_type")) or "target"
   return {
     "id": f"trend_line_chart:{target_type}:{normalize_name(target_name)}",
@@ -819,7 +819,9 @@ def first_region_name(criteria: dict[str, Any]) -> str:
   region_names = list_value(criteria.get("region_names"))
   if region_names:
     return clean_text(region_names[0])
-  return clean_text(criteria.get("target_name"))
+  if clean_text(criteria.get("target_type")) == "region":
+    return clean_text(criteria.get("target_name"))
+  return ""
 
 
 def object_to_mapping(value: Any) -> dict[str, Any]:

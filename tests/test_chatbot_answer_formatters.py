@@ -72,8 +72,30 @@ def test_simple_lookup_formatter_renders_primary_location_with_candidates():
   assert "우성아파트 위치는 잠실동 101-1입니다." in answer
   assert "지도에 표시했습니다." in answer
   assert "같은 이름으로 확인되는 후보는 다음과 같습니다." in answer
-  assert "1. 잠실동 우성아파트" in answer
-  assert "2. 서초동 우성아파트" in answer
+  assert "1. 우성아파트 - 잠실동 101-1" in answer
+  assert "2. 우성아파트 - 서초동 1326-17" in answer
+
+
+def test_simple_lookup_formatter_uses_canonical_name_instead_of_trade_alias():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": True,
+    "query_type": QUERY_LOCATION,
+    "criteria": {"target_name": "별칭거래명"},
+    "data": [
+      {
+        "complex_id": 1,
+        "complex_name": "공식단지명",
+        "trade_name": "별칭거래명",
+        "address": "서울시 테스트구 테스트동 1",
+        "latitude": 37.5,
+        "longitude": 127.1,
+      },
+    ],
+  })
+
+  assert "공식단지명 위치는 서울시 테스트구 테스트동 1입니다." in answer
+  assert "별칭거래명" not in answer
 
 
 def test_simple_lookup_formatter_uses_trade_dto_shape():
@@ -228,9 +250,32 @@ def test_simple_lookup_formatter_renders_ambiguous_candidates():
   })
 
   assert "우성아파트로 확인되는 단지는 다음과 같습니다." in answer
-  assert "1. 청담동 청담우성아파트" in answer
-  assert "2. 대치동 대치우성아파트" in answer
+  assert "1. 청담우성아파트 - 서울특별시 강남구 청담동 11-25" in answer
+  assert "2. 대치우성아파트 - 서울특별시 강남구 대치동 63" in answer
   assert "어느 단지인지" not in answer
+
+
+def test_simple_lookup_formatter_does_not_display_trade_alias_in_candidates():
+  answer = format_simple_lookup_result({
+    "handler": "simple_lookup",
+    "success": False,
+    "query_type": QUERY_LOCATION,
+    "criteria": {"target_name": "별칭거래명"},
+    "reason": "ambiguous_target",
+    "message": "여러 단지가 검색되었습니다.",
+    "candidates": [
+      {
+        "complex_id": 1,
+        "complex_name": "공식단지명",
+        "trade_name": "별칭거래명",
+        "address": "서울시 테스트구 테스트동 1",
+      },
+    ],
+  })
+
+  assert "1. 공식단지명 - 서울시 테스트구 테스트동 1" in answer
+  assert "별칭거래명" in answer
+  assert "별칭거래명 - 서울시" not in answer
 
 
 def test_price_trend_formatter_uses_timeseries_observation_rows():
@@ -276,6 +321,32 @@ def test_price_trend_formatter_includes_timeseries_target_name():
   ).model_dump(mode="json")
 
   assert format_price_trend_result(result).startswith("잠실엘스 시세추이를 조회했습니다.")
+
+
+def test_price_trend_formatter_prefers_resolved_complex_name():
+  result = TrendSuccessObservation(
+    observation_type=ANALYSIS_TIMESERIES,
+    criteria={
+      "target_name": "별칭거래명",
+      "resolved_complex_name": "공식단지명",
+    },
+    row_count=2,
+    rows=[
+      {
+        "period_start": "2025-01-01",
+        "avg_deal_amount": 100000,
+      },
+      {
+        "period_start": "2025-12-01",
+        "avg_deal_amount": 120000,
+      },
+    ],
+  ).model_dump(mode="json")
+
+  answer = format_price_trend_result(result)
+
+  assert answer.startswith("공식단지명 시세추이를 조회했습니다.")
+  assert "별칭거래명" not in answer
 
 
 def test_price_trend_formatter_uses_price_per_sqm_timeseries_unit():

@@ -186,8 +186,8 @@ def format_dependent_sequence_summary(
   if households:
     clauses.append(f"단지 규모와 균형을 함께 보면 {households[0]}")
   lower_price = min_metric(rows, "latestDealAmount")
-  if lower_price:
-    clauses.append(f"가격 부담을 낮추려면 {lower_price[0]}")
+  if lower_price and explicitly_low_price_focused(recommendation_result):
+    clauses.append(f"가격 낮은 순 조건을 중시하면 {lower_price[0]}")
 
   deduped_clauses = []
   seen_names = set()
@@ -252,10 +252,8 @@ def comparison_candidate_names(comparison_result: dict[str, Any] | None) -> list
 def candidate_name(row: dict[str, Any]) -> str:
   return first_non_empty([
     clean_text(row.get("complexName")),
-    clean_text(row.get("name")),
     clean_text(row.get("complex_name")),
-    clean_text(row.get("tradeName")),
-    clean_text(row.get("trade_name")),
+    clean_text(row.get("name")),
   ])
 
 
@@ -328,7 +326,9 @@ def comparison_interpretation_lines(rows: list[dict[str, Any]]) -> list[str]:
   highest_price = max_metric(rows, "latestDealAmount")
   lowest_price = min_metric(rows, "latestDealAmount")
   if highest_price and lowest_price and highest_price[0] != lowest_price[0]:
-    lines.append(f"가격은 {highest_price[0]}가 가장 높고 {lowest_price[0]}가 상대적으로 낮습니다.")
+    caveat = compact_price_caveat(row_by_name(rows, lowest_price[0]))
+    suffix = f" 다만 {caveat}도 함께 봐야 합니다." if caveat else ""
+    lines.append(f"가격은 {highest_price[0]}가 가장 높고 {lowest_price[0]}가 상대적으로 낮습니다.{suffix}")
 
   households = max_metric(rows, "unitCnt")
   if households:
@@ -338,6 +338,38 @@ def comparison_interpretation_lines(rows: list[dict[str, Any]]) -> list[str]:
   if lifestyle:
     lines.append(f"생활편의 접근성은 {lifestyle[0]}가 가장 유리합니다.")
   return lines
+
+
+def explicitly_low_price_focused(result: dict[str, Any]) -> bool:
+  criteria = dict_value(result.get("criteria"))
+  return clean_text(criteria.get("sort_by")) == "price_asc"
+
+
+def row_by_name(rows: list[dict[str, Any]], name: str) -> dict[str, Any]:
+  return next((row for row in rows if candidate_name(row) == name), {})
+
+
+def compact_price_caveat(row: dict[str, Any]) -> str:
+  caveats = []
+  pyeong = row.get("pyeong")
+  try:
+    if pyeong is not None and float(pyeong) < 15:
+      caveats.append("평형이 작다는 점")
+  except (TypeError, ValueError):
+    pass
+  unit_cnt = row.get("unitCnt")
+  try:
+    if unit_cnt is not None and int(unit_cnt) < 100:
+      caveats.append("세대수가 적다는 점")
+  except (TypeError, ValueError):
+    pass
+  built_year = row.get("builtYear")
+  try:
+    if built_year is not None and int(built_year) < 2010:
+      caveats.append("준공연도가 오래된 편이라는 점")
+  except (TypeError, ValueError):
+    pass
+  return ", ".join(caveats[:2])
 
 
 def max_metric(rows: list[dict[str, Any]], key: str) -> tuple[str, float] | None:

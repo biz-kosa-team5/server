@@ -18,6 +18,7 @@ from openai import OpenAI
 SERVER_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = SERVER_ROOT.parent
 DEFAULT_OUTPUT_DIR = REPO_ROOT / "docs" / "qa"
+DEFAULT_QUESTIONNAIRE_PATH = REPO_ROOT / "docs" / "data" / "chatbot-complex-questionnaire-88-2026-06-30.md"
 SUITE_NAME = "chatbot-model-eval"
 ALLOWED_MODELS = ("gpt-5.5", "gpt-5.4-mini")
 DEFAULT_ROW_TIMEOUT_SECONDS = 180.0
@@ -45,6 +46,10 @@ class EvalCase:
   expected_handlers: tuple[str, ...]
   expected_project_path: str
   kind: Literal["single", "multi", "exception"] = "single"
+  answer_must_include: tuple[str, ...] = ()
+  answer_must_not_include: tuple[str, ...] = ()
+  legal_required: bool = False
+  legal_must_include: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -146,15 +151,17 @@ def main() -> int:
   from app.database import SessionLocal, ensure_initialized
 
   load_environment()
-  selected_cases = filter_cases(MODEL_EVAL_CASES, args.case)
+  cases = load_eval_cases(args)
+  selected_cases = filter_cases(cases, args.case)
   selected_run_groups = filter_run_groups(MODEL_EVAL_RUN_GROUPS, args.run_group)
   validate_run_matrix(selected_cases, selected_run_groups)
 
   output_dir = Path(args.output_dir)
   output_dir.mkdir(parents=True, exist_ok=True)
   run_date = datetime.now().strftime("%Y-%m-%d")
-  markdown_path = output_dir / f"{SUITE_NAME}-{run_date}.md"
-  jsonl_path = output_dir / f"{SUITE_NAME}-{run_date}.jsonl"
+  suite_name = args.suite_name or SUITE_NAME
+  markdown_path = output_dir / f"{suite_name}-{run_date}.md"
+  jsonl_path = output_dir / f"{suite_name}-{run_date}.jsonl"
 
   prices = load_model_prices()
   preflight = (
@@ -198,10 +205,13 @@ def main() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-  parser = argparse.ArgumentParser(description="Run the fixed 80-row chatbot model evaluation.")
+  parser = argparse.ArgumentParser(description="Run the chatbot model evaluation matrix.")
   parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
   parser.add_argument("--case", action="append", default=[], help="Run only matching case id. Can be repeated.")
   parser.add_argument("--run-group", action="append", default=[], help="Run only matching run group. Can be repeated.")
+  parser.add_argument("--from-docs", action="store_true", help="Load cases from a docs/data questionnaire.")
+  parser.add_argument("--questionnaire-path", default=str(DEFAULT_QUESTIONNAIRE_PATH))
+  parser.add_argument("--suite-name", default="")
   parser.add_argument("--skip-preflight", action="store_true", help="Skip model access preflight. Intended for local test doubles only.")
   parser.add_argument("--allow-measurement-failures", action="store_true", help="Exit 0 even when token usage is missing.")
   parser.add_argument("--row-timeout-seconds", type=float, default=DEFAULT_ROW_TIMEOUT_SECONDS)
@@ -216,6 +226,37 @@ def configure_environment() -> None:
     os.environ["DATABASE_URL"] = "sqlite+pysqlite:///:memory:"
     os.environ.setdefault("DATA_IMPORT_DIR", str(SERVER_ROOT / "db" / "import"))
   import app.chatbot.features.legal_contract.rag.model  # noqa: F401
+
+
+def load_eval_cases(args: argparse.Namespace) -> tuple[EvalCase, ...]:
+  if not args.from_docs:
+    return MODEL_EVAL_CASES
+
+  from scripts.run_chatbot_qa import load_cases_from_questionnaire
+
+  qa_cases = load_cases_from_questionnaire(Path(args.questionnaire_path))
+  eval_cases: list[EvalCase] = []
+  for case in qa_cases:
+    expected_handlers = case.expected_handlers
+    if "no_matching_tool" in expected_handlers:
+      kind: Literal["single", "multi", "exception"] = "exception"
+    elif len(expected_handlers) > 1:
+      kind = "multi"
+    else:
+      kind = "single"
+    eval_cases.append(EvalCase(
+      id=case.id,
+      category=case.group or case.test_package.rsplit(".", 1)[-1],
+      question=case.question,
+      expected_handlers=expected_handlers,
+      expected_project_path=case.expected_execution_path,
+      kind=kind,
+      answer_must_include=case.expected_answer_terms,
+      answer_must_not_include=case.answer_must_not_include,
+      legal_required=case.legal_required,
+      legal_must_include=case.legal_must_include,
+    ))
+  return tuple(eval_cases)
 
 
 def filter_cases(cases: tuple[EvalCase, ...], case_ids: list[str]) -> tuple[EvalCase, ...]:
@@ -328,12 +369,13 @@ async def run_project_case(
   actual_path = collect_actual_path(payload)
   fallback_used = project_fallback_used(payload)
   tool_called = project_tool_called(payload, actual_handlers)
-  answer_ok, fidelity, quality_note, eval_notes = evaluate_project_answer(
+  answer_ok, fidelity, quality_note, eval_notes, legal_eval = evaluate_project_answer(
     case,
     answer,
     actual_handlers,
     actual_path,
     tool_called,
+    payload,
   )
   status = result_status(payload, answer_ok, usage)
   token_fields = token_field_values(usage)
@@ -373,6 +415,7 @@ async def run_project_case(
       "expected_handlers_present": expected_handlers_present(case.expected_handlers, actual_handlers),
       "missing_handlers": missing_handlers(case.expected_handlers, actual_handlers),
       "raw_payload_status": payload.get("status"),
+      "legal": legal_eval,
     },
     raw_response=payload,
   )
@@ -420,7 +463,7 @@ async def run_raw_case(
     }
   elapsed_ms = round((perf_counter() - started_at) * 1000)
 
-  answer_ok, fidelity, quality_note, eval_notes = evaluate_raw_answer(answer)
+  answer_ok, fidelity, quality_note, eval_notes, raw_eval = evaluate_raw_answer(case, answer)
   status = "measurement_failed" if usage is None else ("success" if answer_ok else "failed")
   token_fields = token_field_values(usage)
   cost = estimate_cost(usage, run_group.model_id, prices) if usage else "measurement_failed"
@@ -457,6 +500,7 @@ async def run_raw_case(
     evaluation={
       "raw_tool_absent": True,
       "error": error,
+      **raw_eval,
     },
     raw_response=serialize_openai_response(raw_response) if raw_response is not None else {"error": error},
   )
@@ -468,12 +512,17 @@ def evaluate_project_answer(
   actual_handlers: list[str],
   actual_path: str,
   tool_called: bool,
-) -> tuple[bool, str, str, list[str]]:
+  payload: dict[str, Any],
+) -> tuple[bool, str, str, list[str], dict[str, Any]]:
   notes = []
   if not answer.strip():
     notes.append("답변이 비어 있음")
-  if any(term in answer for term in BANNED_ANSWER_TERMS):
+  banned_terms = case.answer_must_not_include or BANNED_ANSWER_TERMS
+  if any(term in answer for term in banned_terms):
     notes.append("내부 처리 용어가 답변에 노출됨")
+  missing_answer_terms = [term for term in case.answer_must_include if term not in answer]
+  if missing_answer_terms:
+    notes.append(f"답변 필수어 누락: {', '.join(missing_answer_terms)}")
 
   actual_base_handlers = [base_handler(handler) for handler in actual_handlers]
   expected_present = expected_handlers_present(case.expected_handlers, actual_handlers)
@@ -498,11 +547,15 @@ def evaluate_project_answer(
   if case.kind != "exception" and not tool_called:
     notes.append("데이터 기반 질문인데 tool 호출 흔적 없음")
 
+  legal_eval = evaluate_project_legal_contract(case, answer, actual_handlers, payload)
+  if case.legal_required:
+    notes.extend(legal_eval["notes"])
+
   answer_ok = not notes
   quality_note = "정상" if answer_ok else "; ".join(notes)
   if "direct" in actual_path or "fallback" in actual_path:
     quality_note = f"{quality_note}; fallback/direct 확인 필요"
-  return answer_ok, fidelity, quality_note, notes
+  return answer_ok, fidelity, quality_note, notes, legal_eval
 
 
 def exception_fidelity(case: EvalCase, answer: str, actual_base_handlers: list[str], actual_path: str) -> str:
@@ -517,16 +570,80 @@ def exception_fidelity(case: EvalCase, answer: str, actual_base_handlers: list[s
   return "부분 성공"
 
 
-def evaluate_raw_answer(answer: str) -> tuple[bool, str, str, list[str]]:
+def evaluate_raw_answer(case: EvalCase, answer: str) -> tuple[bool, str, str, list[str], dict[str, Any]]:
   notes = []
   if not answer.strip():
     notes.append("답변이 비어 있음")
   if len(answer) > 1200:
     notes.append("raw 답변이 길이 기준을 크게 초과")
+  raw_eval = evaluate_raw_legal_contract(case, answer)
   answer_ok = not notes
+  quality_parts = []
+  if case.legal_required:
+    quality_parts.append(raw_eval["summary"])
   if answer_ok:
-    return True, "참고용", "tool 없는 순수 모델 답변이라 데이터 정확도는 별도 검토 필요", []
-  return False, "실패", "; ".join(notes), notes
+    quality_parts.append("tool 없는 순수 모델 답변이라 데이터 정확도는 별도 검토 필요")
+    return True, "참고용", "; ".join(quality_parts), [], raw_eval
+  quality_parts.append("; ".join(notes))
+  return False, "실패", "; ".join(part for part in quality_parts if part), notes, raw_eval
+
+
+def evaluate_project_legal_contract(
+  case: EvalCase,
+  answer: str,
+  actual_handlers: list[str],
+  payload: dict[str, Any],
+) -> dict[str, Any]:
+  legal_results = collect_legal_results(payload)
+  has_handler = "legal_contract" in [base_handler(handler) for handler in actual_handlers]
+  has_success = any(result.get("success") is True for result in legal_results)
+  has_sources = any(isinstance(result.get("sources"), list) and result.get("sources") for result in legal_results)
+  missing_terms = [term for term in case.legal_must_include if term not in answer]
+  notes = []
+  if case.legal_required and not has_handler:
+    notes.append("legal_contract handler 누락")
+  if case.legal_required and not has_success:
+    notes.append("legal result success=true 누락")
+  if case.legal_required and not has_sources:
+    notes.append("legal sources 누락")
+  if case.legal_required and missing_terms:
+    notes.append(f"법률 필수어 누락: {', '.join(missing_terms)}")
+  return {
+    "required": case.legal_required,
+    "handler_present": has_handler,
+    "success": has_success,
+    "sources_present": has_sources,
+    "missing_terms": missing_terms,
+    "notes": notes,
+  }
+
+
+def evaluate_raw_legal_contract(case: EvalCase, answer: str) -> dict[str, Any]:
+  if not case.legal_required:
+    return {
+      "legal_required": False,
+      "score": None,
+      "summary": "법률 문항 아님",
+      "hallucination_risk": False,
+    }
+  checks = {
+    "mentions_civil_code": "민법" in answer,
+    "mentions_article": re.search(r"제\s*\d+\s*조", answer) is not None,
+    "mentions_required_terms": all(term in answer for term in case.legal_must_include if term not in {"민법", "제565조"}),
+    "has_caution_or_limits": any(term in answer for term in ("일반", "상황", "전문가", "확인", "주의", "한계", "구체")),
+  }
+  score = sum(1 for value in checks.values() if value)
+  hallucination_risk = score < 3 or (
+    any(term in answer for term in ("무조건", "반드시", "항상")) and not checks["has_caution_or_limits"]
+  )
+  summary = f"raw legal score={score}/4, 환각 위험={'Y' if hallucination_risk else 'N'}"
+  return {
+    "legal_required": True,
+    "score": score,
+    "checks": checks,
+    "summary": summary,
+    "hallucination_risk": hallucination_risk,
+  }
 
 
 def result_status(payload: dict[str, Any], answer_ok: bool, usage: dict[str, int] | None) -> str:
@@ -687,6 +804,26 @@ def collect_handler_trace(payload: dict[str, Any]) -> dict[str, Any]:
     "uiArtifacts": payload.get("uiArtifacts", []),
     "uiSummary": payload.get("uiSummary"),
   }
+
+
+def collect_legal_results(payload: dict[str, Any]) -> list[dict[str, Any]]:
+  results: list[dict[str, Any]] = []
+
+  def visit(value: Any) -> None:
+    if isinstance(value, list):
+      for item in value:
+        visit(item)
+      return
+    if not isinstance(value, dict):
+      return
+    if value.get("handler") == "legal_contract":
+      results.append(value)
+    for key in ("result", "results", "fragments"):
+      if key in value:
+        visit(value.get(key))
+
+  visit(payload)
+  return results
 
 
 def fragment_executions(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -885,12 +1022,76 @@ def int_or_zero(value: Any) -> int:
 
 def render_markdown(results: list[EvalResult]) -> str:
   run_date = results[0].run_date if results else datetime.now().strftime("%Y-%m-%d")
+  total = len(results)
+  passed = sum(1 for result in results if result.answer_ok and result.status not in {"failed", "measurement_failed"})
+  failed = total - passed
   lines = [
-    f"# 챗봇 모델별 80회 답변 평가 - {run_date}",
+    f"# 챗봇 모델별 답변 평가 - {run_date}",
+    "",
+    "## Summary",
+    "",
+    f"- total: {total}",
+    f"- passed: {passed}",
+    f"- failed_or_measurement_failed: {failed}",
+    f"- overall: {'PASS' if failed == 0 else 'FAIL'}",
+    "",
+    "## Project vs Raw Cost",
+    "",
+    "| 실행군 | rows | measured rows | estimated cost USD | avg latency ms |",
+    "|---|---:|---:|---:|---:|",
+  ]
+  for group, group_results in group_results_by_run_group(results).items():
+    measured_costs = [
+      float(result.estimated_cost_usd)
+      for result in group_results
+      if isinstance(result.estimated_cost_usd, (float, int))
+    ]
+    measured_latencies = [
+      int(result.elapsed_ms)
+      for result in group_results
+      if isinstance(result.elapsed_ms, int)
+    ]
+    total_cost = round(sum(measured_costs), 8)
+    avg_latency = round(sum(measured_latencies) / len(measured_latencies)) if measured_latencies else "measurement_failed"
+    lines.append(f"| {group} | {len(group_results)} | {len(measured_costs)} | {total_cost} | {avg_latency} |")
+
+  handler_missing = [
+    result for result in results
+    if result.run_group.startswith("project-") and result.evaluation.get("missing_handlers")
+  ]
+  answer_failures = [
+    result for result in results
+    if result.run_group.startswith("project-") and not result.answer_ok
+  ]
+  lines.extend([
+    "",
+    "## Group Success Rates",
+    "",
+    "| 분류 | total | passed | failed | pass rate |",
+    "|---|---:|---:|---:|---:|",
+  ])
+  for category, category_results in group_results_by_category(results).items():
+    category_total = len(category_results)
+    category_passed = sum(1 for result in category_results if result.answer_ok and result.status not in {"failed", "measurement_failed"})
+    category_failed = category_total - category_passed
+    rate = f"{(category_passed / category_total * 100):.1f}%" if category_total else "0.0%"
+    lines.append(f"| {escape_table(category)} | {category_total} | {category_passed} | {category_failed} | {rate} |")
+
+  lines.extend([
+    "",
+    "## Handler Missing Cases",
+    "",
+    "- " + ("; ".join(f"{result.case_id}/{result.run_group}" for result in handler_missing) if handler_missing else "none"),
+    "",
+    "## Answer Contract Failures",
+    "",
+    "- " + ("; ".join(f"{result.case_id}/{result.run_group}" for result in answer_failures) if answer_failures else "none"),
+    "",
+    "## Results",
     "",
     "| 문항 ID | 분류 | 질문 | 실행군 | 모델 ID | 상태 | 기대 경로 | 실제 경로 | 기대 핸들러 | 실제 핸들러 | 도구 호출 여부 | fallback 사용 여부 | 답변 정상 여부 | 답변 충실도 | 답변 품질 메모 | 소요 시간(ms) | 입력 토큰 | 출력 토큰 | 캐시 토큰 | 전체 토큰 | 예상 비용(USD) | 답변 길이 | 답변 참조 | 비고 |",
     "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|",
-  ]
+  ])
   for result in results:
     lines.append(
       "| "
@@ -946,6 +1147,20 @@ def render_markdown(results: list[EvalResult]) -> str:
       "",
     ])
   return "\n".join(lines)
+
+
+def group_results_by_run_group(results: list[EvalResult]) -> dict[str, list[EvalResult]]:
+  grouped: dict[str, list[EvalResult]] = {}
+  for result in results:
+    grouped.setdefault(result.run_group, []).append(result)
+  return dict(sorted(grouped.items()))
+
+
+def group_results_by_category(results: list[EvalResult]) -> dict[str, list[EvalResult]]:
+  grouped: dict[str, list[EvalResult]] = {}
+  for result in results:
+    grouped.setdefault(result.category, []).append(result)
+  return dict(sorted(grouped.items()))
 
 
 def render_preflight_failure_markdown(run_date: str, preflight: dict[str, Any]) -> str:

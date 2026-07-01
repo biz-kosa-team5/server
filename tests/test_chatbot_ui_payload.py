@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.chatbot.service.ui_payload import build_chatbot_ui_payload
+from app.chatbot.service.ui_payload import build_chatbot_ui_payload, focus_action_from_complex
 from app.database import SessionLocal, ensure_initialized
 
 
@@ -59,6 +59,23 @@ def test_location_lookup_builds_focus_map_action():
   }
   assert ui_payload["uiSummary"]["hasMapFocus"] is True
   assert ui_payload["uiSummary"]["primaryTargetName"] == "잠실엘스"
+
+
+def test_focus_action_uses_canonical_name_instead_of_trade_alias():
+  action = focus_action_from_complex(
+    {
+      "complex_id": 9901,
+      "trade_name": "별칭거래명",
+      "latitude": 37.5,
+      "longitude": 127.1,
+    },
+    "test",
+  )
+
+  assert action is not None
+  assert action["label"] == "단지 9901 지도 보기"
+  assert action["target"]["name"] == "단지 9901"
+  assert "별칭거래명" not in str(action)
 
 
 def test_trade_history_resolves_complex_coordinates_from_db():

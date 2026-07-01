@@ -341,7 +341,7 @@ def extract_sort_by(text: str) -> str | None:
     return "price_desc"
   if any(keyword in text for keyword in ("가까운", "근처", "거리순")):
     return "distance_asc"
-  if any(keyword in text for keyword in ("저렴한", "싼", "낮은 가격", "가격 낮은")):
+  if any(keyword in text for keyword in ("가장 싼", "제일 싼", "최저가", "가격 낮은 순", "낮은 가격 순")):
     return "price_asc"
   return None
 

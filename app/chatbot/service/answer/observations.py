@@ -192,7 +192,7 @@ def compact_simple_lookup(result: dict[str, Any]) -> dict[str, Any]:
   if isinstance(data, list):
     row_limit = simple_lookup_row_limit(result)
     compacted["data"] = strip_nested_answers(data[:row_limit])
-  return compacted
+  return strip_display_aliases(compacted)
 
 
 def simple_lookup_row_limit(result: dict[str, Any]) -> int:
@@ -227,6 +227,8 @@ def compact_price_trend(result: dict[str, Any]) -> dict[str, Any]:
   data = result.get("data")
   if isinstance(data, list):
     compacted["data"] = strip_nested_answers(compact_price_trend_rows(result, data))
+  compacted = strip_display_aliases(compacted)
+  prefer_resolved_complex_name(compacted)
   return compacted
 
 
@@ -321,6 +323,27 @@ def strip_nested_answers(value: Any) -> Any:
       if key != "answer"
     }
   return value
+
+
+def strip_display_aliases(value: Any) -> Any:
+  if isinstance(value, list):
+    return [strip_display_aliases(item) for item in value]
+  if isinstance(value, dict):
+    return {
+      key: strip_display_aliases(item)
+      for key, item in value.items()
+      if key not in {"trade_name", "tradeName"}
+    }
+  return value
+
+
+def prefer_resolved_complex_name(compacted: dict[str, Any]) -> None:
+  criteria = compacted.get("criteria")
+  if not isinstance(criteria, dict):
+    return
+  resolved_name = clean_str(criteria.get("resolved_complex_name"))
+  if resolved_name:
+    criteria["target_name"] = resolved_name
 
 
 def clean_str(value: Any) -> str:
